@@ -14,15 +14,44 @@ const NAV_LINKS = [
 export default function Navbar() {
   const [mobileOpen, setMobileOpen] = useState(false)
 
+  // Lock page scrolling only while mobile menu is open
   useEffect(() => {
-    document.body.style.overflow = mobileOpen ? 'hidden' : ''
+    if (mobileOpen) {
+      document.body.style.overflow = 'hidden'
+    } else {
+      document.body.style.overflow = ''
+    }
 
     return () => {
       document.body.style.overflow = ''
     }
   }, [mobileOpen])
 
-  const handleNavClick = () => setMobileOpen(false)
+  // Handle navigation for mobile menu
+  const handleMobileNav = (e, href) => {
+    e.preventDefault()
+
+    // Close mobile menu first
+    setMobileOpen(false)
+
+    // Wait for menu closing before scrolling
+    setTimeout(() => {
+      const target = document.querySelector(href)
+
+      if (target) {
+        const navbarHeight = 80
+        const targetPosition =
+          target.getBoundingClientRect().top +
+          window.scrollY -
+          navbarHeight
+
+        window.scrollTo({
+          top: targetPosition,
+          behavior: 'smooth',
+        })
+      }
+    }, 200)
+  }
 
   return (
     <header className="fixed inset-x-0 top-0 z-50 border-b border-slate-200/80 bg-white/95 shadow-lg backdrop-blur-md">
@@ -30,7 +59,7 @@ export default function Navbar() {
         className="mx-auto flex max-w-7xl items-center justify-between px-4 py-4 md:px-6 lg:px-8"
         aria-label="Main navigation"
       >
-        {/* Logo */}
+        {/* ==================== LOGO ==================== */}
         <a href="#" className="flex shrink-0 items-center">
           <img
             src="/logo.png"
@@ -39,7 +68,7 @@ export default function Navbar() {
           />
         </a>
 
-        {/* Desktop Navigation */}
+        {/* ==================== DESKTOP NAVIGATION ==================== */}
         <ul className="hidden items-center gap-8 lg:flex">
           {NAV_LINKS.map((link) => (
             <li key={link.href}>
@@ -53,7 +82,7 @@ export default function Navbar() {
           ))}
         </ul>
 
-        {/* Desktop Register Button */}
+        {/* ==================== DESKTOP REGISTER BUTTON ==================== */}
         <div className="hidden lg:block">
           <a
             href={REGISTRATION_FORM_URL}
@@ -65,11 +94,11 @@ export default function Navbar() {
           </a>
         </div>
 
-        {/* Mobile Menu Button */}
+        {/* ==================== MOBILE MENU BUTTON ==================== */}
         <button
           type="button"
           className="rounded-lg p-2 text-slate-800 transition-colors hover:bg-slate-100 lg:hidden"
-          onClick={() => setMobileOpen((o) => !o)}
+          onClick={() => setMobileOpen((open) => !open)}
           aria-expanded={mobileOpen}
           aria-label={mobileOpen ? 'Close menu' : 'Open menu'}
         >
@@ -81,22 +110,25 @@ export default function Navbar() {
         </button>
       </nav>
 
-      {/* Mobile Navigation */}
+      {/* ==================== MOBILE NAVIGATION ==================== */}
       <AnimatePresence>
         {mobileOpen && (
           <motion.div
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
             exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.2 }}
             className="overflow-hidden border-t border-slate-200 bg-white lg:hidden"
           >
             <ul className="flex flex-col gap-1 px-4 py-4">
+
+              {/* Mobile Navigation Links */}
               {NAV_LINKS.map((link) => (
                 <li key={link.href}>
                   <a
                     href={link.href}
-                    onClick={handleNavClick}
-                    className="block rounded-lg px-4 py-3 text-base font-medium text-slate-700 transition-colors hover:bg-slate-50 hover:text-primary"
+                    onClick={(e) => handleMobileNav(e, link.href)}
+                    className="block rounded-lg px-4 py-3 text-base font-medium text-slate-700 transition-all hover:bg-slate-50 hover:text-primary active:bg-slate-100"
                   >
                     {link.label}
                   </a>
@@ -109,8 +141,8 @@ export default function Navbar() {
                   href={REGISTRATION_FORM_URL}
                   target="_blank"
                   rel="noopener noreferrer"
-                  onClick={handleNavClick}
-                  className="block rounded-full bg-accent px-4 py-3 text-center text-base font-semibold text-white shadow-md transition-all hover:bg-amber-600"
+                  onClick={() => setMobileOpen(false)}
+                  className="block rounded-full bg-accent px-4 py-3 text-center text-base font-semibold text-white shadow-md transition-all hover:bg-amber-600 active:scale-[0.98]"
                 >
                   Register Now
                 </a>
