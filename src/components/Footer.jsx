@@ -47,7 +47,7 @@ export default function Footer() {
           <div>
             <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider text-white">Contact</h3>
             <ul className="space-y-2 text-sm">
-            <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-white">Initiative of the Event</h4>
+            <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-white">Convener</h4>
               <hr />
             <li>
                 <span className="text-slate-500">Email:</span>{' '}
@@ -56,19 +56,13 @@ export default function Footer() {
                 </a>
               </li>        
               <li>
-                <span className="text-slate-500">Phone:</span>{' '}
-                <a href="tel:6381305506" className="transition-colors hover:text-accent">
-                  8508765210
-                </a>
-              </li>
-              <li>
                 <span className="text-slate-500">College:</span>{' '}
                 Sri Eshwar College of Engineering
               </li>
               
             </ul>
             <ul className="space-y-2 text-sm">
-            <h4 className=" mt-4 mb-2 text-xs font-semibold uppercase tracking-wider text-white">Faculty Event Coordinator</h4>
+            <h4 className=" mt-4 mb-2 text-xs font-semibold uppercase tracking-wider text-white">Faculty Coordinator</h4>
               <hr />
             <li>
                 <span className="text-slate-500">Email:</span>{' '}
@@ -88,7 +82,7 @@ export default function Footer() {
               </li>
             </ul>
             <ul className="space-y-2 text-sm">
-            <h4 className="mt-4 mb-2 text-xs font-semibold uppercase tracking-wider text-white">Student Event Coordinator</h4>
+            <h4 className="mt-4 mb-2 text-xs font-semibold uppercase tracking-wider text-white">Student Coordinator</h4>
             <hr />
             <li>
                 <span className="text-slate-500">Email:</span>{' '}

@@ -144,33 +144,59 @@ export const TIMELINE_EVENTS = [
     description:
       'Team formation, domain selection, and problem identification.',
   },
+
   {
     date: 'Week 1',
     title: 'Phase 1: Ideation & Concept Design',
     description:
       'Concept design, CAD/sketch, block diagram, BOM, and cost estimate.',
+
+    patentPhase: 'PHASE 1',
+    patentIcon: '🎨',
+    patentTitle: 'DESIGN PATENT',
+    patentDescription: 'Design & Appearance Protection',
   },
+
   {
     date: 'Week 2',
     title: 'Phase 2: Prototype Development',
     description:
       'Component sourcing, hardware development, software development, integration, and first testing.',
   },
+
   {
     date: 'Week 3',
     title: 'Design Refinement & Testing',
-    description: 'Iterate on results, final testing, and documentation.',
+    description:
+      'Iterate on results, final testing, and documentation.',
+
+    patentPhase: 'PHASE 2',
+    patentIcon: '⚙️',
+    patentTitle: 'UTILITY PATENT',
+    patentDescription: 'Technical & Functional Protection',
   },
+
   {
     date: '15-Sep-2026',
     title: 'Phase 3: Pitch Preparation',
-    description: 'Pitch deck, business model, mentorship, and dry runs.',
+    description:
+      'Pitch deck, business model, mentorship, and dry runs.',
+
+    patentPhase: 'PHASE 3',
+    patentIcon: '🛡️',
+    patentTitle: 'PATENTABILITY',
+    patentDescription: 'Validation & Documentation',
   },
+
   {
     date: 'Week 4',
-    title: 'Final Expo & Winners',
+    title: 'Phase 3: Final Expo & Winners',
     description:
       'Live demo, expert panel evaluation, winner announcement, and incubation onboarding.',
+
+    patentIcon: '📜',
+    patentTitle: 'PATENT FILING',
+    patentDescription: 'IP & Commercialization',
   },
 ]
 
