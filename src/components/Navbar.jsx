@@ -11,7 +11,7 @@ const NAV_LINKS = [
   { label: 'Register', href: '#registration' },
 ]
 
-export default function Navbar() {
+export default function Navbar({ onRegisterClick }) {
   const [mobileOpen, setMobileOpen] = useState(false)
 
   // Lock page scrolling only while mobile menu is open
@@ -26,6 +26,14 @@ export default function Navbar() {
       document.body.style.overflow = ''
     }
   }, [mobileOpen])
+
+  const handleRegister = (e) => {
+    if (onRegisterClick) {
+      e.preventDefault()
+      setMobileOpen(false)
+      onRegisterClick()
+    }
+  }
 
   // Handle navigation for mobile menu
   const handleMobileNav = (e, href) => {
@@ -86,8 +94,7 @@ export default function Navbar() {
         <div className="hidden lg:block">
           <a
             href={REGISTRATION_FORM_URL}
-            target="_blank"
-            rel="noopener noreferrer"
+            onClick={handleRegister}
             className="inline-flex items-center rounded-full bg-accent px-5 py-2.5 text-sm font-semibold text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-amber-600 hover:shadow-lg"
           >
             Register Now
@@ -139,9 +146,7 @@ export default function Navbar() {
               <li className="pt-2">
                 <a
                   href={REGISTRATION_FORM_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={() => setMobileOpen(false)}
+                  onClick={handleRegister}
                   className="block rounded-full bg-accent px-4 py-3 text-center text-base font-semibold text-white shadow-md transition-all hover:bg-amber-600 active:scale-[0.98]"
                 >
                   Register Now

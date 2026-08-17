@@ -2,7 +2,14 @@ import { ArrowRight } from 'lucide-react'
 import SectionReveal from './SectionReveal'
 import { REGISTRATION_FORM_URL } from '../data/content'
 
-export default function CTABanner() {
+export default function CTABanner({ onRegisterClick }) {
+  const handleRegister = (e) => {
+    if (onRegisterClick) {
+      e.preventDefault()
+      onRegisterClick()
+    }
+  }
+
   return (
     <section id="cta" className="relative overflow-hidden bg-gradient-to-r from-primary via-blue-800 to-primary py-16 md:py-20">
       <div className="pointer-events-none absolute inset-0 opacity-20" aria-hidden="true">
@@ -19,8 +26,7 @@ export default function CTABanner() {
         </p>
         <a
           href={REGISTRATION_FORM_URL}
-          target="_blank"
-          rel="noopener noreferrer"
+          onClick={handleRegister}
           className="mt-8 inline-flex items-center gap-2 rounded-full bg-accent px-8 py-3.5 text-base font-semibold text-white shadow-lg transition-all hover:-translate-y-0.5 hover:bg-amber-600 hover:shadow-xl"
         >
           Register Now

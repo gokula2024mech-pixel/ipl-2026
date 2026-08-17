@@ -10,7 +10,14 @@ const ELIGIBILITY = [
   { label: 'Faculty Mentor', value: 'Mandatory' },
 ]
 
-export default function Registration() {
+export default function Registration({ onRegisterClick }) {
+  const handleRegister = (e) => {
+    if (onRegisterClick) {
+      e.preventDefault()
+      onRegisterClick()
+    }
+  }
+
   return (
     <section id="registration" className="bg-slate-50 py-20 md:py-28">
       <div className="mx-auto max-w-2xl px-4 md:px-6 lg:px-8">
@@ -49,8 +56,7 @@ export default function Registration() {
 
             <a
               href={REGISTRATION_FORM_URL}
-              target="_blank"
-              rel="noopener noreferrer"
+              onClick={handleRegister}
               className="inline-flex items-center gap-2 rounded-full bg-accent px-10 py-4 text-lg font-semibold text-white shadow-lg transition-all hover:-translate-y-0.5 hover:bg-amber-600 hover:shadow-xl"
             >
               Register Now

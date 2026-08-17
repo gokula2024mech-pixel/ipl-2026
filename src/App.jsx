@@ -2,6 +2,7 @@ import { lazy, Suspense, useState } from 'react'
 import EmailGate from './components/EmailGate'
 import Navbar from './components/Navbar'
 import Hero from './components/Hero'
+import RegistrationModal from './components/RegistrationModal'
 
 const About = lazy(() => import('./components/About'))
 const ProgramHighlights = lazy(() => import('./components/ProgramHighlights'))
@@ -31,10 +32,19 @@ export default function App() {
   const [isVerified, setIsVerified] = useState(
     () => sessionStorage.getItem(SESSION_KEY) === 'true',
   )
+  const [isRegistrationOpen, setIsRegistrationOpen] = useState(false)
 
   const handleVerified = () => {
     sessionStorage.setItem(SESSION_KEY, 'true')
     setIsVerified(true)
+  }
+
+  const handleOpenRegistration = () => {
+    setIsRegistrationOpen(true)
+  }
+
+  const handleCloseRegistration = () => {
+    setIsRegistrationOpen(false)
   }
 
   if (!isVerified) {
@@ -43,9 +53,9 @@ export default function App() {
 
   return (
     <>
-      <Navbar />
+      <Navbar onRegisterClick={handleOpenRegistration} />
       <main>
-        <Hero />
+        <Hero onRegisterClick={handleOpenRegistration} />
         <Suspense fallback={<SectionFallback />}>
           <About />
           <ProgramHighlights />
@@ -61,13 +71,18 @@ export default function App() {
           <IncubationSupport />
           <Vision />
           <Mindset />
-          <Registration />
-          <CTABanner />
+          <Registration onRegisterClick={handleOpenRegistration} />
+          <CTABanner onRegisterClick={handleOpenRegistration} />
         </Suspense>
       </main>
       <Suspense fallback={null}>
         <Footer />
       </Suspense>
+
+      <RegistrationModal
+        isOpen={isRegistrationOpen}
+        onClose={handleCloseRegistration}
+      />
     </>
   )
 }

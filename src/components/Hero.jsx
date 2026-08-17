@@ -9,7 +9,14 @@ const STATS = [
   '10+ Innovation Domains',
 ]
 
-export default function Hero() {
+export default function Hero({ onRegisterClick }) {
+  const handleRegister = (e) => {
+    if (onRegisterClick) {
+      e.preventDefault()
+      onRegisterClick()
+    }
+  }
+
   return (
     <section
       id="hero"
@@ -80,8 +87,7 @@ export default function Hero() {
           <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
             <a
               href={REGISTRATION_FORM_URL}
-              target="_blank"
-              rel="noopener noreferrer"
+              onClick={handleRegister}
               className="inline-flex items-center gap-2 rounded-full bg-accent px-8 py-3.5 text-base font-semibold text-white shadow-lg transition-all hover:-translate-y-0.5 hover:bg-amber-600 hover:shadow-xl"
             >
               Register Now
