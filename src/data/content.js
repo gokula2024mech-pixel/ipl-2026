@@ -1,8 +1,17 @@
 export const REGISTRATION_FORM_URL =
   'https://docs.google.com/forms/d/e/1FAIpQLSfPRcCHYYDc7WWoNmJofBCH8j6y-yoWGvJ15TecXmVWBlyZ6g/viewform?usp=publish-editor'
 
-export const TAGLINE = 'Ideate • Innovate • Design • Develop • Commercialize'
-export const SUB_TAGLINE = 'Transforming Ideas into Innovative Products'
+export const TAGLINE =
+  'Ideate • Innovate • Design • Develop • Commercialize'
+
+export const SUB_TAGLINE =
+  'Transforming Ideas into Innovative Products'
+
+
+/* =========================================================
+   FIRST TAB — INNOVATION DOMAINS
+   Existing domains
+   ========================================================= */
 
 export const DOMAINS = [
   {
@@ -67,6 +76,167 @@ export const DOMAINS = [
   },
 ]
 
+
+/* =========================================================
+   SECOND TAB — TECH DOMAINS
+   ========================================================= */
+
+export const TECH_DOMAINS = [
+  {
+    title: 'AI & Machine Learning',
+    icon: 'Brain',
+  },
+  {
+    title: 'Data Science & Analytics',
+    icon: 'BarChart3',
+  },
+  {
+    title: 'Computer Vision, NLP & Generative AI',
+    icon: 'ScanFace',
+  },
+  {
+    title: 'Software Development (Web & Mobile)',
+    icon: 'Code2',
+  },
+  {
+    title: 'Cloud, DevOps & Cybersecurity',
+    icon: 'CloudCog',
+  },
+  {
+    title: 'Blockchain & Web3',
+    icon: 'Blocks',
+  },
+  {
+    title: 'Immersive Tech & Game Development (AR / VR / XR)',
+    icon: 'Glasses',
+  },
+  {
+    title: 'Embedded Systems, IoT & Edge AI',
+    icon: 'Cpu',
+  },
+  {
+    title: 'VLSI & Semiconductor Technology',
+    icon: 'CircuitBoard',
+  },
+  {
+    title: 'Robotics, Control & Automation',
+    icon: 'Bot',
+  },
+  {
+    title: 'Communication, Signal Processing & Networking',
+    icon: 'Network',
+  },
+  {
+    title: 'Power Electronics & Electrical Drives',
+    icon: 'Zap',
+  },
+  {
+    title: 'Mechanical Design, Materials & Manufacturing',
+    icon: 'Cog',
+  },
+  {
+    title: 'Biomedical & Biotechnology',
+    icon: 'Dna',
+  },
+  {
+    title: 'Computational Modelling & Quantum Computing',
+    icon: 'Atom',
+  },
+]
+
+
+/* =========================================================
+   THIRD TAB — BUSINESS DOMAINS
+   ========================================================= */
+
+export const BUSINESS_DOMAINS = [
+  {
+    title: 'Healthcare, MedTech & Life Sciences',
+    icon: 'HeartPulse',
+  },
+  {
+    title: 'Assistive & Inclusive Technology',
+    icon: 'Accessibility',
+  },
+  {
+    title: 'Sports, Fitness & Wellness',
+    icon: 'Dumbbell',
+  },
+  {
+    title: 'Agriculture, Food Technology & Rural Development',
+    icon: 'Wheat',
+  },
+  {
+    title: 'Marine, Fisheries & Ocean Resources',
+    icon: 'Waves',
+  },
+  {
+    title: 'Energy, Renewables & CleanTech',
+    icon: 'Leaf',
+  },
+  {
+    title: 'Environment, Climate, Water & Waste Management',
+    icon: 'Droplets',
+  },
+  {
+    title: 'Manufacturing & Industry 4.0',
+    icon: 'Factory',
+  },
+  {
+    title: 'Automotive, Mobility & Transportation',
+    icon: 'Car',
+  },
+  {
+    title: 'Logistics & Supply Chain',
+    icon: 'Truck',
+  },
+  {
+    title: 'Construction, Infrastructure & Smart Cities',
+    icon: 'Building2',
+  },
+  {
+    title: 'Mining, Metals, Materials & Textiles',
+    icon: 'Pickaxe',
+  },
+  {
+    title: 'FinTech, Banking, Insurance & Retail',
+    icon: 'CreditCard',
+  },
+  {
+    title: 'Tourism, Media, Entertainment & Culture',
+    icon: 'Clapperboard',
+  },
+  {
+    title: 'Education, EdTech & Skill Development',
+    icon: 'GraduationCap',
+  },
+  {
+    title: 'Governance, Public Services & Social Impact',
+    icon: 'Landmark',
+  },
+  {
+    title: 'Disaster Management & Emergency Response',
+    icon: 'Siren',
+  },
+  {
+    title: 'Defence, Security & Surveillance',
+    icon: 'Shield',
+  },
+  {
+    title: 'Space & Aerospace',
+    icon: 'Rocket',
+  },
+  {
+    title: 'Campus & Institutional Innovation',
+    icon: 'School',
+  },
+]
+
+
+/* =========================================================
+   PROGRAM PHASES
+   ========================================================= */
+
 export const PHASES = [
   {
     id: 1,
@@ -88,6 +258,7 @@ export const PHASES = [
       { label: 'Cost', value: 25 },
     ],
   },
+
   {
     id: 2,
     title: 'Prototype Development & Testing',
@@ -107,6 +278,7 @@ export const PHASES = [
       { label: 'Finish', value: 15 },
     ],
   },
+
   {
     id: 3,
     title: 'Product Showcase & Commercialization',
@@ -129,13 +301,43 @@ export const PHASES = [
   },
 ]
 
+
+/* =========================================================
+   JUDGING CRITERIA
+   ========================================================= */
+
 export const JUDGING_CRITERIA = [
-  { label: 'Innovation', value: 30, color: '#1E3A8A' },
-  { label: 'Technical Design', value: 20, color: '#2563EB' },
-  { label: 'Working Prototype', value: 25, color: '#F59E0B' },
-  { label: 'Product Usability', value: 15, color: '#10B981' },
-  { label: 'Presentation', value: 10, color: '#8B5CF6' },
+  {
+    label: 'Innovation',
+    value: 30,
+    color: '#1E3A8A',
+  },
+  {
+    label: 'Technical Design',
+    value: 20,
+    color: '#2563EB',
+  },
+  {
+    label: 'Working Prototype',
+    value: 25,
+    color: '#F59E0B',
+  },
+  {
+    label: 'Product Usability',
+    value: 15,
+    color: '#10B981',
+  },
+  {
+    label: 'Presentation',
+    value: 10,
+    color: '#8B5CF6',
+  },
 ]
+
+
+/* =========================================================
+   TIMELINE EVENTS
+   ========================================================= */
 
 export const TIMELINE_EVENTS = [
   {
@@ -199,6 +401,11 @@ export const TIMELINE_EVENTS = [
     patentDescription: 'IP & Commercialization',
   },
 ]
+
+
+/* =========================================================
+   PROGRAM FLOW
+   ========================================================= */
 
 export const PROGRAM_FLOW_STEPS = [
   'Registration',
