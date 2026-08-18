@@ -1,6 +1,6 @@
 # IPL 2026 — Innovative Product League
 
-A modern, responsive single-page marketing and registration website for the IPDP 2026 college innovation program.
+A modern, responsive single-page marketing and registration website for the IPL 2026 college innovation program.
 
 ## Tech Stack
 
