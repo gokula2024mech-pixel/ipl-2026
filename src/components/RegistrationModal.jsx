@@ -514,11 +514,11 @@ export default function RegistrationModal({ isOpen, onClose }) {
         <div className="flex-1 overflow-y-auto p-6 md:p-8">
           {/* FORM STATE */}
           <form onSubmit={handleSubmit} className="space-y-8" noValidate>
-            {submitError && (
-              <div className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
-                <AlertCircle size={20} className="mt-0.5 shrink-0 text-red-600" />
+            {submitError && submitError.startsWith('Please fix') && (
+              <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                <AlertCircle size={20} className="mt-0.5 shrink-0 text-amber-600" />
                 <div>
-                  <p className="font-bold">Validation Error</p>
+                  <p className="font-bold">Form Validation Warning</p>
                   <p className="mt-0.5">{submitError}</p>
                 </div>
               </div>
