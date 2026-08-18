@@ -158,12 +158,6 @@ router.post('/registrations', (req, res) => {
         department: getVal(['member3Department', 'member3_department', 'member3[department]']),
       }
 
-      const member4 = {
-        name: getVal(['member4Name', 'member4_name', 'member4[name]']),
-        email: getVal(['member4Email', 'member4_email', 'member4[email]']),
-        mobile: getVal(['member4Mobile', 'member4_mobile', 'member4[mobile]']),
-        department: getVal(['member4Department', 'member4_department', 'member4[department]']),
-      }
 
       const mentor = {
         name: getVal(['facultyMentorName', 'mentor_name', 'mentorName', 'facultyMentor[name]']),
@@ -253,27 +247,7 @@ router.post('/registrations', (req, res) => {
         return res.status(400).json({ success: false, message: 'Member 3 department is required' })
       }
 
-      // Member 4 optional validation
-      if (member4.name || member4.email || member4.mobile || member4.department) {
-        if (!member4.name) {
-          return res.status(400).json({ success: false, message: 'Member 4 name is required when Member 4 details are provided' })
-        }
-        if (!isValidEmail(member4.email)) {
-          return res.status(400).json({
-            success: false,
-            message: 'All member email addresses must use the @sece.ac.in domain.',
-          })
-        }
-        if (!isValidIndianMobile(member4.mobile)) {
-          return res.status(400).json({
-            success: false,
-            message: 'All mobile numbers must be exactly 10 digits and start with 6, 7, 8, or 9.',
-          })
-        }
-        if (!member4.department) {
-          return res.status(400).json({ success: false, message: 'Member 4 department is required' })
-        }
-      }
+
 
       // Faculty Mentor validation
       if (!mentor.name) {
@@ -365,9 +339,8 @@ router.post('/registrations', (req, res) => {
         console.log('[Registration] Storage upload successful:', uploadedFilePath)
       }
 
-      // Insert row into Supabase PostgreSQL
+      // Insert row into Supabase PostgreSQL (only actual existing database columns)
       const recordToInsert = {
-        email,
         team_name: teamName,
         leader_name: leader.name,
         leader_email: leader.email,
@@ -381,10 +354,6 @@ router.post('/registrations', (req, res) => {
         member3_email: member3.email,
         member3_mobile: member3.mobile,
         member3_department: member3.department,
-        member4_name: member4.name || null,
-        member4_email: member4.email || null,
-        member4_mobile: member4.mobile || null,
-        member4_department: member4.department || null,
         mentor_name: mentor.name,
         mentor_department: mentor.department,
         innovation_domain: innovationDomain,

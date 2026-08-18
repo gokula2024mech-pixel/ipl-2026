@@ -16,7 +16,6 @@ $$ LANGUAGE plpgsql;
 CREATE TABLE IF NOT EXISTS public.registrations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   registration_id TEXT UNIQUE NOT NULL DEFAULT generate_ipl_registration_id(),
-  email TEXT NOT NULL,
   team_name TEXT NOT NULL,
 
   -- Team Leader Details
@@ -36,12 +35,6 @@ CREATE TABLE IF NOT EXISTS public.registrations (
   member3_email TEXT NOT NULL,
   member3_mobile TEXT NOT NULL,
   member3_department TEXT NOT NULL,
-
-  -- Member 4 Details (Optional)
-  member4_name TEXT,
-  member4_email TEXT,
-  member4_mobile TEXT,
-  member4_department TEXT,
 
   -- Faculty Mentor Details
   mentor_name TEXT NOT NULL,
