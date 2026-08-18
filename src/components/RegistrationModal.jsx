@@ -147,9 +147,10 @@ export default function RegistrationModal({ isOpen, onClose }) {
     const newErrors = {}
 
     // General & Team Leader
-    if (!formData.email.trim()) {
+    const effectiveEmail = (formData.email || formData.teamLeaderEmail || '').trim()
+    if (!effectiveEmail) {
       newErrors.email = 'Email is required'
-    } else if (!SECE_EMAIL_REGEX.test(formData.email.trim())) {
+    } else if (!SECE_EMAIL_REGEX.test(effectiveEmail)) {
       newErrors.email = 'Please enter a valid SECE email address ending with @sece.ac.in.'
     }
 
@@ -273,27 +274,40 @@ export default function RegistrationModal({ isOpen, onClose }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
+    console.log('[Registration] Submit clicked')
     setSubmitError('')
 
-    if (!validateForm()) {
+    const isValid = validateForm()
+    if (!isValid) {
+      console.log('[Registration] Validation failed')
       setSubmitError('Please fix all validation errors before submitting.')
       return
     }
+
+    console.log('[Registration] Validation passed')
+    console.log('[Registration] API URL:', API_BASE_URL)
 
     setIsSubmitting(true)
 
     try {
       const dataPayload = new FormData()
 
+      const effectiveData = {
+        ...formData,
+        email: formData.email.trim() || formData.teamLeaderEmail.trim(),
+      }
+
       // Append text fields
-      Object.keys(formData).forEach((key) => {
-        dataPayload.append(key, formData[key])
-      });
+      Object.keys(effectiveData).forEach((key) => {
+        dataPayload.append(key, effectiveData[key])
+      })
 
       // Append file if selected
       if (selectedFile) {
         dataPayload.append('file', selectedFile)
       }
+
+      console.log('[Registration] Sending registration request')
 
       const response = await fetch(`${API_BASE_URL}/api/registrations`, {
         method: 'POST',
@@ -306,10 +320,10 @@ export default function RegistrationModal({ isOpen, onClose }) {
         throw new Error(data.message || 'Registration submission failed.')
       }
 
-      // Success
+      console.log('[Registration] Submission success:', data)
       setSuccessData(data)
     } catch (err) {
-      console.error('Registration error:', err)
+      console.error('[Registration] Submission error:', err)
       setSubmitError(
         err.message ||
           'Failed to connect to backend server. Please make sure the server is running.'
@@ -977,7 +991,6 @@ export default function RegistrationModal({ isOpen, onClose }) {
                   )}
                 </div>
               </div>
-
 
               {/* 7. DECLARATION */}
               <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-5 md:p-6">
