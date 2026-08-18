@@ -32,7 +32,8 @@ const OFFICIAL_DOMAINS = [
 const ALLOWED_EXTENSIONS = ['.pdf', '.png', '.jpg', '.jpeg', '.ppt', '.pptx']
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024 // 10 MB
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+const rawApiUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000').trim().replace(/\/+$/, '')
+const API_BASE_URL = rawApiUrl.endsWith('/api') ? rawApiUrl.slice(0, -4) : rawApiUrl
 
 const SECE_EMAIL_REGEX = /^[A-Za-z0-9._%+-]+@sece\.ac\.in$/i
 const INDIAN_MOBILE_REGEX = /^[6-9]\d{9}$/
