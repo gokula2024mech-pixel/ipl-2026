@@ -6,7 +6,7 @@ import { REGISTRATION_FORM_URL } from '../data/content'
 const ELIGIBILITY = [
   { label: 'Departments', value: 'All Engineering' },
   { label: 'Eligible Students', value: 'UG' },
-  { label: 'Team Size', value: '3–4' },
+  { label: 'Team Size', value: '3' },
   { label: 'Faculty Mentor', value: 'Mandatory' },
 ]
 

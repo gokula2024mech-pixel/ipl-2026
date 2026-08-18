@@ -5,7 +5,7 @@ import { TAGLINE, SUB_TAGLINE, REGISTRATION_FORM_URL } from '../data/content'
 const STATS = [
   '3 Phases',
   '4 Weeks',
-  '3–4 Members/Team',
+  '3 Members/Team',
   '10+ Innovation Domains',
 ]
 

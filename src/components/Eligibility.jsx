@@ -18,7 +18,7 @@ const CRITERIA = [
   {
     icon: Users,
     title: 'Team Size',
-    value: '3–4 Members',
+    value: '3 Members',
     description: 'Form a balanced team with complementary skills.',
   },
   {

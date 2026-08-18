@@ -15,7 +15,7 @@ const HIGHLIGHTS = [
   },
   {
     icon: Users,
-    stat: '3–4 Members',
+    stat: '3 Members',
     description: 'Optimal team size for meaningful collaboration and shared ownership.',
   },
   {

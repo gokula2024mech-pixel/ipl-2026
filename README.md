@@ -93,4 +93,4 @@ Replace placeholder values marked with `TODO` comments in:
 
 ## License
 
-© 2026 IPL – Innovative Product Development Program. All Rights Reserved.
+© 2026 IPL – Innovative Product League. All Rights Reserved.

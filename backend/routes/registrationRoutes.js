@@ -134,7 +134,7 @@ router.post('/registrations', (req, res) => {
         return defaultVal
       }
 
-      const email = getVal(['email'])
+      const email = getVal(['email', 'teamLeaderEmail', 'leader_email', 'leaderEmail'])
       const teamName = getVal(['teamName', 'team_name'])
 
       const leader = {
