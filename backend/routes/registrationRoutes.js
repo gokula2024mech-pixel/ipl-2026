@@ -328,9 +328,37 @@ router.post('/registrations', (req, res) => {
 
       if (dbError) {
         console.error('[Registration] Database insert error:', dbError.message || dbError)
+        const errMsg = String(dbError.message || dbError.details || '')
+
+        // Detect MEMBER_ALREADY_REGISTERED
+        if (errMsg.includes('MEMBER_ALREADY_REGISTERED')) {
+          const regIdMatch = errMsg.match(/(IPL26-\d{4})/i)
+          const registrationId = regIdMatch ? regIdMatch[1] : null
+          return res.status(409).json({
+            success: false,
+            code: 'MEMBER_ALREADY_REGISTERED',
+            message: 'This team member is already registered.',
+            registration_id: registrationId,
+            registrationId: registrationId,
+          })
+        }
+
+        // Detect TEAM_ALREADY_REGISTERED
+        if (errMsg.includes('TEAM_ALREADY_REGISTERED') || errMsg.includes('team_name')) {
+          const regIdMatch = errMsg.match(/(IPL26-\d{4})/i)
+          const registrationId = regIdMatch ? regIdMatch[1] : null
+          return res.status(409).json({
+            success: false,
+            code: 'TEAM_ALREADY_REGISTERED',
+            message: 'This team name is already registered.',
+            registration_id: registrationId,
+            registrationId: registrationId,
+          })
+        }
+
         return res.status(500).json({
           success: false,
-          message: 'Database error saving registration: ' + dbError.message,
+          message: 'An error occurred while saving your registration. Please try again.',
         })
       }
 

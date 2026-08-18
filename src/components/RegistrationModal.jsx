@@ -72,6 +72,7 @@ export default function RegistrationModal({ isOpen, onClose }) {
   const [errors, setErrors] = useState({})
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState('')
+  const [activePopup, setActivePopup] = useState(null)
   const [successData, setSuccessData] = useState(null)
   const [copied, setCopied] = useState(false)
 
@@ -318,25 +319,73 @@ export default function RegistrationModal({ isOpen, onClose }) {
       const data = await response.json()
 
       if (!response.ok || !data.success) {
-        throw new Error(data.message || 'Registration submission failed.')
+        const rawMsg = String(data.message || '')
+        const extractedId =
+          data.registration_id ||
+          data.registrationId ||
+          (rawMsg.match(/(IPL26-\d{4})/i) || [])[1] ||
+          null
+
+        if (
+          data.code === 'MEMBER_ALREADY_REGISTERED' ||
+          rawMsg.includes('MEMBER_ALREADY_REGISTERED')
+        ) {
+          setActivePopup({
+            type: 'duplicate_member',
+            title: 'Registration Already Exists',
+            message: 'This team member is already registered with us.',
+            registrationId: extractedId,
+          })
+          return
+        }
+
+        if (
+          data.code === 'TEAM_ALREADY_REGISTERED' ||
+          rawMsg.includes('TEAM_ALREADY_REGISTERED') ||
+          rawMsg.includes('team_name')
+        ) {
+          setActivePopup({
+            type: 'duplicate_team',
+            title: 'Team Already Registered',
+            message: 'This team name has already been registered.',
+            registrationId: extractedId,
+          })
+          return
+        }
+
+        // Generic / Unexpected Error
+        setActivePopup({
+          type: 'error',
+          title: 'Unable to Complete Registration',
+          message: 'Something went wrong while submitting your registration. Please try again.',
+        })
+        return
       }
 
       console.log('[Registration] Submission success:', data)
+      const regId = data.registrationId || data.registration_id
       setSuccessData(data)
+      setActivePopup({
+        type: 'success',
+        title: 'Registration Successful',
+        message: 'Your team has been registered successfully.',
+        registrationId: regId,
+      })
     } catch (err) {
       console.error('[Registration] Submission error:', err)
-      setSubmitError(
-        err.message ||
-          'Failed to connect to backend server. Please make sure the server is running.'
-      )
+      setActivePopup({
+        type: 'error',
+        title: 'Unable to Complete Registration',
+        message: 'Something went wrong while submitting your registration. Please try again.',
+      })
     } finally {
       setIsSubmitting(false)
     }
   }
 
-  const handleCopyId = () => {
-    if (successData?.registrationId) {
-      navigator.clipboard.writeText(successData.registrationId)
+  const handleCopyPopupId = (id) => {
+    if (id) {
+      navigator.clipboard.writeText(id)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     }
@@ -345,11 +394,101 @@ export default function RegistrationModal({ isOpen, onClose }) {
   const handleClose = () => {
     setSuccessData(null)
     setSubmitError('')
+    setActivePopup(null)
     onClose()
+  }
+
+  const handleClosePopup = () => {
+    const isSuccess = activePopup?.type === 'success'
+    setActivePopup(null)
+    if (isSuccess) {
+      handleClose()
+    }
   }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-900/80 p-3 backdrop-blur-sm md:p-6">
+      {/* POPUP MODAL OVERLAY */}
+      {activePopup && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs">
+          <div className="relative w-full max-w-md rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl transition-all md:p-8 text-center">
+            <button
+              type="button"
+              onClick={handleClosePopup}
+              className="absolute top-4 right-4 rounded-full p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition-colors"
+              aria-label="Close popup"
+            >
+              <X size={20} />
+            </button>
+
+            {/* Icon Header */}
+            {activePopup.type === 'success' ? (
+              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
+                <CheckCircle2 size={36} />
+              </div>
+            ) : activePopup.type === 'error' ? (
+              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-red-100 text-red-600">
+                <AlertCircle size={36} />
+              </div>
+            ) : (
+              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-amber-100 text-amber-600">
+                <AlertCircle size={36} />
+              </div>
+            )}
+
+            {/* Popup Title */}
+            <h3 className="font-heading text-xl font-bold text-slate-900 md:text-2xl">
+              {activePopup.title}
+            </h3>
+
+            {/* Popup Message */}
+            <p className="mt-2 text-sm text-slate-600 font-medium leading-relaxed">
+              {activePopup.message}
+            </p>
+
+            {/* Registration ID Badge */}
+            {activePopup.registrationId && (
+              <div className="my-6 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-center">
+                <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                  {activePopup.type === 'success' ? 'Registration ID' : 'Existing Registration ID'}
+                </p>
+                <div className="mt-2 flex items-center justify-center gap-3">
+                  <span className="font-heading text-2xl font-extrabold tracking-tight text-slate-900">
+                    {activePopup.registrationId}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleCopyPopupId(activePopup.registrationId)}
+                    className="flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 shadow-xs hover:bg-slate-50 transition-all"
+                  >
+                    {copied ? (
+                      <>
+                        <Check size={14} className="text-emerald-600" /> Copied
+                      </>
+                    ) : (
+                      <>
+                        <Copy size={14} /> Copy ID
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Close Action Button */}
+            <div className="mt-6 flex justify-center">
+              <button
+                type="button"
+                onClick={handleClosePopup}
+                className="w-full rounded-full bg-slate-900 px-8 py-3 text-sm font-semibold text-white shadow-md transition-all hover:bg-slate-800 hover:shadow-lg sm:w-auto"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="relative flex max-h-[92vh] w-full max-w-4xl flex-col rounded-3xl border border-slate-200 bg-white shadow-2xl transition-all">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5 md:px-8">
@@ -373,684 +512,625 @@ export default function RegistrationModal({ isOpen, onClose }) {
 
         {/* Content Body */}
         <div className="flex-1 overflow-y-auto p-6 md:p-8">
-          {successData ? (
-            /* SUCCESS STATE SCREEN */
-            <div className="py-6 text-center">
-              <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
-                <CheckCircle2 size={48} />
-              </div>
-              <h3 className="font-heading text-2xl font-bold text-slate-900 md:text-3xl">
-                🎉 Registration Successful!
-              </h3>
-              <p className="mx-auto mt-3 max-w-md text-base text-slate-600">
-                Your team has been successfully registered for{' '}
-                <span className="font-semibold text-slate-800">
-                  IPL-2026 — Innovative Product League
-                </span>
-                .
-              </p>
-
-              {/* Registration ID Display Card */}
-              <div className="mx-auto my-8 max-w-sm rounded-2xl border border-emerald-200 bg-emerald-50/50 p-6 shadow-sm">
-                <p className="text-xs font-bold uppercase tracking-wider text-emerald-800">
-                  Your Registration ID
-                </p>
-                <div className="mt-2 flex items-center justify-center gap-3">
-                  <span className="font-heading text-3xl font-extrabold tracking-tight text-emerald-700">
-                    {successData.registrationId}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={handleCopyId}
-                    className="flex items-center gap-1 rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-800 shadow-sm transition-all hover:bg-emerald-50"
-                  >
-                    {copied ? (
-                      <>
-                        <Check size={16} className="text-emerald-600" /> Copied
-                      </>
-                    ) : (
-                      <>
-                        <Copy size={16} /> Copy ID
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
-
-              <div className="mb-8 rounded-xl border border-amber-200 bg-amber-50/80 p-4 max-w-md mx-auto text-sm text-amber-900">
-                ⚠️ Please save this Registration ID for future reference and evaluation tracking.
-              </div>
-
-              <button
-                type="button"
-                onClick={handleClose}
-                className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-8 py-3.5 text-base font-semibold text-white shadow-lg transition-all hover:bg-slate-800 hover:shadow-xl"
-              >
-                Back to Home
-              </button>
-            </div>
-          ) : (
-            /* FORM STATE */
-            <form onSubmit={handleSubmit} className="space-y-8" noValidate>
-              {submitError && (
-                <div className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
-                  <AlertCircle size={20} className="mt-0.5 shrink-0 text-red-600" />
-                  <div>
-                    <p className="font-bold">Submission Error</p>
-                    <p className="mt-0.5">{submitError}</p>
-                  </div>
-                </div>
-              )}
-
-              {/* 1. TEAM INFORMATION */}
-              <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-5 md:p-6">
-                <div className="mb-4 flex items-center gap-2.5 border-b border-slate-200 pb-3 text-slate-900">
-                  <Users className="text-accent" size={20} />
-                  <h3 className="font-heading text-lg font-bold">1. Team Information</h3>
-                </div>
-
-                <div className="grid gap-4 md:grid-cols-2">
-
-                  <div>
-                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
-                      Team Name *
-                    </label>
-                    <input
-                      type="text"
-                      name="teamName"
-                      value={formData.teamName}
-                      onChange={handleChange}
-                      placeholder="e.g. Innovators 2026"
-                      className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
-                        errors.teamName
-                          ? 'border-red-400 focus:ring-red-200'
-                          : 'border-slate-300 focus:border-accent focus:ring-amber-100'
-                      }`}
-                    />
-                    {errors.teamName && (
-                      <p className="mt-1 text-xs text-red-600">{errors.teamName}</p>
-                    )}
-                  </div>
-                </div>
-
-                <div className="mt-6 border-t border-slate-200/80 pt-4">
-                  <h4 className="mb-3 text-sm font-bold text-slate-800 flex items-center gap-2">
-                    <User size={16} className="text-primary" /> Team Leader Details
-                  </h4>
-
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <div>
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
-                        Leader Name *
-                      </label>
-                      <input
-                        type="text"
-                        name="teamLeaderName"
-                        value={formData.teamLeaderName}
-                        onChange={handleChange}
-                        placeholder="Full Name"
-                        className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
-                          errors.teamLeaderName
-                            ? 'border-red-400 focus:ring-red-200'
-                            : 'border-slate-300 focus:border-accent focus:ring-amber-100'
-                        }`}
-                      />
-                      {errors.teamLeaderName && (
-                        <p className="mt-1 text-xs text-red-600">
-                          {errors.teamLeaderName}
-                        </p>
-                      )}
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
-                        Leader Email *
-                      </label>
-                      <input
-                        type="email"
-                        name="teamLeaderEmail"
-                        value={formData.teamLeaderEmail}
-                        onChange={handleChange}
-                        placeholder="name@sece.ac.in"
-                        className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
-                          errors.teamLeaderEmail
-                            ? 'border-red-400 focus:ring-red-200'
-                            : 'border-slate-300 focus:border-accent focus:ring-amber-100'
-                        }`}
-                      />
-                      {errors.teamLeaderEmail && (
-                        <p className="mt-1 text-xs text-red-600">
-                          {errors.teamLeaderEmail}
-                        </p>
-                      )}
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
-                        Leader Mobile No *
-                      </label>
-                      <input
-                        type="tel"
-                        inputMode="numeric"
-                        maxLength={10}
-                        name="teamLeaderMobile"
-                        value={formData.teamLeaderMobile}
-                        onChange={handleChange}
-                        placeholder="10-digit Indian Mobile No"
-                        className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
-                          errors.teamLeaderMobile
-                            ? 'border-red-400 focus:ring-red-200'
-                            : 'border-slate-300 focus:border-accent focus:ring-amber-100'
-                        }`}
-                      />
-                      {errors.teamLeaderMobile && (
-                        <p className="mt-1 text-xs text-red-600">
-                          {errors.teamLeaderMobile}
-                        </p>
-                      )}
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
-                        Leader Department *
-                      </label>
-                      <input
-                        type="text"
-                        name="teamLeaderDepartment"
-                        value={formData.teamLeaderDepartment}
-                        onChange={handleChange}
-                        placeholder="eg : Mechanical Department"
-                        className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
-                          errors.teamLeaderDepartment
-                            ? 'border-red-400 focus:ring-red-200'
-                            : 'border-slate-300 focus:border-accent focus:ring-amber-100'
-                        }`}
-                      />
-                      {errors.teamLeaderDepartment && (
-                        <p className="mt-1 text-xs text-red-600">
-                          {errors.teamLeaderDepartment}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* 2. TEAM MEMBERS */}
-              <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-5 md:p-6 space-y-6">
-                <div className="flex items-center gap-2.5 border-b border-slate-200 pb-3 text-slate-900">
-                  <Users className="text-accent" size={20} />
-                  <h3 className="font-heading text-lg font-bold">2. Team Members</h3>
-                </div>
-
-                {/* Team Member 2 */}
+          {/* FORM STATE */}
+          <form onSubmit={handleSubmit} className="space-y-8" noValidate>
+            {submitError && (
+              <div className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+                <AlertCircle size={20} className="mt-0.5 shrink-0 text-red-600" />
                 <div>
-                  <h4 className="mb-3 text-sm font-bold text-slate-800">
-                    Team Member 2 *
-                  </h4>
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <div>
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
-                        Name *
-                      </label>
-                      <input
-                        type="text"
-                        name="member2Name"
-                        value={formData.member2Name}
-                        onChange={handleChange}
-                        placeholder="Full Name"
-                        className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
-                          errors.member2Name
-                            ? 'border-red-400 focus:ring-red-200'
-                            : 'border-slate-300 focus:border-accent focus:ring-amber-100'
-                        }`}
-                      />
-                      {errors.member2Name && (
-                        <p className="mt-1 text-xs text-red-600">
-                          {errors.member2Name}
-                        </p>
-                      )}
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
-                        Email *
-                      </label>
-                      <input
-                        type="email"
-                        name="member2Email"
-                        value={formData.member2Email}
-                        onChange={handleChange}
-                        placeholder="name@sece.ac.in"
-                        className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
-                          errors.member2Email
-                            ? 'border-red-400 focus:ring-red-200'
-                            : 'border-slate-300 focus:border-accent focus:ring-amber-100'
-                        }`}
-                      />
-                      {errors.member2Email && (
-                        <p className="mt-1 text-xs text-red-600">
-                          {errors.member2Email}
-                        </p>
-                      )}
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
-                        Mobile No *
-                      </label>
-                      <input
-                        type="tel"
-                        inputMode="numeric"
-                        maxLength={10}
-                        name="member2Mobile"
-                        value={formData.member2Mobile}
-                        onChange={handleChange}
-                        placeholder="10-digit Indian Mobile No"
-                        className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
-                          errors.member2Mobile
-                            ? 'border-red-400 focus:ring-red-200'
-                            : 'border-slate-300 focus:border-accent focus:ring-amber-100'
-                        }`}
-                      />
-                      {errors.member2Mobile && (
-                        <p className="mt-1 text-xs text-red-600">
-                          {errors.member2Mobile}
-                        </p>
-                      )}
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
-                        Department *
-                      </label>
-                      <input
-                        type="text"
-                        name="member2Department"
-                        value={formData.member2Department}
-                        onChange={handleChange}
-                        placeholder="eg : Mechanical Department"
-                        className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
-                          errors.member2Department
-                            ? 'border-red-400 focus:ring-red-200'
-                            : 'border-slate-300 focus:border-accent focus:ring-amber-100'
-                        }`}
-                      />
-                      {errors.member2Department && (
-                        <p className="mt-1 text-xs text-red-600">
-                          {errors.member2Department}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Team Member 3 */}
-                <div className="border-t border-slate-200/80 pt-4">
-                  <h4 className="mb-3 text-sm font-bold text-slate-800">
-                    Team Member 3 *
-                  </h4>
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <div>
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
-                        Name *
-                      </label>
-                      <input
-                        type="text"
-                        name="member3Name"
-                        value={formData.member3Name}
-                        onChange={handleChange}
-                        placeholder="Full Name"
-                        className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
-                          errors.member3Name
-                            ? 'border-red-400 focus:ring-red-200'
-                            : 'border-slate-300 focus:border-accent focus:ring-amber-100'
-                        }`}
-                      />
-                      {errors.member3Name && (
-                        <p className="mt-1 text-xs text-red-600">
-                          {errors.member3Name}
-                        </p>
-                      )}
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
-                        Email *
-                      </label>
-                      <input
-                        type="email"
-                        name="member3Email"
-                        value={formData.member3Email}
-                        onChange={handleChange}
-                        placeholder="name@sece.ac.in"
-                        className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
-                          errors.member3Email
-                            ? 'border-red-400 focus:ring-red-200'
-                            : 'border-slate-300 focus:border-accent focus:ring-amber-100'
-                        }`}
-                      />
-                      {errors.member3Email && (
-                        <p className="mt-1 text-xs text-red-600">
-                          {errors.member3Email}
-                        </p>
-                      )}
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
-                        Mobile No *
-                      </label>
-                      <input
-                        type="tel"
-                        inputMode="numeric"
-                        maxLength={10}
-                        name="member3Mobile"
-                        value={formData.member3Mobile}
-                        onChange={handleChange}
-                        placeholder="10-digit Indian Mobile No"
-                        className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
-                          errors.member3Mobile
-                            ? 'border-red-400 focus:ring-red-200'
-                            : 'border-slate-300 focus:border-accent focus:ring-amber-100'
-                        }`}
-                      />
-                      {errors.member3Mobile && (
-                        <p className="mt-1 text-xs text-red-600">
-                          {errors.member3Mobile}
-                        </p>
-                      )}
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
-                        Department *
-                      </label>
-                      <input
-                        type="text"
-                        name="member3Department"
-                        value={formData.member3Department}
-                        onChange={handleChange}
-                        placeholder="eg : Mechanical Department"
-                        className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
-                          errors.member3Department
-                            ? 'border-red-400 focus:ring-red-200'
-                            : 'border-slate-300 focus:border-accent focus:ring-amber-100'
-                        }`}
-                      />
-                      {errors.member3Department && (
-                        <p className="mt-1 text-xs text-red-600">
-                          {errors.member3Department}
-                        </p>
-                      )}
-                    </div>
-                  </div>
+                  <p className="font-bold">Validation Error</p>
+                  <p className="mt-0.5">{submitError}</p>
                 </div>
               </div>
+            )}
 
-              {/* 3. FACULTY MENTOR */}
-              <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-5 md:p-6">
-                <div className="mb-4 flex items-center gap-2.5 border-b border-slate-200 pb-3 text-slate-900">
-                  <Building className="text-accent" size={20} />
-                  <h3 className="font-heading text-lg font-bold">
-                    3. Faculty Mentor
-                  </h3>
-                </div>
-
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div>
-                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
-                      Faculty Mentor Name *
-                    </label>
-                    <input
-                      type="text"
-                      name="facultyMentorName"
-                      value={formData.facultyMentorName}
-                      onChange={handleChange}
-                      placeholder="Dr. / Prof. Full Name"
-                      className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
-                        errors.facultyMentorName
-                          ? 'border-red-400 focus:ring-red-200'
-                          : 'border-slate-300 focus:border-accent focus:ring-amber-100'
-                      }`}
-                    />
-                    {errors.facultyMentorName && (
-                      <p className="mt-1 text-xs text-red-600">
-                        {errors.facultyMentorName}
-                      </p>
-                    )}
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
-                      Faculty Mentor Department *
-                    </label>
-                    <input
-                      type="text"
-                      name="facultyMentorDepartment"
-                      value={formData.facultyMentorDepartment}
-                      onChange={handleChange}
-                      placeholder="eg : Mechanical Department"
-                      className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
-                        errors.facultyMentorDepartment
-                          ? 'border-red-400 focus:ring-red-200'
-                          : 'border-slate-300 focus:border-accent focus:ring-amber-100'
-                      }`}
-                    />
-                    {errors.facultyMentorDepartment && (
-                      <p className="mt-1 text-xs text-red-600">
-                        {errors.facultyMentorDepartment}
-                      </p>
-                    )}
-                  </div>
-                </div>
+            {/* 1. TEAM INFORMATION */}
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-5 md:p-6">
+              <div className="mb-4 flex items-center gap-2.5 border-b border-slate-200 pb-3 text-slate-900">
+                <Users className="text-accent" size={20} />
+                <h3 className="font-heading text-lg font-bold">1. Team Information</h3>
               </div>
 
-              {/* 4. INNOVATION DOMAIN */}
-              <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-5 md:p-6">
-                <div className="mb-4 flex items-center gap-2.5 border-b border-slate-200 pb-3 text-slate-900">
-                  <Lightbulb className="text-accent" size={20} />
-                  <h3 className="font-heading text-lg font-bold">
-                    4. Innovation Domain
-                  </h3>
-                </div>
-
-                <p className="mb-4 text-xs font-medium text-slate-600">
-                  Select exactly ONE primary innovation domain for your team project:
-                </p>
-
-                <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
-                  {OFFICIAL_DOMAINS.map((domain) => {
-                    const isSelected = formData.innovationDomain === domain
-                    return (
-                      <label
-                        key={domain}
-                        className={`flex cursor-pointer items-center gap-3 rounded-xl border p-3 text-xs font-semibold transition-all ${
-                          isSelected
-                            ? 'border-primary bg-primary/5 text-primary shadow-sm ring-1 ring-primary'
-                            : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'
-                        }`}
-                      >
-                        <input
-                          type="radio"
-                          name="innovationDomain"
-                          value={domain}
-                          checked={isSelected}
-                          onChange={handleChange}
-                          className="h-4 w-4 accent-primary"
-                        />
-                        <span>{domain}</span>
-                      </label>
-                    )
-                  })}
-                </div>
-                {errors.innovationDomain && (
-                  <p className="mt-2 text-xs font-semibold text-red-600">
-                    {errors.innovationDomain}
-                  </p>
-                )}
-              </div>
-
-              {/* 5. PRODUCT DETAILS */}
-              <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-5 md:p-6 space-y-4">
-                <div className="flex items-center gap-2.5 border-b border-slate-200 pb-3 text-slate-900">
-                  <FileText className="text-accent" size={20} />
-                  <h3 className="font-heading text-lg font-bold">
-                    5. Product / Project Details
-                  </h3>
-                </div>
-
+              <div className="grid gap-4 md:grid-cols-2">
                 <div>
                   <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
-                    Proposed Product / Project Title *
+                    Team Name *
                   </label>
                   <input
                     type="text"
-                    name="projectTitle"
-                    value={formData.projectTitle}
+                    name="teamName"
+                    value={formData.teamName}
                     onChange={handleChange}
-                    placeholder="Clear title describing your innovation"
+                    placeholder="e.g. Innovators 2026"
                     className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
-                      errors.projectTitle
+                      errors.teamName
                         ? 'border-red-400 focus:ring-red-200'
                         : 'border-slate-300 focus:border-accent focus:ring-amber-100'
                     }`}
                   />
-                  {errors.projectTitle && (
-                    <p className="mt-1 text-xs text-red-600">
-                      {errors.projectTitle}
-                    </p>
-                  )}
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
-                    Problem Area *
-                  </label>
-                  <textarea
-                    name="problemArea"
-                    rows={3}
-                    value={formData.problemArea}
-                    onChange={handleChange}
-                    placeholder="Describe the real-world problem you are addressing..."
-                    className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
-                      errors.problemArea
-                        ? 'border-red-400 focus:ring-red-200'
-                        : 'border-slate-300 focus:border-accent focus:ring-amber-100'
-                    }`}
-                  />
-                  {errors.problemArea && (
-                    <p className="mt-1 text-xs text-red-600">
-                      {errors.problemArea}
-                    </p>
-                  )}
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
-                    Proposed Solution *
-                  </label>
-                  <textarea
-                    name="proposedSolution"
-                    rows={3}
-                    value={formData.proposedSolution}
-                    onChange={handleChange}
-                    placeholder="Explain your innovative technical/business solution..."
-                    className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
-                      errors.proposedSolution
-                        ? 'border-red-400 focus:ring-red-200'
-                        : 'border-slate-300 focus:border-accent focus:ring-amber-100'
-                    }`}
-                  />
-                  {errors.proposedSolution && (
-                    <p className="mt-1 text-xs text-red-600">
-                      {errors.proposedSolution}
-                    </p>
-                  )}
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
-                    Expected Impact *
-                  </label>
-                  <textarea
-                    name="expectedImpact"
-                    rows={3}
-                    value={formData.expectedImpact}
-                    onChange={handleChange}
-                    placeholder="Detail the expected social, economic, or technological impact..."
-                    className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
-                      errors.expectedImpact
-                        ? 'border-red-400 focus:ring-red-200'
-                        : 'border-slate-300 focus:border-accent focus:ring-amber-100'
-                    }`}
-                  />
-                  {errors.expectedImpact && (
-                    <p className="mt-1 text-xs text-red-600">
-                      {errors.expectedImpact}
-                    </p>
+                  {errors.teamName && (
+                    <p className="mt-1 text-xs text-red-600">{errors.teamName}</p>
                   )}
                 </div>
               </div>
 
-              {/* 7. DECLARATION */}
-              <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-5 md:p-6">
-                <div className="mb-3 flex items-center gap-2.5 border-b border-slate-200 pb-3 text-slate-900">
-                  <ShieldAlert className="text-accent" size={20} />
-                  <h3 className="font-heading text-lg font-bold">
-                    7. Declaration
-                  </h3>
+              <div className="mt-6 border-t border-slate-200/80 pt-4">
+                <h4 className="mb-3 text-sm font-bold text-slate-800 flex items-center gap-2">
+                  <User size={16} className="text-primary" /> Team Leader Details
+                </h4>
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
+                      Leader Name *
+                    </label>
+                    <input
+                      type="text"
+                      name="teamLeaderName"
+                      value={formData.teamLeaderName}
+                      onChange={handleChange}
+                      placeholder="Full Name"
+                      className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
+                        errors.teamLeaderName
+                          ? 'border-red-400 focus:ring-red-200'
+                          : 'border-slate-300 focus:border-accent focus:ring-amber-100'
+                      }`}
+                    />
+                    {errors.teamLeaderName && (
+                      <p className="mt-1 text-xs text-red-600">
+                        {errors.teamLeaderName}
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
+                      Leader Email *
+                    </label>
+                    <input
+                      type="email"
+                      name="teamLeaderEmail"
+                      value={formData.teamLeaderEmail}
+                      onChange={handleChange}
+                      placeholder="name@sece.ac.in"
+                      className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
+                        errors.teamLeaderEmail
+                          ? 'border-red-400 focus:ring-red-200'
+                          : 'border-slate-300 focus:border-accent focus:ring-amber-100'
+                      }`}
+                    />
+                    {errors.teamLeaderEmail && (
+                      <p className="mt-1 text-xs text-red-600">
+                        {errors.teamLeaderEmail}
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
+                      Leader Mobile No *
+                    </label>
+                    <input
+                      type="tel"
+                      inputMode="numeric"
+                      maxLength={10}
+                      name="teamLeaderMobile"
+                      value={formData.teamLeaderMobile}
+                      onChange={handleChange}
+                      placeholder="10-digit Indian Mobile No"
+                      className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
+                        errors.teamLeaderMobile
+                          ? 'border-red-400 focus:ring-red-200'
+                          : 'border-slate-300 focus:border-accent focus:ring-amber-100'
+                      }`}
+                    />
+                    {errors.teamLeaderMobile && (
+                      <p className="mt-1 text-xs text-red-600">
+                        {errors.teamLeaderMobile}
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
+                      Leader Department *
+                    </label>
+                    <input
+                      type="text"
+                      name="teamLeaderDepartment"
+                      value={formData.teamLeaderDepartment}
+                      onChange={handleChange}
+                      placeholder="eg : Mechanical Department"
+                      className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
+                        errors.teamLeaderDepartment
+                          ? 'border-red-400 focus:ring-red-200'
+                          : 'border-slate-300 focus:border-accent focus:ring-amber-100'
+                      }`}
+                    />
+                    {errors.teamLeaderDepartment && (
+                      <p className="mt-1 text-xs text-red-600">
+                        {errors.teamLeaderDepartment}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 2. TEAM MEMBERS */}
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-5 md:p-6 space-y-6">
+              <div className="flex items-center gap-2.5 border-b border-slate-200 pb-3 text-slate-900">
+                <Users className="text-accent" size={20} />
+                <h3 className="font-heading text-lg font-bold">2. Team Members</h3>
+              </div>
+
+              {/* Team Member 2 */}
+              <div>
+                <h4 className="mb-3 text-sm font-bold text-slate-800">
+                  Team Member 2 *
+                </h4>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
+                      Name *
+                    </label>
+                    <input
+                      type="text"
+                      name="member2Name"
+                      value={formData.member2Name}
+                      onChange={handleChange}
+                      placeholder="Full Name"
+                      className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
+                        errors.member2Name
+                          ? 'border-red-400 focus:ring-red-200'
+                          : 'border-slate-300 focus:border-accent focus:ring-amber-100'
+                      }`}
+                    />
+                    {errors.member2Name && (
+                      <p className="mt-1 text-xs text-red-600">
+                        {errors.member2Name}
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
+                      Email *
+                    </label>
+                    <input
+                      type="email"
+                      name="member2Email"
+                      value={formData.member2Email}
+                      onChange={handleChange}
+                      placeholder="name@sece.ac.in"
+                      className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
+                        errors.member2Email
+                          ? 'border-red-400 focus:ring-red-200'
+                          : 'border-slate-300 focus:border-accent focus:ring-amber-100'
+                      }`}
+                    />
+                    {errors.member2Email && (
+                      <p className="mt-1 text-xs text-red-600">
+                        {errors.member2Email}
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
+                      Mobile No *
+                    </label>
+                    <input
+                      type="tel"
+                      inputMode="numeric"
+                      maxLength={10}
+                      name="member2Mobile"
+                      value={formData.member2Mobile}
+                      onChange={handleChange}
+                      placeholder="10-digit Indian Mobile No"
+                      className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
+                        errors.member2Mobile
+                          ? 'border-red-400 focus:ring-red-200'
+                          : 'border-slate-300 focus:border-accent focus:ring-amber-100'
+                      }`}
+                    />
+                    {errors.member2Mobile && (
+                      <p className="mt-1 text-xs text-red-600">
+                        {errors.member2Mobile}
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
+                      Department *
+                    </label>
+                    <input
+                      type="text"
+                      name="member2Department"
+                      value={formData.member2Department}
+                      onChange={handleChange}
+                      placeholder="eg : Mechanical Department"
+                      className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
+                        errors.member2Department
+                          ? 'border-red-400 focus:ring-red-200'
+                          : 'border-slate-300 focus:border-accent focus:ring-amber-100'
+                      }`}
+                    />
+                    {errors.member2Department && (
+                      <p className="mt-1 text-xs text-red-600">
+                        {errors.member2Department}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Team Member 3 */}
+              <div className="border-t border-slate-200/80 pt-4">
+                <h4 className="mb-3 text-sm font-bold text-slate-800">
+                  Team Member 3 *
+                </h4>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
+                      Name *
+                    </label>
+                    <input
+                      type="text"
+                      name="member3Name"
+                      value={formData.member3Name}
+                      onChange={handleChange}
+                      placeholder="Full Name"
+                      className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
+                        errors.member3Name
+                          ? 'border-red-400 focus:ring-red-200'
+                          : 'border-slate-300 focus:border-accent focus:ring-amber-100'
+                      }`}
+                    />
+                    {errors.member3Name && (
+                      <p className="mt-1 text-xs text-red-600">
+                        {errors.member3Name}
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
+                      Email *
+                    </label>
+                    <input
+                      type="email"
+                      name="member3Email"
+                      value={formData.member3Email}
+                      onChange={handleChange}
+                      placeholder="name@sece.ac.in"
+                      className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
+                        errors.member3Email
+                          ? 'border-red-400 focus:ring-red-200'
+                          : 'border-slate-300 focus:border-accent focus:ring-amber-100'
+                      }`}
+                    />
+                    {errors.member3Email && (
+                      <p className="mt-1 text-xs text-red-600">
+                        {errors.member3Email}
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
+                      Mobile No *
+                    </label>
+                    <input
+                      type="tel"
+                      inputMode="numeric"
+                      maxLength={10}
+                      name="member3Mobile"
+                      value={formData.member3Mobile}
+                      onChange={handleChange}
+                      placeholder="10-digit Indian Mobile No"
+                      className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
+                        errors.member3Mobile
+                          ? 'border-red-400 focus:ring-red-200'
+                          : 'border-slate-300 focus:border-accent focus:ring-amber-100'
+                      }`}
+                    />
+                    {errors.member3Mobile && (
+                      <p className="mt-1 text-xs text-red-600">
+                        {errors.member3Mobile}
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
+                      Department *
+                    </label>
+                    <input
+                      type="text"
+                      name="member3Department"
+                      value={formData.member3Department}
+                      onChange={handleChange}
+                      placeholder="eg : Mechanical Department"
+                      className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
+                        errors.member3Department
+                          ? 'border-red-400 focus:ring-red-200'
+                          : 'border-slate-300 focus:border-accent focus:ring-amber-100'
+                      }`}
+                    />
+                    {errors.member3Department && (
+                      <p className="mt-1 text-xs text-red-600">
+                        {errors.member3Department}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 3. FACULTY MENTOR */}
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-5 md:p-6">
+              <div className="mb-4 flex items-center gap-2.5 border-b border-slate-200 pb-3 text-slate-900">
+                <Building className="text-accent" size={20} />
+                <h3 className="font-heading text-lg font-bold">
+                  3. Faculty Mentor
+                </h3>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
+                    Faculty Mentor Name *
+                  </label>
+                  <input
+                    type="text"
+                    name="facultyMentorName"
+                    value={formData.facultyMentorName}
+                    onChange={handleChange}
+                    placeholder="Dr. / Prof. Full Name"
+                    className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
+                      errors.facultyMentorName
+                        ? 'border-red-400 focus:ring-red-200'
+                        : 'border-slate-300 focus:border-accent focus:ring-amber-100'
+                    }`}
+                  />
+                  {errors.facultyMentorName && (
+                    <p className="mt-1 text-xs text-red-600">
+                      {errors.facultyMentorName}
+                    </p>
+                  )}
                 </div>
 
-                <label className="flex items-start gap-3 cursor-pointer">
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
+                    Faculty Mentor Department *
+                  </label>
                   <input
-                    type="checkbox"
-                    name="declarationAccepted"
-                    checked={formData.declarationAccepted}
+                    type="text"
+                    name="facultyMentorDepartment"
+                    value={formData.facultyMentorDepartment}
                     onChange={handleChange}
-                    className="mt-1 h-4 w-4 rounded accent-primary shrink-0"
+                    placeholder="eg : Mechanical Department"
+                    className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
+                      errors.facultyMentorDepartment
+                        ? 'border-red-400 focus:ring-red-200'
+                        : 'border-slate-300 focus:border-accent focus:ring-amber-100'
+                    }`}
                   />
-                  <span className="text-xs font-medium leading-relaxed text-slate-700">
-                    I confirm that the information provided is accurate and that my
-                    team agrees to follow the rules, guidelines, deadlines, and
-                    evaluation procedures of IPL 2026.
-                  </span>
+                  {errors.facultyMentorDepartment && (
+                    <p className="mt-1 text-xs text-red-600">
+                      {errors.facultyMentorDepartment}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* 4. INNOVATION DOMAIN */}
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-5 md:p-6">
+              <div className="mb-4 flex items-center gap-2.5 border-b border-slate-200 pb-3 text-slate-900">
+                <Lightbulb className="text-accent" size={20} />
+                <h3 className="font-heading text-lg font-bold">
+                  4. Innovation Domain
+                </h3>
+              </div>
+
+              <p className="mb-4 text-xs font-medium text-slate-600">
+                Select exactly ONE primary innovation domain for your team project:
+              </p>
+
+              <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+                {OFFICIAL_DOMAINS.map((domain) => {
+                  const isSelected = formData.innovationDomain === domain
+                  return (
+                    <label
+                      key={domain}
+                      className={`flex cursor-pointer items-center gap-3 rounded-xl border p-3 text-xs font-semibold transition-all ${
+                        isSelected
+                          ? 'border-primary bg-primary/5 text-primary shadow-sm ring-1 ring-primary'
+                          : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="innovationDomain"
+                        value={domain}
+                        checked={isSelected}
+                        onChange={handleChange}
+                        className="h-4 w-4 accent-primary"
+                      />
+                      <span>{domain}</span>
+                    </label>
+                  )
+                })}
+              </div>
+              {errors.innovationDomain && (
+                <p className="mt-2 text-xs font-semibold text-red-600">
+                  {errors.innovationDomain}
+                </p>
+              )}
+            </div>
+
+            {/* 5. PRODUCT DETAILS */}
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-5 md:p-6 space-y-4">
+              <div className="flex items-center gap-2.5 border-b border-slate-200 pb-3 text-slate-900">
+                <FileText className="text-accent" size={20} />
+                <h3 className="font-heading text-lg font-bold">
+                  5. Product / Project Details
+                </h3>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
+                  Proposed Product / Project Title *
                 </label>
-                {errors.declarationAccepted && (
-                  <p className="mt-2 text-xs font-semibold text-red-600">
-                    {errors.declarationAccepted}
+                <input
+                  type="text"
+                  name="projectTitle"
+                  value={formData.projectTitle}
+                  onChange={handleChange}
+                  placeholder="Clear title describing your innovation"
+                  className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
+                    errors.projectTitle
+                      ? 'border-red-400 focus:ring-red-200'
+                      : 'border-slate-300 focus:border-accent focus:ring-amber-100'
+                  }`}
+                />
+                {errors.projectTitle && (
+                  <p className="mt-1 text-xs text-red-600">
+                    {errors.projectTitle}
                   </p>
                 )}
               </div>
 
-              {/* Submit Button */}
-              <div className="flex items-center justify-end gap-4 border-t border-slate-200 pt-6">
-                <button
-                  type="button"
-                  onClick={handleClose}
-                  disabled={isSubmitting}
-                  className="rounded-full border border-slate-300 px-6 py-3 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-100 disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="inline-flex items-center gap-2 rounded-full bg-accent px-8 py-3 text-sm font-semibold text-white shadow-lg transition-all hover:bg-amber-600 hover:shadow-xl disabled:opacity-60"
-                >
-                  {isSubmitting ? (
-                    <>
-                      <Loader2 size={18} className="animate-spin" />
-                      Submitting...
-                    </>
-                  ) : (
-                    'Submit Registration'
-                  )}
-                </button>
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
+                  Problem Area *
+                </label>
+                <textarea
+                  name="problemArea"
+                  rows={3}
+                  value={formData.problemArea}
+                  onChange={handleChange}
+                  placeholder="Describe the real-world problem you are addressing..."
+                  className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
+                    errors.problemArea
+                      ? 'border-red-400 focus:ring-red-200'
+                      : 'border-slate-300 focus:border-accent focus:ring-amber-100'
+                  }`}
+                />
+                {errors.problemArea && (
+                  <p className="mt-1 text-xs text-red-600">
+                    {errors.problemArea}
+                  </p>
+                )}
               </div>
-            </form>
-          )}
+
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
+                  Proposed Solution *
+                </label>
+                <textarea
+                  name="proposedSolution"
+                  rows={3}
+                  value={formData.proposedSolution}
+                  onChange={handleChange}
+                  placeholder="Explain your innovative technical/business solution..."
+                  className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
+                    errors.proposedSolution
+                      ? 'border-red-400 focus:ring-red-200'
+                      : 'border-slate-300 focus:border-accent focus:ring-amber-100'
+                  }`}
+                />
+                {errors.proposedSolution && (
+                  <p className="mt-1 text-xs text-red-600">
+                    {errors.proposedSolution}
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
+                  Expected Impact *
+                </label>
+                <textarea
+                  name="expectedImpact"
+                  rows={3}
+                  value={formData.expectedImpact}
+                  onChange={handleChange}
+                  placeholder="Detail the expected social, economic, or technological impact..."
+                  className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
+                    errors.expectedImpact
+                      ? 'border-red-400 focus:ring-red-200'
+                      : 'border-slate-300 focus:border-accent focus:ring-amber-100'
+                  }`}
+                />
+                {errors.expectedImpact && (
+                  <p className="mt-1 text-xs text-red-600">
+                    {errors.expectedImpact}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* 7. DECLARATION */}
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-5 md:p-6">
+              <div className="mb-3 flex items-center gap-2.5 border-b border-slate-200 pb-3 text-slate-900">
+                <ShieldAlert className="text-accent" size={20} />
+                <h3 className="font-heading text-lg font-bold">
+                  7. Declaration
+                </h3>
+              </div>
+
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  name="declarationAccepted"
+                  checked={formData.declarationAccepted}
+                  onChange={handleChange}
+                  className="mt-1 h-4 w-4 rounded accent-primary shrink-0"
+                />
+                <span className="text-xs font-medium leading-relaxed text-slate-700">
+                  I confirm that the information provided is accurate and that my
+                  team agrees to follow the rules, guidelines, deadlines, and
+                  evaluation procedures of IPDP 2026. *
+                </span>
+              </label>
+              {errors.declarationAccepted && (
+                <p className="mt-2 text-xs font-semibold text-red-600">
+                  {errors.declarationAccepted}
+                </p>
+              )}
+            </div>
+
+            {/* Submit Button */}
+            <div className="flex items-center justify-end gap-4 border-t border-slate-200 pt-6">
+              <button
+                type="button"
+                onClick={handleClose}
+                disabled={isSubmitting}
+                className="rounded-full border border-slate-300 px-6 py-3 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-100 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="inline-flex items-center gap-2 rounded-full bg-accent px-8 py-3 text-sm font-semibold text-white shadow-lg transition-all hover:bg-amber-600 hover:shadow-xl disabled:opacity-60"
+              >
+                {isSubmitting ? (
+                  <>
+                    <Loader2 size={18} className="animate-spin" />
+                    Submitting...
+                  </>
+                ) : (
+                  'Submit Registration'
+                )}
+              </button>
+            </div>
+          </form>
         </div>
       </div>
     </div>
