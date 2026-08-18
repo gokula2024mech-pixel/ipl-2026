@@ -295,50 +295,6 @@ router.post('/registrations', (req, res) => {
         })
       }
 
-      // Upload File to Supabase Storage if present
-      let uploadedFilePath = null
-      let fileOriginalName = null
-      let fileStoredName = null
-      let fileMimeType = null
-      let fileSize = null
-
-      if (req.file) {
-        console.log('[Registration] Uploading document...')
-
-        const ext = path.extname(req.file.originalname).toLowerCase()
-        const sanitizedBase = path
-          .basename(req.file.originalname, ext)
-          .replace(/[^a-zA-Z0-9_-]/g, '_')
-          .slice(0, 40)
-        
-        const timestamp = new Date()
-        const year = timestamp.getFullYear()
-        const month = String(timestamp.getMonth() + 1).padStart(2, '0')
-        
-        fileStoredName = `${sanitizedBase}-${Date.now()}-${Math.round(Math.random() * 1e6)}${ext}`
-        uploadedFilePath = `registrations/${year}/${month}/${fileStoredName}`
-        fileOriginalName = req.file.originalname
-        fileMimeType = req.file.mimetype
-        fileSize = req.file.size
-
-        const { data: storageData, error: storageError } = await supabase.storage
-          .from(BUCKET_NAME)
-          .upload(uploadedFilePath, req.file.buffer, {
-            contentType: req.file.mimetype,
-            upsert: false,
-          })
-
-        if (storageError) {
-          console.error('[Registration] Storage upload error:', storageError.message || storageError)
-          return res.status(500).json({
-            success: false,
-            message: 'Supabase Storage upload error: ' + (storageError.message || 'AccessDenied or Policy Violation'),
-          })
-        }
-
-        console.log('[Registration] Storage upload successful:', uploadedFilePath)
-      }
-
       // Insert row into Supabase PostgreSQL (only actual existing database columns)
       const recordToInsert = {
         team_name: teamName,
@@ -361,12 +317,7 @@ router.post('/registrations', (req, res) => {
         problem_area: problemArea,
         proposed_solution: proposedSolution,
         expected_impact: expectedImpact,
-        file_original_name: fileOriginalName,
-        file_stored_name: fileStoredName,
-        file_mime_type: fileMimeType,
-        file_size: fileSize,
-        file_path: uploadedFilePath,
-        declaration_accepted: true,
+        declaration_accepted: declarationAccepted,
       }
 
       const { data: insertedData, error: dbError } = await supabase
@@ -375,15 +326,8 @@ router.post('/registrations', (req, res) => {
         .select('registration_id')
         .single()
 
-      // ORPHAN FILE CLEANUP
       if (dbError) {
         console.error('[Registration] Database insert error:', dbError.message || dbError)
-        
-        if (uploadedFilePath) {
-          console.warn('[Registration] Cleaning up orphan file from Supabase Storage:', uploadedFilePath)
-          await supabase.storage.from(BUCKET_NAME).remove([uploadedFilePath])
-        }
-
         return res.status(500).json({
           success: false,
           message: 'Database error saving registration: ' + dbError.message,
