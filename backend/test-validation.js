@@ -54,6 +54,8 @@ async function runValidationTests() {
       facultyMentorName: 'Dr. Mentor',
       facultyMentorDepartment: 'Mechanical Department',
       innovationDomain: 'AI & Machine Learning',
+      sdgGoals: ['7 - Affordable and Clean Energy', '9 - Industry, Innovation and Infrastructure'],
+      trlLevel: 7,
       projectTitle: 'Smart Robot',
       problemArea: 'Manual labor',
       proposedSolution: 'Automate',

@@ -165,6 +165,26 @@ router.post('/registrations', (req, res) => {
       }
 
       const innovationDomain = getVal(['innovationDomain', 'innovation_domain'])
+
+      let sdgGoals = getVal(['sdgGoals', 'sdg_goals'])
+      if (typeof sdgGoals === 'string') {
+        try {
+          sdgGoals = JSON.parse(sdgGoals)
+        } catch (e) {
+          sdgGoals = sdgGoals.split(',').map((s) => s.trim()).filter(Boolean)
+        }
+      }
+      if (!Array.isArray(sdgGoals)) {
+        sdgGoals = []
+      }
+
+      let trlLevel = getVal(['trlLevel', 'trl_level'])
+      if (trlLevel !== undefined && trlLevel !== null && trlLevel !== '') {
+        trlLevel = parseInt(trlLevel, 10)
+      } else {
+        trlLevel = null
+      }
+
       const projectTitle = getVal(['projectTitle', 'project_title'])
       const problemArea = getVal(['problemArea', 'problem_area'])
       const proposedSolution = getVal(['proposedSolution', 'proposed_solution'])
@@ -265,6 +285,22 @@ router.post('/registrations', (req, res) => {
         })
       }
 
+      // SDG Goals validation (must select at least 1 SDG goal)
+      if (!sdgGoals || !Array.isArray(sdgGoals) || sdgGoals.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'At least one Sustainable Development Goal (SDG) must be selected',
+        })
+      }
+
+      // TRL Level validation (must be integer between 1 and 9)
+      if (!trlLevel || !Number.isInteger(trlLevel) || trlLevel < 1 || trlLevel > 9) {
+        return res.status(400).json({
+          success: false,
+          message: 'A valid Technology Readiness Level (TRL 1 through TRL 9) must be selected',
+        })
+      }
+
       // Product Info validation
       if (!projectTitle) {
         return res.status(400).json({ success: false, message: 'Project title is required' })
@@ -313,6 +349,8 @@ router.post('/registrations', (req, res) => {
         mentor_name: mentor.name,
         mentor_department: mentor.department,
         innovation_domain: innovationDomain,
+        sdg_goals: sdgGoals,
+        trl_level: trlLevel,
         project_title: projectTitle,
         problem_area: problemArea,
         proposed_solution: proposedSolution,
@@ -320,11 +358,28 @@ router.post('/registrations', (req, res) => {
         declaration_accepted: declarationAccepted,
       }
 
-      const { data: insertedData, error: dbError } = await supabase
+      let { data: insertedData, error: dbError } = await supabase
         .from('registrations')
         .insert([recordToInsert])
         .select('registration_id')
         .single()
+
+      // Fallback if live Supabase table is pending ALTER TABLE migration
+      if (dbError && String(dbError.message || dbError.details || '').includes('sdg_goals')) {
+        console.warn('[Registration] Warning: sdg_goals/trl_level columns missing in live DB. Retrying fallback insert.')
+        const fallbackRecord = { ...recordToInsert }
+        delete fallbackRecord.sdg_goals
+        delete fallbackRecord.trl_level
+
+        const retryRes = await supabase
+          .from('registrations')
+          .insert([fallbackRecord])
+          .select('registration_id')
+          .single()
+
+        insertedData = retryRes.data
+        dbError = retryRes.error
+      }
 
       if (dbError) {
         console.error('[Registration] Database insert error:', dbError.message || dbError)

@@ -42,6 +42,8 @@ CREATE TABLE IF NOT EXISTS public.registrations (
 
   -- Project / Innovation Details
   innovation_domain TEXT NOT NULL,
+  sdg_goals TEXT[],
+  trl_level INTEGER,
   project_title TEXT NOT NULL,
   problem_area TEXT NOT NULL,
   proposed_solution TEXT NOT NULL,
@@ -59,6 +61,10 @@ CREATE TABLE IF NOT EXISTS public.registrations (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Add additive columns if they do not exist
+ALTER TABLE public.registrations ADD COLUMN IF NOT EXISTS sdg_goals TEXT[];
+ALTER TABLE public.registrations ADD COLUMN IF NOT EXISTS trl_level INTEGER;
 
 -- Enable RLS for table security (Service Role key bypasses RLS)
 ALTER TABLE public.registrations ENABLE ROW LEVEL SECURITY;

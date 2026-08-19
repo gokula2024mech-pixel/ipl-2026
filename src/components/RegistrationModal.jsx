@@ -14,6 +14,8 @@ import {
   FileCheck,
   ShieldAlert,
   Loader2,
+  Globe,
+  Rocket,
 } from 'lucide-react'
 
 const OFFICIAL_DOMAINS = [
@@ -27,6 +29,38 @@ const OFFICIAL_DOMAINS = [
   'Healthcare & Assistive Technology',
   'Smart Infrastructure & Public Safety',
   'Open Innovation',
+]
+
+const SDG_GOALS = [
+  '1 - No Poverty',
+  '2 - Zero Hunger',
+  '3 - Good Health and Well-Being',
+  '4 - Quality Education',
+  '5 - Gender Equality',
+  '6 - Clean Water and Sanitation',
+  '7 - Affordable and Clean Energy',
+  '8 - Decent Work and Economic Growth',
+  '9 - Industry, Innovation and Infrastructure',
+  '10 - Reduced Inequalities',
+  '11 - Sustainable Cities and Communities',
+  '12 - Responsible Consumption and Production',
+  '13 - Climate Action',
+  '14 - Life Below Water',
+  '15 - Life on Land',
+  '16 - Peace, Justice and Strong Institutions',
+  '17 - Partnerships for the Goals',
+]
+
+const TRL_LEVELS = [
+  { level: 9, description: 'System ready for full scale deployment' },
+  { level: 8, description: 'System incorporated in commercial design' },
+  { level: 7, description: 'Integrated pilot system demonstrated' },
+  { level: 6, description: 'Prototype system verified' },
+  { level: 5, description: 'Laboratory testing of integrated system' },
+  { level: 4, description: 'Laboratory testing of prototype component or process' },
+  { level: 3, description: 'Critical function: proof of concept established' },
+  { level: 2, description: 'Technology concept and/or application formulated' },
+  { level: 1, description: 'Basic principles observed and reported' },
 ]
 
 const ALLOWED_EXTENSIONS = ['.pdf', '.png', '.jpg', '.jpeg', '.ppt', '.pptx']
@@ -61,6 +95,8 @@ export default function RegistrationModal({ isOpen, onClose }) {
     facultyMentorName: '',
     facultyMentorDepartment: '',
     innovationDomain: '',
+    sdgGoals: [],
+    trlLevel: '',
     projectTitle: '',
     problemArea: '',
     proposedSolution: '',
@@ -89,6 +125,21 @@ export default function RegistrationModal({ isOpen, onClose }) {
   }, [isOpen])
 
   if (!isOpen) return null
+
+  const handleSdgToggle = (sdgValue) => {
+    setFormData((prev) => {
+      const currentSdgs = prev.sdgGoals || []
+      const isSelected = currentSdgs.includes(sdgValue)
+      const updatedSdgs = isSelected
+        ? currentSdgs.filter((item) => item !== sdgValue)
+        : [...currentSdgs, sdgValue]
+      return { ...prev, sdgGoals: updatedSdgs }
+    })
+    if (errors.sdgGoals) {
+      setErrors((prev) => ({ ...prev, sdgGoals: '' }))
+    }
+    if (submitError) setSubmitError('')
+  }
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target
@@ -255,6 +306,16 @@ export default function RegistrationModal({ isOpen, onClose }) {
     if (!formData.innovationDomain)
       newErrors.innovationDomain = 'Please select one primary domain'
 
+    // SDG Goals
+    if (!formData.sdgGoals || formData.sdgGoals.length === 0) {
+      newErrors.sdgGoals = 'Please select at least one Sustainable Development Goal (SDG)'
+    }
+
+    // TRL Level
+    if (!formData.trlLevel) {
+      newErrors.trlLevel = 'Please select a Technology Readiness Level (TRL)'
+    }
+
     // Product details
     if (!formData.projectTitle.trim())
       newErrors.projectTitle = 'Project title is required'
@@ -299,9 +360,17 @@ export default function RegistrationModal({ isOpen, onClose }) {
         email: formData.email.trim() || formData.teamLeaderEmail.trim(),
       }
 
-      // Append text fields
+      // Append text fields & array/object fields
       Object.keys(effectiveData).forEach((key) => {
-        dataPayload.append(key, effectiveData[key])
+        if (key === 'sdgGoals') {
+          dataPayload.append('sdgGoals', JSON.stringify(effectiveData.sdgGoals))
+          dataPayload.append('sdg_goals', JSON.stringify(effectiveData.sdgGoals))
+        } else if (key === 'trlLevel') {
+          dataPayload.append('trlLevel', String(effectiveData.trlLevel))
+          dataPayload.append('trl_level', String(effectiveData.trlLevel))
+        } else {
+          dataPayload.append(key, effectiveData[key])
+        }
       })
 
       // Append file if selected
@@ -972,12 +1041,105 @@ export default function RegistrationModal({ isOpen, onClose }) {
               )}
             </div>
 
-            {/* 5. PRODUCT DETAILS */}
+            {/* 5. SUSTAINABLE DEVELOPMENT GOALS (SDGs) */}
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-5 md:p-6">
+              <div className="mb-4 flex items-center gap-2.5 border-b border-slate-200 pb-3 text-slate-900">
+                <Globe className="text-accent" size={20} />
+                <h3 className="font-heading text-lg font-bold">
+                  5. Sustainable Development Goals (SDGs)
+                </h3>
+              </div>
+
+              <p className="mb-4 text-xs font-medium text-slate-600">
+                Select one or more Sustainable Development Goals (SDGs) aligned with your project:
+              </p>
+
+              <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+                {SDG_GOALS.map((sdg) => {
+                  const isChecked = (formData.sdgGoals || []).includes(sdg)
+                  return (
+                    <label
+                      key={sdg}
+                      className={`flex cursor-pointer items-center gap-3 rounded-xl border p-3 text-xs font-semibold transition-all ${
+                        isChecked
+                          ? 'border-primary bg-primary/5 text-primary shadow-sm ring-1 ring-primary'
+                          : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        value={sdg}
+                        checked={isChecked}
+                        onChange={() => handleSdgToggle(sdg)}
+                        className="h-4 w-4 rounded accent-primary shrink-0"
+                      />
+                      <span>{sdg}</span>
+                    </label>
+                  )
+                })}
+              </div>
+              {errors.sdgGoals && (
+                <p className="mt-2 text-xs font-semibold text-red-600">
+                  {errors.sdgGoals}
+                </p>
+              )}
+            </div>
+
+            {/* 6. TECHNOLOGY READINESS LEVEL (TRL) */}
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-5 md:p-6">
+              <div className="mb-4 flex items-center gap-2.5 border-b border-slate-200 pb-3 text-slate-900">
+                <Rocket className="text-accent" size={20} />
+                <h3 className="font-heading text-lg font-bold">
+                  6. Technology Readiness Level (TRL)
+                </h3>
+              </div>
+
+              <p className="mb-4 text-xs font-medium text-slate-600">
+                Select exactly ONE Technology Readiness Level (TRL 1 through TRL 9) for your project:
+              </p>
+
+              <div className="space-y-2.5">
+                {TRL_LEVELS.map(({ level, description }) => {
+                  const isSelected = String(formData.trlLevel) === String(level)
+                  return (
+                    <label
+                      key={level}
+                      className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3.5 text-xs font-semibold transition-all ${
+                        isSelected
+                          ? 'border-primary bg-primary/5 text-primary shadow-sm ring-1 ring-primary'
+                          : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="trlLevel"
+                        value={level}
+                        checked={isSelected}
+                        onChange={handleChange}
+                        className="mt-0.5 h-4 w-4 accent-primary shrink-0"
+                      />
+                      <div>
+                        <span className="font-bold text-slate-900">TRL {level}</span>
+                        <span className="mx-2 text-slate-400">—</span>
+                        <span className="font-medium text-slate-700">{description}</span>
+                      </div>
+                    </label>
+                  )
+                })}
+              </div>
+              {errors.trlLevel && (
+                <p className="mt-2 text-xs font-semibold text-red-600">
+                  {errors.trlLevel}
+                </p>
+              )}
+            </div>
+
+            {/* 7. PRODUCT DETAILS */}
             <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-5 md:p-6 space-y-4">
               <div className="flex items-center gap-2.5 border-b border-slate-200 pb-3 text-slate-900">
                 <FileText className="text-accent" size={20} />
                 <h3 className="font-heading text-lg font-bold">
-                  5. Product / Project Details
+                  7. Product / Project Details
                 </h3>
               </div>
 
@@ -1074,12 +1236,12 @@ export default function RegistrationModal({ isOpen, onClose }) {
               </div>
             </div>
 
-            {/* 7. DECLARATION */}
+            {/* 8. DECLARATION */}
             <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-5 md:p-6">
               <div className="mb-3 flex items-center gap-2.5 border-b border-slate-200 pb-3 text-slate-900">
                 <ShieldAlert className="text-accent" size={20} />
                 <h3 className="font-heading text-lg font-bold">
-                  7. Declaration
+                  8. Declaration
                 </h3>
               </div>
 
