@@ -2,12 +2,14 @@
 -- Run this script manually in your Supabase Dashboard -> SQL Editor
 
 -- 1. Create public.profiles table if it does not already exist
+-- Storing registration_id as TEXT without a foreign-key constraint is chosen
+-- to prevent potential constraint validation failures during manual setup.
 CREATE TABLE IF NOT EXISTS public.profiles (
   user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   email TEXT NOT NULL UNIQUE,
   name TEXT,
-  role TEXT NOT NULL DEFAULT 'student',
-  registration_id TEXT REFERENCES public.registrations(registration_id) ON DELETE SET NULL,
+  role TEXT NOT NULL DEFAULT 'student' CONSTRAINT chk_role CHECK (role IN ('student', 'evaluator', 'admin')),
+  registration_id TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -16,7 +18,6 @@ CREATE TABLE IF NOT EXISTS public.profiles (
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 
 -- 3. Create RLS Select Policy for profiles (Users can view their own profile)
-DROP POLICY IF EXISTS "Users can view their own profile" ON public.profiles;
 CREATE POLICY "Users can view their own profile"
 ON public.profiles
 FOR SELECT
@@ -65,7 +66,6 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- 5. Bind the trigger to auth.users AFTER INSERT
-DROP TRIGGER IF EXISTS tr_on_auth_user_created_profile ON auth.users;
 CREATE TRIGGER tr_on_auth_user_created_profile
 AFTER INSERT ON auth.users
 FOR EACH ROW
@@ -84,7 +84,6 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- 7. Bind the trigger to public.registrations AFTER INSERT
-DROP TRIGGER IF EXISTS tr_on_registration_inserted ON public.registrations;
 CREATE TRIGGER tr_on_registration_inserted
 AFTER INSERT ON public.registrations
 FOR EACH ROW
