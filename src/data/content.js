@@ -341,7 +341,7 @@ export const JUDGING_CRITERIA = [
 
 export const TIMELINE_EVENTS = [
   {
-    date: '17-Aug-2026',
+    date: '18-Aug-2026',
     title: 'Registration & Team Formation',
     description:
       'Team formation, domain selection, and problem identification.',

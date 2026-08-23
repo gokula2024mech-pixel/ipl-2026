@@ -33,7 +33,7 @@ export default function Registration({ onRegisterClick }) {
               <CalendarDays size={28} className="text-accent" aria-hidden="true" />
               <p className="text-base font-semibold text-slate-800 md:text-lg">
                 Registration opens on{' '}
-                <span className="font-heading text-xl text-primary md:text-2xl">17-Aug-2026</span>
+                <span className="font-heading text-xl text-primary md:text-2xl">18-Aug-2026</span>
               </p>
             </div>
 

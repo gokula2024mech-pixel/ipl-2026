@@ -1256,7 +1256,7 @@ export default function RegistrationModal({ isOpen, onClose }) {
                 <span className="text-xs font-medium leading-relaxed text-slate-700">
                   I confirm that the information provided is accurate and that my
                   team agrees to follow the rules, guidelines, deadlines, and
-                  evaluation procedures of IPL 2026. *
+                  evaluation procedures of IPL 2026.
                 </span>
               </label>
               {errors.declarationAccepted && (
