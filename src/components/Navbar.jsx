@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Menu, X } from 'lucide-react'
 import { REGISTRATION_FORM_URL } from '../data/content'
+import { supabase } from '../supabaseClient'
 
 const NAV_LINKS = [
   { label: 'About', href: '#about' },
@@ -11,7 +12,7 @@ const NAV_LINKS = [
   { label: 'Register', href: '#registration' },
 ]
 
-export default function Navbar({ onRegisterClick }) {
+export default function Navbar({ onRegisterClick, user, profile }) {
   const [mobileOpen, setMobileOpen] = useState(false)
 
   // Lock page scrolling only while mobile menu is open
@@ -32,6 +33,18 @@ export default function Navbar({ onRegisterClick }) {
       e.preventDefault()
       setMobileOpen(false)
       onRegisterClick()
+    }
+  }
+
+  const handleLogout = async () => {
+    try {
+      setMobileOpen(false)
+      const { error } = await supabase.auth.signOut()
+      if (error) {
+        console.error('Logout error:', error.message)
+      }
+    } catch (err) {
+      console.error('Logout exception:', err)
     }
   }
 
@@ -90,15 +103,46 @@ export default function Navbar({ onRegisterClick }) {
           ))}
         </ul>
 
-        {/* ==================== DESKTOP REGISTER BUTTON ==================== */}
-        <div className="hidden lg:block">
-          <a
-            href={REGISTRATION_FORM_URL}
-            onClick={handleRegister}
-            className="inline-flex items-center rounded-full bg-accent px-5 py-2.5 text-sm font-semibold text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-amber-600 hover:shadow-lg"
-          >
-            Register Now
-          </a>
+        {/* ==================== DESKTOP USER BANNER / REGISTER / LOGOUT ==================== */}
+        <div className="hidden lg:flex items-center gap-6">
+          {user ? (
+            <>
+              <div className="text-right">
+                <p className="text-[11px] font-bold text-accent uppercase tracking-wider leading-none">
+                  {profile?.registration_id ? `Team: ${profile.registration_id}` : 'No Team Linked'}
+                </p>
+                <p className="text-sm font-semibold text-slate-800 leading-tight mt-0.5" title={user.email}>
+                  {user.user_metadata?.full_name || user.email}
+                </p>
+              </div>
+
+              {!profile?.registration_id && (
+                <a
+                  href={REGISTRATION_FORM_URL}
+                  onClick={handleRegister}
+                  className="inline-flex items-center rounded-full bg-accent px-4 py-2 text-xs font-bold text-white shadow-sm transition-all hover:bg-amber-600 cursor-pointer"
+                >
+                  Register Team
+                </a>
+              )}
+
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="rounded-full border border-slate-300 bg-white px-4 py-2 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-50 transition-colors cursor-pointer"
+              >
+                Logout
+              </button>
+            </>
+          ) : (
+            <a
+              href={REGISTRATION_FORM_URL}
+              onClick={handleRegister}
+              className="inline-flex items-center rounded-full bg-accent px-5 py-2.5 text-sm font-semibold text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-amber-600 hover:shadow-lg"
+            >
+              Register Now
+            </a>
+          )}
         </div>
 
         {/* ==================== MOBILE MENU BUTTON ==================== */}
@@ -128,7 +172,6 @@ export default function Navbar({ onRegisterClick }) {
             className="overflow-hidden border-t border-slate-200 bg-white lg:hidden"
           >
             <ul className="flex flex-col gap-1 px-4 py-4">
-
               {/* Mobile Navigation Links */}
               {NAV_LINKS.map((link) => (
                 <li key={link.href}>
@@ -142,16 +185,47 @@ export default function Navbar({ onRegisterClick }) {
                 </li>
               ))}
 
-              {/* Mobile Register Button */}
-              <li className="pt-2">
-                <a
-                  href={REGISTRATION_FORM_URL}
-                  onClick={handleRegister}
-                  className="block rounded-full bg-accent px-4 py-3 text-center text-base font-semibold text-white shadow-md transition-all hover:bg-amber-600 active:scale-[0.98]"
-                >
-                  Register Now
-                </a>
-              </li>
+              {/* Mobile User Section / Register / Logout */}
+              {user ? (
+                <li className="border-t border-slate-100 mt-3 pt-3 px-4">
+                  <div className="mb-3">
+                    <p className="text-xs font-bold text-accent uppercase tracking-wider">
+                      {profile?.registration_id ? `Team: ${profile.registration_id}` : 'No Team Linked'}
+                    </p>
+                    <p className="text-sm font-semibold text-slate-800 mt-0.5">
+                      {user.user_metadata?.full_name || user.email}
+                    </p>
+                  </div>
+
+                  {!profile?.registration_id && (
+                    <a
+                      href={REGISTRATION_FORM_URL}
+                      onClick={handleRegister}
+                      className="block rounded-full bg-accent px-4 py-2.5 text-center text-sm font-semibold text-white shadow-sm transition-all hover:bg-amber-600 mb-2 cursor-pointer"
+                    >
+                      Register Team
+                    </a>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={handleLogout}
+                    className="w-full rounded-full border border-slate-300 bg-white py-2.5 text-center text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
+                  >
+                    Logout
+                  </button>
+                </li>
+              ) : (
+                <li className="pt-2">
+                  <a
+                    href={REGISTRATION_FORM_URL}
+                    onClick={handleRegister}
+                    className="block rounded-full bg-accent px-4 py-3 text-center text-base font-semibold text-white shadow-md transition-all hover:bg-amber-600 active:scale-[0.98]"
+                  >
+                    Register Now
+                  </a>
+                </li>
+              )}
             </ul>
           </motion.div>
         )}

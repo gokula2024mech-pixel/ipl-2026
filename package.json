@@ -11,6 +11,7 @@
     "start:backend": "node backend/server.js"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.112.3",
     "@tailwindcss/vite": "^4.3.3",
     "framer-motion": "^13.1.0",
     "lucide-react": "^1.31.0",

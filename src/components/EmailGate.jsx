@@ -1,32 +1,32 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { Mail, ArrowRight } from 'lucide-react'
+import { supabase } from '../supabaseClient'
 
-const ALLOWED_DOMAIN = '@sece.ac.in'
-
-// Lightweight client-side check only — not real authentication.
-// Anyone can bypass this in dev tools; use server-side auth for production protection.
-function isValidCollegeEmail(email) {
-  return email.trim().toLowerCase().endsWith(ALLOWED_DOMAIN)
-}
-
-export default function EmailGate({ onVerified }) {
-  const [email, setEmail] = useState('')
+export default function EmailGate({ loginError }) {
   const [error, setError] = useState('')
+  const [isLoggingIn, setIsLoggingIn] = useState(false)
 
-  const handleSubmit = (e) => {
-    e.preventDefault()
-    if (!email.trim()) {
-      setError('Please enter your email address.')
-      return
-    }
-    if (!isValidCollegeEmail(email)) {
-      setError('Please use your official Sri Eshwar College email (@sece.ac.in) to continue.')
-      return
-    }
+  const handleGoogleLogin = async () => {
     setError('')
-    onVerified()
+    setIsLoggingIn(false)
+    try {
+      const { error: authError } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: window.location.origin,
+        },
+      })
+      if (authError) {
+        setError('Failed to connect to Supabase Auth. Please try again.')
+        console.error('OAuth initiation error:', authError)
+      }
+    } catch (err) {
+      setError('An unexpected error occurred. Please try again.')
+      console.error(err)
+    }
   }
+
+  const activeError = loginError || error
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-primary px-4">
@@ -46,54 +46,36 @@ export default function EmailGate({ onVerified }) {
             IPL <span className="text-accent">2026</span>
           </p>
           <h1 className="mt-4 font-heading text-xl font-bold text-slate-900 md:text-2xl">
-            Sri Eshwar College Access Only
+            Sri Eshwar College Access
           </h1>
           <p className="mt-2 text-sm text-slate-600">
-            Enter your official college email to view the program website.
+            Please log in with your official college email account to access the IPL 2026 portal.
           </p>
         </div>
 
-        <form onSubmit={handleSubmit} noValidate className="space-y-5">
-          <div>
-            <label htmlFor="email" className="mb-1.5 block text-sm font-medium text-slate-700">
-              Email Address
-            </label>
-            <div className="relative">
-              <Mail
-                size={18}
-                className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
-                aria-hidden="true"
-              />
-              <input
-                id="email"
-                type="email"
-                value={email}
-                onChange={(e) => {
-                  setEmail(e.target.value)
-                  if (error) setError('')
-                }}
-                placeholder="you@sece.ac.in"
-                autoComplete="email"
-                className={`w-full rounded-lg border py-2.5 pl-10 pr-4 text-sm outline-none transition-colors focus:ring-2 focus:ring-primary/20 ${
-                  error ? 'border-red-400' : 'border-slate-300 focus:border-primary'
-                }`}
-              />
-            </div>
-            {error && (
-              <p className="mt-2 text-sm text-red-500" role="alert">
-                {error}
-              </p>
-            )}
-          </div>
-
+        <div className="space-y-5">
           <button
-            type="submit"
-            className="flex w-full items-center justify-center gap-2 rounded-full bg-accent py-3 text-base font-semibold text-white shadow-lg transition-all hover:-translate-y-0.5 hover:bg-amber-600 hover:shadow-xl"
+            type="button"
+            onClick={handleGoogleLogin}
+            disabled={isLoggingIn}
+            className="flex w-full items-center justify-center gap-2 rounded-full border border-slate-300 bg-white py-3 px-4 text-base font-semibold text-slate-700 shadow-md transition-all hover:-translate-y-0.5 hover:bg-slate-50 hover:shadow-lg disabled:opacity-50 cursor-pointer"
           >
-            Continue
-            <ArrowRight size={18} aria-hidden="true" />
+            <svg className="mr-1 h-5 w-5" viewBox="0 0 24 24" width="20" height="20" xmlns="http://www.w3.org/2000/svg">
+              <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4" />
+              <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" />
+              <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" fill="#FBBC05" />
+              <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" fill="#EA4335" />
+            </svg>
+            Continue with Google
           </button>
-        </form>
+
+          {activeError && (
+            <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700" role="alert">
+              <p className="font-bold">Access Denied</p>
+              <p className="mt-0.5">{activeError}</p>
+            </div>
+          )}
+        </div>
       </motion.div>
     </div>
   )
