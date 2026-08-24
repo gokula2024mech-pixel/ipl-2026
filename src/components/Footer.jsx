@@ -44,64 +44,68 @@ export default function Footer() {
             </ul>
           </div>
 
-          <div>
-            <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider text-white">Contact</h3>
-            <ul className="space-y-2 text-sm">
-            <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-white">Convener</h4>
-              <hr />
-            <li>
-                <span className="text-slate-500">Email:</span>{' '}
-                <a href="mailto:gokul.a2024mech@sece.ac.in" className="transition-colors hover:text-accent">
-                  hodmech@sece.ac.in
-                </a>
-              </li>        
-              <li>
-                <span className="text-slate-500">College:</span>{' '}
-                Sri Eshwar College of Engineering
-              </li>
-              
-            </ul>
-            <ul className="space-y-2 text-sm">
-            <h4 className=" mt-4 mb-2 text-xs font-semibold uppercase tracking-wider text-white">Faculty Coordinator</h4>
-              <hr />
-            <li>
-                <span className="text-slate-500">Email:</span>{' '}
-                <a href="mailto:gokul.a2024mech@sece.ac.in" className="transition-colors hover:text-accent">
-                  gowtham.s@sece.ac.in
-                </a>
-              </li>
-              <li>
-                <span className="text-slate-500">Phone:</span>{' '}
-                <a href="tel:6381305506" className="transition-colors hover:text-accent">
-                  9659399667
-                </a>
-              </li>
-              <li>
-                <span className="text-slate-500">College:</span>{' '}
-                Sri Eshwar College of Engineering
-              </li>
-            </ul>
-            <ul className="space-y-2 text-sm">
-            <h4 className="mt-4 mb-2 text-xs font-semibold uppercase tracking-wider text-white">Student Coordinator</h4>
-            <hr />
-            <li>
-                <span className="text-slate-500">Email:</span>{' '}
-                <a href="mailto:gokul.a2024mech@sece.ac.in" className="transition-colors hover:text-accent">
-                  gokul.a2024mech@sece.ac.in
-                </a>
-              </li>
-              <li>
-                <span className="text-slate-500">Phone:</span>{' '}
-                <a href="tel:6381305506" className="transition-colors hover:text-accent">
-                  6381305506
-                </a>
-              </li>
-              <li>
-                <span className="text-slate-500">College:</span>{' '}
-                Sri Eshwar College of Engineering
-              </li>
-              
-            </ul>
+          <div id="contact" className="space-y-6">
+            <h3 className="mb-6 text-base font-bold uppercase tracking-wider text-white font-heading">Contact</h3>
+
+            {/* Convener */}
+            <div className="space-y-2">
+              <h4 className="text-sm font-extrabold uppercase tracking-wider text-accent">Convener</h4>
+              <hr className="border-slate-800" />
+              <p className="text-base font-bold text-white mt-3">Dr. K. Suresh Kumar</p>
+              <ul className="space-y-2 text-sm text-slate-300 mt-2">
+                <li>
+                  <span className="text-slate-400 font-medium">Department:</span> Mechanical Engineering
+                </li>
+              </ul>
+            </div>
+
+            {/* Faculty Coordinator */}
+            <div className="space-y-2 pt-2">
+              <h4 className="text-sm font-extrabold uppercase tracking-wider text-accent">Faculty Coordinator</h4>
+              <hr className="border-slate-800" />
+              <p className="text-base font-bold text-white mt-3">Dr. S. Gowtham</p>
+              <ul className="space-y-2 text-sm text-slate-300 mt-2">
+                <li>
+                  <span className="text-slate-400 font-medium">Department:</span> Mechanical Engineering
+                </li>
+                <li>
+                  <span className="text-slate-400 font-medium">Email:</span>{' '}
+                  <a href="mailto:gowtham.s@sece.ac.in" className="transition-colors hover:text-accent select-all">
+                    gowtham.s@sece.ac.in
+                  </a>
+                </li>
+                <li>
+                  <span className="text-slate-400 font-medium">Phone:</span>{' '}
+                  <a href="tel:9659399667" className="transition-colors hover:text-accent">
+                    9659399667
+                  </a>
+                </li>
+              </ul>
+            </div>
+
+            {/* Student Coordinator */}
+            <div className="space-y-2 pt-2">
+              <h4 className="text-sm font-extrabold uppercase tracking-wider text-accent">Student Coordinator</h4>
+              <hr className="border-slate-800" />
+              <p className="text-base font-bold text-white mt-3">A. Gokul</p>
+              <ul className="space-y-2 text-sm text-slate-300 mt-2">
+                <li>
+                  <span className="text-slate-400 font-medium">Department:</span> Mechanical Engineering
+                </li>
+                <li>
+                  <span className="text-slate-400 font-medium">Email:</span>{' '}
+                  <a href="mailto:gokul.a2024mech@sece.ac.in" className="transition-colors hover:text-accent select-all">
+                    gokul.a2024mech@sece.ac.in
+                  </a>
+                </li>
+                <li>
+                  <span className="text-slate-400 font-medium">Phone:</span>{' '}
+                  <a href="tel:6381305506" className="transition-colors hover:text-accent">
+                    6381305506
+                  </a>
+                </li>
+              </ul>
+            </div>
           </div>
         </div>
 

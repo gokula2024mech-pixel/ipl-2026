@@ -10,6 +10,7 @@ const NAV_LINKS = [
   { label: 'Journey', href: '#journey' },
   { label: 'Timeline', href: '#timeline' },
   { label: 'Register', href: '#registration' },
+  { label: 'Contact', href: '#contact' },
 ]
 
 export default function Navbar({ onRegisterClick, user, profile }) {
