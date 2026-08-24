@@ -36,7 +36,7 @@ export default function App() {
   const [isRegistrationOpen, setIsRegistrationOpen] = useState(false)
   const [viewMode, setViewMode] = useState("public")
 
-  const lastProcessedUserIdRef = useRef(null)
+  const authGenerationRef = useRef(0)
 
   const handleOpenRegistration = () => {
     setIsRegistrationOpen(true)
@@ -74,7 +74,7 @@ export default function App() {
     console.log('[AUTH] current URL:', window.location.href)
     const hasHashToken = window.location.hash.includes('access_token=')
     console.log('[AUTH] URL hash contains access_token:', hasHashToken)
-    
+
     try {
       const storedKeys = Object.keys(localStorage).filter(k => k.includes('supabase.auth.token'))
       if (storedKeys.length > 0) {
@@ -87,65 +87,97 @@ export default function App() {
       console.error('[AUTH] Error reading localStorage:', e)
     }
 
-    const currentUserId = currentSession?.user?.id || null
-    console.log(`[AUTH] handleSession called, eventType: ${eventType}, currentUserId: ${currentUserId}, lastProcessedUserId: ${lastProcessedUserIdRef.current}`)
+    console.log(`[AUTH] handleSession called, eventType: ${eventType}, sessionExists: ${!!currentSession}`)
 
-    // Lock condition to prevent duplicate executions and races
-    if (currentUserId === lastProcessedUserIdRef.current) {
-      console.log(`[AUTH] User ID unchanged (${currentUserId}), skipping profile reload.`)
-      if (currentSession) {
-        setSession(currentSession)
-      }
+    // If session is signed out or null
+    if (!currentSession || eventType === "SIGNED_OUT") {
+      const generation = ++authGenerationRef.current
+      console.log(`[AUTH] SIGNED_OUT event or null session. Incrementing generation to ${generation}. Resetting states.`)
+      setSession(null)
+      setProfile(null)
+      setViewMode("public")
       setLoading(false)
       return
     }
 
-    // Update ref lock
-    lastProcessedUserIdRef.current = currentUserId
+    // Now we have a valid session.
+    // If it is SIGNED_IN, INITIAL_SESSION, or INITIAL_LOAD, we treat it as a new auth lifecycle
+    if (
+      eventType === "SIGNED_IN" ||
+      eventType === "INITIAL_SESSION" ||
+      eventType === "INITIAL_LOAD"
+    ) {
+      const generation = ++authGenerationRef.current
+      console.log(`[AUTH] Newly established session via ${eventType}. Incrementing generation to ${generation}.`)
 
-    if (currentSession?.user) {
       setLoading(true)
       const email = currentSession.user.email || ''
       console.log('[AUTH] session user email:', email)
-      
+
+      // Email domain validation
       if (!email.toLowerCase().endsWith('@sece.ac.in')) {
-        console.log('[AUTH] signOut called (invalid email domain)')
-        setLoginError('Please sign in using your @sece.ac.in college account.')
-        setSession(null)
-        setProfile(null)
-        setViewMode("public")
-        lastProcessedUserIdRef.current = null
-        await supabase.auth.signOut()
-        setLoading(false)
+        // If this request is still current
+        if (generation === authGenerationRef.current) {
+          console.log('[AUTH] signOut called (invalid email domain)')
+          setLoginError('Please sign in using your @sece.ac.in college account.')
+          setSession(null)
+          setProfile(null)
+          setViewMode("public")
+          await supabase.auth.signOut()
+          setLoading(false)
+        } else {
+          console.log(`[AUTH] Stale email domain validation ignored for generation ${generation}. Current is ${authGenerationRef.current}.`)
+        }
         return
       }
 
       setLoginError('')
-      setSession(currentSession)
-      
-      const userProfile = await loadProfile(currentSession.user)
-      setProfile(userProfile)
 
-      // Explicitly adjust viewMode for newly established/re-established sessions
-      if (userProfile?.role === "admin") {
-        console.log('[AUTH] Setting viewMode to admin')
-        setViewMode("admin")
+      // Fetch profile
+      const userProfile = await loadProfile(currentSession.user)
+
+      // Guard check: is this async result still representing the current generation?
+      if (generation === authGenerationRef.current) {
+        setSession(currentSession)
+        setProfile(userProfile)
+
+        if (userProfile?.role === "admin") {
+          console.log('[AUTH] Admin role detected. Setting viewMode to admin')
+          setViewMode("admin")
+        } else {
+          console.log('[AUTH] Student role detected. Setting viewMode to public')
+          setViewMode("public")
+        }
+        setLoading(false)
       } else {
-        console.log('[AUTH] Setting viewMode to public')
-        setViewMode("public")
+        console.log(`[AUTH] Stale loadProfile result ignored for generation ${generation}. Current is ${authGenerationRef.current}.`)
       }
-    } else {
-      console.log('[AUTH] Resetting session, profile, and viewMode to public')
-      setSession(null)
-      setProfile(null)
-      setViewMode("public")
     }
-    setLoading(false)
+    else if (eventType === "TOKEN_REFRESHED") {
+      const generation = authGenerationRef.current
+      console.log(`[AUTH] TOKEN_REFRESHED event. Current generation is ${generation}.`)
+
+      setSession(currentSession)
+
+      // Load profile to make sure profile state is updated (in case of changes)
+      const userProfile = await loadProfile(currentSession.user)
+      if (generation === authGenerationRef.current) {
+        setProfile(userProfile)
+        console.log('[AUTH] Profile state updated on TOKEN_REFRESHED (viewMode unchanged)')
+      } else {
+        console.log(`[AUTH] Stale TOKEN_REFRESHED profile load ignored for generation ${generation}.`)
+      }
+    }
+    else {
+      // Any other events (fallback)
+      console.log(`[AUTH] Event ${eventType} fallback. Updating session.`)
+      setSession(currentSession)
+    }
   }
 
   useEffect(() => {
     console.log('[AUTH] App.jsx useEffect mounting...')
-    
+
     // Get initial session
     supabase.auth.getSession().then(({ data: { session: initialSession } }) => {
       console.log('[AUTH] getSession result:', !!initialSession)
@@ -164,11 +196,7 @@ export default function App() {
         handleSession(newSession, event)
       } else {
         console.log('[AUTH] clearing session/profile from onAuthStateChange (newSession is null)')
-        setSession(null)
-        setProfile(null)
-        setViewMode("public")
-        lastProcessedUserIdRef.current = null
-        setLoading(false)
+        handleSession(null, event)
       }
     })
 
@@ -195,20 +223,20 @@ export default function App() {
 
   if (profile?.role === 'admin' && viewMode === 'admin') {
     return (
-      <AdminDashboard 
-        user={session.user} 
-        profile={profile} 
-        onViewPublicPortal={() => setViewMode("public")} 
+      <AdminDashboard
+        user={session.user}
+        profile={profile}
+        onViewPublicPortal={() => setViewMode("public")}
       />
     )
   }
 
   return (
     <>
-      <Navbar 
-        onRegisterClick={handleOpenRegistration} 
-        user={session.user} 
-        profile={profile} 
+      <Navbar
+        onRegisterClick={handleOpenRegistration}
+        user={session.user}
+        profile={profile}
       />
       <main>
         <Hero onRegisterClick={handleOpenRegistration} />
