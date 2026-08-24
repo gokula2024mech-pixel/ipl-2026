@@ -124,23 +124,27 @@ export default function Registration({ onRegisterClick }) {
         <SectionReveal>
           <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm md:p-10">
             {regTimer && regTimer.timer_status !== 'upcoming' ? (
-              <div className="mb-8 flex flex-col items-center justify-center rounded-xl border border-amber-200 bg-amber-50 px-6 py-6">
-                <p className="text-sm font-semibold uppercase tracking-wider text-slate-500">
+              <div className="mb-8 flex flex-col items-center justify-center rounded-2xl border border-amber-200 bg-amber-50/50 p-5 md:p-6 backdrop-blur-sm">
+                <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
                   {regTimer.timer_status === 'paused' ? 'REGISTRATION PAUSED' :
                    regTimer.timer_status === 'completed' || regTimer.timer_status === 'closed' ? 'REGISTRATION CLOSED' :
-                   'REGISTRATION CLOSES IN'}
+                   'REGISTRATION IS OPEN'}
                 </p>
+                <h4 className="mt-1 font-heading text-lg font-bold text-slate-900">Join IPL 2026</h4>
 
                 {regTimer.timer_status !== 'completed' && regTimer.timer_status !== 'closed' && regCountdown && (
-                  <p className="font-mono text-2xl font-bold text-slate-900 mt-2 tracking-widest">
-                    {`${String(regCountdown.days).padStart(2, "0")}d : ` +
-                     `${String(regCountdown.hours).padStart(2, "0")}h : ` +
-                     `${String(regCountdown.minutes).padStart(2, "0")}m : ` +
-                     `${String(regCountdown.seconds).padStart(2, "0")}s`}
-                  </p>
+                  <div className="mt-4 w-full">
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">CLOSES IN</p>
+                    <p className="font-mono text-4xl sm:text-5xl md:text-6xl font-bold text-slate-900 tracking-tight">
+                      {`${String(regCountdown.days).padStart(2, "0")}d : ` +
+                       `${String(regCountdown.hours).padStart(2, "0")}h : ` +
+                       `${String(regCountdown.minutes).padStart(2, "0")}m : ` +
+                       `${String(regCountdown.seconds).padStart(2, "0")}s`}
+                    </p>
+                  </div>
                 )}
 
-                <div className="mt-2 flex justify-center">
+                <div className="mt-4 flex justify-center">
                   <span className={`inline-flex items-center rounded-md px-2.5 py-1 text-xs font-bold ring-1 ring-inset ${
                     regTimer.timer_status === 'paused' ? 'bg-amber-100 text-amber-800 ring-amber-600/20' :
                     regTimer.timer_status === 'completed' || regTimer.timer_status === 'closed' ? 'bg-slate-100 text-slate-800 ring-slate-600/20' :

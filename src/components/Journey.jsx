@@ -156,6 +156,15 @@ export function PhaseSpotlight() {
     return () => clearInterval(timer);
   }, [dbPhases]);
 
+  // Automatic phase auto-scroll every 4 seconds (resets whenever activePhase changes)
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setActivePhase((prev) => (prev + 1) % 3);
+    }, 4000);
+
+    return () => clearInterval(timer);
+  }, [activePhase]);
+
   const handlePrevPhase = () => {
     setActivePhase((prev) => (prev === 0 ? 2 : prev - 1));
   };
@@ -172,82 +181,71 @@ export function PhaseSpotlight() {
   // Get phase specific description & configuration
   let purposeText = "";
   let durationText = "Week 1";
-  let maxScoreText = "100 pts";
   let accentGlowClass = "bg-blue-500";
-  let accentBadgeClass = "bg-blue-500/20 text-blue-300 ring-1 ring-blue-500/30";
   let accentBorderClass = "border-blue-500/30";
   let accentTextClass = "text-blue-400";
 
   if (p.phase_number === 1) {
     purposeText = "Identify a genuine real-world problem and turn it into a well-defined, feasible, cost-justified concept.";
     durationText = "Week 1";
-    maxScoreText = "100 pts";
     accentGlowClass = "bg-blue-500";
-    accentBadgeClass = "bg-blue-500/20 text-blue-300 ring-1 ring-blue-500/30";
     accentBorderClass = "border-blue-500/30";
     accentTextClass = "text-blue-400";
   } else if (p.phase_number === 2) {
     purposeText = "Design, build, and rigorously test a working prototype that proves the concept functions as intended.";
     durationText = "Weeks 2–3";
-    maxScoreText = "100 pts";
     accentGlowClass = "bg-green-500";
-    accentBadgeClass = "bg-green-500/20 text-green-300 ring-1 ring-green-500/30";
     accentBorderClass = "border-green-500/30";
     accentTextClass = "text-green-400";
   } else if (p.phase_number === 3) {
     purposeText = "Present the finished product to an expert panel as a market-aware, business-ready innovation.";
     durationText = "Week 4";
-    maxScoreText = "100 pts";
     accentGlowClass = "bg-purple-500";
-    accentBadgeClass = "bg-purple-500/20 text-purple-300 ring-1 ring-purple-500/30";
     accentBorderClass = "border-purple-500/30";
     accentTextClass = "text-purple-400";
   }
 
   // Determine status color and label
-  let statusLabel = "Upcoming";
+  let statusBadgeLabel = "Upcoming";
   let timerLabel = "PHASE STATUS";
   let timerLabelValue = "Upcoming";
   let showDigits = false;
   let statusColor = "bg-slate-500/20 text-slate-300 ring-slate-500/30";
 
   if (p.timer_status === "running") {
+    statusBadgeLabel = "In Progress";
     if (countdown) {
       if (countdown.statusText === "Ending Shortly") {
-        statusLabel = "Ending Shortly";
         statusColor = "bg-red-500/25 text-red-300 ring-red-500/30 animate-pulse";
       } else if (countdown.statusText === "Ending Soon") {
-        statusLabel = "Ending Soon";
         statusColor = "bg-amber-500/25 text-amber-300 ring-amber-500/30 animate-pulse";
       } else {
-        statusLabel = "In Progress";
         statusColor = "bg-green-500/25 text-green-300 ring-green-500/30 animate-pulse";
       }
     } else {
-      statusLabel = "In Progress";
       statusColor = "bg-green-500/25 text-green-300 ring-green-500/30 animate-pulse";
     }
     timerLabel = "TIME REMAINING";
     showDigits = true;
   } else if (p.timer_status === "paused") {
-    statusLabel = "Paused";
+    statusBadgeLabel = "Paused";
     statusColor = "bg-amber-500/20 text-amber-300 ring-amber-500/30";
     timerLabel = "PHASE PAUSED";
     showDigits = true;
   } else if (p.timer_status === "completed") {
-    statusLabel = "Completed";
+    statusBadgeLabel = "Completed";
     statusColor = "bg-blue-500/20 text-blue-300 ring-blue-500/30";
     timerLabel = "PHASE STATUS";
     timerLabelValue = "PHASE COMPLETED";
     showDigits = false;
   } else if (p.timer_status === "closed") {
-    statusLabel = "Closed";
+    statusBadgeLabel = "Closed";
     statusColor = "bg-rose-500/20 text-rose-300 ring-rose-500/30";
     timerLabel = "PHASE STATUS";
     timerLabelValue = "PHASE CLOSED";
     showDigits = false;
   } else if (p.timer_status === "upcoming") {
-    statusLabel = "Upcoming";
+    statusBadgeLabel = "Upcoming";
     statusColor = "bg-slate-500/20 text-slate-300 ring-slate-500/30";
     if (countdown && countdown.isStartingSoon) {
       timerLabel = "STARTS IN";
@@ -278,103 +276,78 @@ export function PhaseSpotlight() {
     }
   }
 
-  const prevPhaseName = activePhase === 0 ? "Phase 3" : `Phase ${activePhase}`;
-  const nextPhaseName = activePhase === 2 ? "Phase 1" : `Phase ${activePhase + 2}`;
-
   return (
-    <section className="bg-primary py-12 border-b border-white/5">
-      <div className="mx-auto max-w-7xl px-4 md:px-6 lg:px-8">
-        <div className="max-w-4xl mx-auto">
-          <div className={`rounded-3xl border ${accentBorderClass} bg-slate-900/60 p-6 md:p-10 backdrop-blur-sm shadow-2xl relative overflow-hidden`}>
-            {/* Accent gradient glow */}
-            <div className={`absolute top-0 right-0 -mt-20 -mr-20 h-40 w-40 rounded-full blur-3xl opacity-20 ${accentGlowClass}`}></div>
+    <section className="bg-primary py-6 border-b border-white/5">
+      <div className="mx-auto max-w-4xl px-4 sm:px-6">
+        <div className={`rounded-3xl border ${accentBorderClass} bg-slate-900/60 p-5 md:p-6 backdrop-blur-sm shadow-2xl relative overflow-hidden`}>
+          {/* Accent gradient glow */}
+          <div className={`absolute top-0 right-0 -mt-20 -mr-20 h-40 w-40 rounded-full blur-3xl opacity-20 ${accentGlowClass}`}></div>
 
-            <div className="grid gap-8 md:grid-cols-12 items-center">
-              {/* Left Column: Info */}
-              <div className="md:col-span-7 space-y-5 text-left">
-                <div className="flex items-center gap-2">
-                  <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-bold uppercase tracking-wider ${accentBadgeClass}`}>
-                    Phase {p.phase_number} • {p.timer_status === 'running' ? 'CURRENT' : p.timer_status.toUpperCase()}
-                  </span>
-                </div>
-
-                <h3 className="font-heading text-2xl font-bold text-white md:text-3xl">
-                  {p.name.toUpperCase()}
-                </h3>
-
-                <p className="text-base text-blue-100/95 leading-relaxed">
-                  {purposeText}
-                </p>
-
-                {/* Supporting Details */}
-                <div className="grid grid-cols-2 gap-4 pt-2 max-w-xs">
-                  <div className="rounded-xl bg-white/5 p-3 border border-white/5">
-                    <span className="block text-[10px] uppercase tracking-wider text-slate-400 font-semibold">Duration</span>
-                    <span className="font-semibold text-white text-sm">{durationText}</span>
-                  </div>
-                  <div className="rounded-xl bg-white/5 p-3 border border-white/5">
-                    <span className="block text-[10px] uppercase tracking-wider text-slate-400 font-semibold">Max Score</span>
-                    <span className="font-semibold text-white text-sm">{maxScoreText}</span>
-                  </div>
-                </div>
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={activePhase}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.35 }}
+              className="flex flex-col text-center"
+            >
+              {/* Header Row */}
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-3 mb-4">
+                <span className="text-xs font-bold text-slate-400 tracking-wider">
+                  PHASE {p.phase_number} • {p.name.toUpperCase()}
+                </span>
+                <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-bold ring-1 ring-inset ${statusColor}`}>
+                  ● {statusBadgeLabel.toUpperCase()}
+                </span>
               </div>
 
-              {/* Right Column: Timer Display */}
-              <div className="md:col-span-5 flex flex-col items-center justify-center p-6 rounded-2xl bg-white/5 border border-white/10 text-center">
-                <p className={`text-xs font-bold uppercase tracking-widest ${accentTextClass} mb-4`}>
-                  {timerLabel}
-                </p>
+              {/* Description / Purpose */}
+              <p className="text-sm text-blue-100/90 max-w-2xl mx-auto leading-relaxed mb-4">
+                {purposeText}
+              </p>
 
-                {showDigits && countdown ? (
-                  <div className="space-y-2 w-full">
-                    <div className="flex justify-center gap-2 md:gap-3 font-mono text-2xl md:text-4xl lg:text-4xl font-bold text-white tracking-widest">
-                      <span>{String(countdown.days).padStart(2, '0')}</span>
-                      <span className="text-white/30 animate-pulse">:</span>
-                      <span>{String(countdown.hours).padStart(2, '0')}</span>
-                      <span className="text-white/30 animate-pulse">:</span>
-                      <span>{String(countdown.minutes).padStart(2, '0')}</span>
-                      <span className="text-white/30 animate-pulse">:</span>
-                      <span>{String(countdown.seconds).padStart(2, '0')}</span>
-                    </div>
-                    <div className="flex justify-center gap-2 md:gap-3 text-[8px] md:text-[9px] uppercase tracking-wider text-slate-400 font-semibold">
-                      <span className="w-10 text-center">Days</span>
-                      <span className="w-2"></span>
-                      <span className="w-10 text-center">Hours</span>
-                      <span className="w-2"></span>
-                      <span className="w-10 text-center">Minutes</span>
-                      <span className="w-2"></span>
-                      <span className="w-10 text-center">Seconds</span>
-                    </div>
-                  </div>
-                ) : (
-                  <p className="font-heading text-xl md:text-2xl font-bold text-white uppercase tracking-wider">
-                    {timerLabelValue}
-                  </p>
-                )}
+              {/* Countdown Label */}
+              <p className={`text-[10px] font-bold uppercase tracking-widest ${accentTextClass} mb-2`}>
+                {timerLabel}
+              </p>
 
+              {/* Very Large Countdown */}
+              {showDigits && countdown ? (
+                <div className="font-mono text-4xl sm:text-5xl md:text-6xl font-bold text-white tracking-tight leading-none mb-3">
+                  {`${String(countdown.days).padStart(2, '0')}d : ` +
+                   `${String(countdown.hours).padStart(2, '0')}h : ` +
+                   `${String(countdown.minutes).padStart(2, '0')}m : ` +
+                   `${String(countdown.seconds).padStart(2, '0')}s`}
+                </div>
+              ) : (
+                <div className="font-heading text-2xl sm:text-3xl font-bold text-white uppercase tracking-wider mb-3">
+                  {timerLabelValue}
+                </div>
+              )}
+
+              {/* Supporting details: Duration + Upcoming began */}
+              <div className="flex flex-col items-center justify-center gap-1.5 text-xs text-slate-400 font-medium">
+                <div>
+                  Duration: <span className="text-white font-semibold">{durationText}</span>
+                </div>
                 {upcomingSupportingLine && (
-                  <p className="mt-4 text-xs text-amber-300 font-semibold tracking-wide italic">
+                  <div className="text-amber-300 font-semibold italic">
                     {upcomingSupportingLine}
-                  </p>
+                  </div>
                 )}
-
-                <div className="mt-5">
-                  <span className={`inline-flex items-center rounded-md px-2.5 py-0.5 text-[10px] font-bold ring-1 ring-inset ${statusColor}`}>
-                    {statusLabel.toUpperCase()}
-                  </span>
-                </div>
               </div>
-            </div>
-          </div>
+            </motion.div>
+          </AnimatePresence>
 
-          {/* Previous/Next Navigation Controls */}
-          <div className="mt-6 flex items-center justify-center gap-8 text-slate-400">
+          {/* Navigation Controls */}
+          <div className="mt-5 pt-3 border-t border-white/10 flex items-center justify-between text-slate-400">
             <button
               type="button"
               onClick={handlePrevPhase}
-              className="flex items-center gap-2 hover:text-white transition cursor-pointer text-xs md:text-sm font-bold bg-white/5 hover:bg-white/10 px-4 py-2 rounded-full border border-white/5"
+              className="flex items-center gap-1 hover:text-white transition cursor-pointer text-xs md:text-sm font-bold bg-white/5 hover:bg-white/10 px-3.5 py-1.5 rounded-full border border-white/5"
             >
-              ← {prevPhaseName}
+              ← Previous
             </button>
             <span className="font-mono text-xs md:text-sm text-amber-300 font-bold bg-amber-400/10 px-4 py-1.5 rounded-full border border-amber-400/20">
               {activePhase + 1} / 3
@@ -382,9 +355,9 @@ export function PhaseSpotlight() {
             <button
               type="button"
               onClick={handleNextPhase}
-              className="flex items-center gap-2 hover:text-white transition cursor-pointer text-xs md:text-sm font-bold bg-white/5 hover:bg-white/10 px-4 py-2 rounded-full border border-white/5"
+              className="flex items-center gap-1 hover:text-white transition cursor-pointer text-xs md:text-sm font-bold bg-white/5 hover:bg-white/10 px-3.5 py-1.5 rounded-full border border-white/5"
             >
-              {nextPhaseName} →
+              Next →
             </button>
           </div>
         </div>
