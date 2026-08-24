@@ -40,8 +40,9 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
   const [confirmActivatePhase, setConfirmActivatePhase] = useState(null);
   const [updatingPhase, setUpdatingPhase] = useState(false);
 
-  // Teams search filter
+  // Teams search filter & Pagination
   const [teamsSearch, setTeamsSearch] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
 
   // Statistics State
   const [stats, setStats] = useState({
@@ -127,6 +128,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
   const handleRefresh = () => {
     setRefreshing(true);
     setSuccess("");
+    setCurrentPage(1);
     fetchDashboardData(true);
   };
 
@@ -331,7 +333,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
       "Registration Date"
     ];
     
-    const rows = registrations.map(t => [
+    const rows = filteredRegistrations.map(t => [
       t.registration_id,
       t.team_name,
       t.project_title,
@@ -448,16 +450,42 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
     );
   });
 
+  // Pagination calculation
+  const totalPages = Math.ceil(filteredRegistrations.length / 10);
+  const activePage = Math.max(1, Math.min(currentPage, totalPages || 1));
+  const startIndex = (activePage - 1) * 10;
+  const endIndex = startIndex + 10;
+  const paginatedRegistrations = filteredRegistrations.slice(startIndex, endIndex);
+
+  // Pagination page numbers generator helper
+  const getPageNumbers = (total, current) => {
+    const pages = [];
+    if (total <= 7) {
+      for (let i = 1; i <= total; i++) {
+        pages.push(i);
+      }
+    } else {
+      if (current <= 4) {
+        pages.push(1, 2, 3, 4, 5, "...", total);
+      } else if (current >= total - 3) {
+        pages.push(1, "...", total - 4, total - 3, total - 2, total - 1, total);
+      } else {
+        pages.push(1, "...", current - 1, current, current + 1, "...", total);
+      }
+    }
+    return pages;
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 font-body pt-16">
-      {/* Fixed Compact Header */}
-      <header className="fixed top-0 left-0 right-0 z-40 flex h-16 items-center justify-between bg-primary px-4 text-white shadow-md md:px-8">
+      {/* Fixed Compact Header - Redesigned to match White Public Navbar Style */}
+      <header className="fixed top-0 left-0 right-0 z-40 flex h-16 items-center justify-between border-b border-slate-200/80 bg-white/95 shadow-lg backdrop-blur-md px-4 md:px-8">
         <div className="flex items-center gap-3">
           {/* Mobile menu toggle */}
           <button
             type="button"
             onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="rounded-lg p-1.5 hover:bg-blue-900/60 md:hidden cursor-pointer"
+            className="rounded-lg p-2 text-slate-800 transition-colors hover:bg-slate-100 md:hidden cursor-pointer"
             aria-label="Toggle menu"
           >
             <Menu size={20} />
@@ -466,21 +494,21 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
           <img
             src="/logo.png"
             alt="IPL Logo"
-            className="h-9 w-auto object-contain"
+            className="h-10 w-auto object-contain md:h-12"
           />
         </div>
 
         <div className="flex items-center gap-4 text-xs md:text-sm">
           <div className="hidden text-right md:block">
-            <p className="font-bold text-white">
+            <p className="text-sm font-bold text-slate-800 uppercase tracking-wider leading-tight">
               {profile?.name || "Administrator"}
             </p>
-            <p className="text-[10px] text-blue-200">{user?.email}</p>
+            <p className="text-xs text-slate-500 font-medium leading-tight mt-0.5" title={user?.email}>{user?.email}</p>
           </div>
           <button
             type="button"
             onClick={handleLogout}
-            className="inline-flex items-center gap-2 rounded-full border border-blue-400/30 bg-blue-950/60 px-4 py-2 text-xs font-bold text-white transition hover:bg-blue-900 cursor-pointer"
+            className="rounded-full border border-slate-300 bg-white px-4 py-2 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-50 transition-colors cursor-pointer"
           >
             Logout
           </button>
@@ -923,7 +951,10 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
                         type="text"
                         placeholder="Search by ID, name, project, domain, or leader..."
                         value={teamsSearch}
-                        onChange={(e) => setTeamsSearch(e.target.value)}
+                        onChange={(e) => {
+                          setTeamsSearch(e.target.value);
+                          setCurrentPage(1);
+                        }}
                         className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm outline-none ring-primary focus:border-primary focus:ring-2"
                       />
                     </div>
@@ -961,7 +992,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 bg-white">
-                          {filteredRegistrations.map((team) => (
+                          {paginatedRegistrations.map((team) => (
                             <tr key={team.id} className="hover:bg-slate-50/50 align-top">
                               <td className="px-5 py-4 font-bold text-primary select-all">{team.registration_id}</td>
                               <td className="px-5 py-4 font-semibold text-slate-900 whitespace-pre-wrap">{team.team_name}</td>
@@ -1024,6 +1055,73 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
                           ))}
                         </tbody>
                       </table>
+                    </div>
+                  )}
+
+                  {/* Client-side Pagination Controls */}
+                  {filteredRegistrations.length > 0 && (
+                    <div className="mt-6 flex flex-col items-center justify-between gap-4 border-t border-slate-100 pt-6 sm:flex-row">
+                      <span className="text-xs text-slate-500 font-medium">
+                        Showing <span className="font-bold text-slate-800">{startIndex + 1}</span> to{" "}
+                        <span className="font-bold text-slate-800">
+                          {Math.min(endIndex, filteredRegistrations.length)}
+                        </span>{" "}
+                        of <span className="font-bold text-slate-800">{filteredRegistrations.length}</span> teams
+                      </span>
+
+                      <div className="flex items-center gap-1.5" aria-label="Pagination navigation">
+                        <button
+                          type="button"
+                          onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                          disabled={activePage === 1}
+                          className="inline-flex h-9 items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-40 disabled:hover:bg-white cursor-pointer select-none"
+                        >
+                          &larr; Previous
+                        </button>
+
+                        <div className="hidden items-center gap-1 sm:flex">
+                          {getPageNumbers(totalPages, activePage).map((page, index) => {
+                            if (page === "...") {
+                              return (
+                                <span
+                                  key={`ellipse-${index}`}
+                                  className="inline-flex h-9 w-9 items-center justify-center text-xs font-semibold text-slate-400"
+                                >
+                                  ...
+                                </span>
+                              );
+                            }
+                            const isCurrent = page === activePage;
+                            return (
+                              <button
+                                key={`page-${page}`}
+                                type="button"
+                                onClick={() => setCurrentPage(page)}
+                                className={`inline-flex h-9 w-9 items-center justify-center rounded-xl text-xs font-bold transition cursor-pointer ${
+                                  isCurrent
+                                    ? "bg-accent text-white shadow-sm hover:bg-amber-600"
+                                    : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                                }`}
+                              >
+                                {page}
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        <span className="text-xs font-bold text-slate-700 sm:hidden px-2">
+                          Page {activePage} of {totalPages}
+                        </span>
+
+                        <button
+                          type="button"
+                          onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                          disabled={activePage === totalPages}
+                          className="inline-flex h-9 items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-40 disabled:hover:bg-white cursor-pointer select-none"
+                        >
+                          Next &rarr;
+                        </button>
+                      </div>
                     </div>
                   )}
                 </section>
