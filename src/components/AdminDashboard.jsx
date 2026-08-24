@@ -44,6 +44,14 @@ const parseDurationToSeconds = (durationText) => {
   return 7 * 24 * 3600; // default fallback 7 days
 };
 
+const splitIsoDateTime = (isoString) => {
+  if (!isoString) return { date: "", time: "" };
+  const dt = new Date(isoString);
+  const date = dt.getFullYear() + "-" + String(dt.getMonth() + 1).padStart(2, "0") + "-" + String(dt.getDate()).padStart(2, "0");
+  const time = String(dt.getHours()).padStart(2, "0") + ":" + String(dt.getMinutes()).padStart(2, "0");
+  return { date, time };
+};
+
 export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
   const [activeTab, setActiveTab] = useState("overview");
   const [loading, setLoading] = useState(true);
@@ -67,6 +75,19 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
   const [confirmActivatePhase, setConfirmActivatePhase] = useState(null);
   const [updatingPhase, setUpdatingPhase] = useState(false);
   const [countdownStates, setCountdownStates] = useState({});
+
+  // Modify & Extend overlay states
+  const [modifyTimerPhase, setModifyTimerPhase] = useState(null);
+  const [startDate, setStartDate] = useState("");
+  const [startTime, setStartTime] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [endTime, setEndTime] = useState("");
+
+  const [extendTimerPhase, setExtendTimerPhase] = useState(null);
+  const [extDays, setExtDays] = useState(0);
+  const [extHours, setExtHours] = useState(0);
+  const [extMinutes, setExtMinutes] = useState(0);
+  const [extSeconds, setExtSeconds] = useState(0);
 
   // Teams search filter & Pagination
   const [teamsSearch, setTeamsSearch] = useState("");
@@ -292,9 +313,13 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
 
     try {
       const now = new Date();
-      const durationSeconds = parseDurationToSeconds(phase.duration);
       const scheduledStart = phase.scheduled_start_at ? new Date(phase.scheduled_start_at) : now;
-      const scheduledEnd = phase.scheduled_end_at ? new Date(phase.scheduled_end_at) : new Date(scheduledStart.getTime() + durationSeconds * 1000);
+      let scheduledEnd = phase.scheduled_end_at ? new Date(phase.scheduled_end_at) : null;
+
+      if (phase.timer_status === "completed" || phase.timer_status === "closed" || !scheduledEnd) {
+        const durationSeconds = parseDurationToSeconds(phase.duration);
+        scheduledEnd = new Date(now.getTime() + durationSeconds * 1000);
+      }
 
       // Create history entry
       const { error: historyError } = await supabase
@@ -471,6 +496,123 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
     } catch (err) {
       console.error("Error stopping phase timer:", err);
       setError(`Unable to stop timer for Phase ${phase.phase_number}.`);
+    } finally {
+      setUpdatingPhase(false);
+    }
+  };
+
+  const handleExtendTimer = async (phase, durationAddedSeconds) => {
+    setUpdatingPhase(true);
+    setError("");
+    setSuccess("");
+    setExtendTimerPhase(null);
+
+    try {
+      const now = new Date();
+      const currentEnd = phase.scheduled_end_at ? new Date(phase.scheduled_end_at) : now;
+      const baseTime = currentEnd.getTime() > now.getTime() ? currentEnd : now;
+      const newEnd = new Date(baseTime.getTime() + durationAddedSeconds * 1000);
+
+      let updatePayload = {
+        scheduled_end_at: newEnd.toISOString(),
+        extended_at: now.toISOString()
+      };
+
+      if (phase.timer_status === "paused") {
+        updatePayload.remaining_seconds = Number(phase.remaining_seconds || 0) + durationAddedSeconds;
+      } else if (phase.timer_status === "completed" || phase.timer_status === "closed" || phase.timer_status === "upcoming") {
+        if (newEnd.getTime() > now.getTime()) {
+          updatePayload.timer_status = "running";
+          updatePayload.is_timer_running = true;
+          updatePayload.is_timer_paused = false;
+          updatePayload.last_started_at = now.toISOString();
+          updatePayload.remaining_seconds = null;
+        }
+      }
+
+      // Create history entry
+      const { error: historyError } = await supabase
+        .from("phase_timer_history")
+        .insert({
+          phase_id: phase.id,
+          action: "EXTEND",
+          old_start_at: phase.scheduled_start_at,
+          old_end_at: phase.scheduled_end_at,
+          new_start_at: phase.scheduled_start_at,
+          new_end_at: newEnd.toISOString(),
+          duration_added_seconds: durationAddedSeconds,
+          performed_by: user.id
+        });
+      if (historyError) throw historyError;
+
+      // Update phase
+      const { error: updateError } = await supabase
+        .from("phases")
+        .update(updatePayload)
+        .eq("id", phase.id);
+      if (updateError) throw updateError;
+
+      setSuccess(`Timer extended successfully for Phase ${phase.phase_number}.`);
+      await fetchDashboardData(true);
+    } catch (err) {
+      console.error("Error extending phase timer:", err);
+      setError(`Unable to extend timer for Phase ${phase.phase_number}.`);
+    } finally {
+      setUpdatingPhase(false);
+    }
+  };
+
+  const handleModifyTimer = async (phase) => {
+    if (!startDate || !startTime || !endDate || !endTime) {
+      setError("Please specify all start and end dates/times.");
+      return;
+    }
+    setUpdatingPhase(true);
+    setError("");
+    setSuccess("");
+    setModifyTimerPhase(null);
+
+    try {
+      const newStart = new Date(`${startDate}T${startTime}`).toISOString();
+      const newEnd = new Date(`${endDate}T${endTime}`).toISOString();
+
+      // Create history entry
+      const { error: historyError } = await supabase
+        .from("phase_timer_history")
+        .insert({
+          phase_id: phase.id,
+          action: "MODIFY",
+          old_start_at: phase.scheduled_start_at,
+          old_end_at: phase.scheduled_end_at,
+          new_start_at: newStart,
+          new_end_at: newEnd,
+          duration_added_seconds: null,
+          performed_by: user.id
+        });
+      if (historyError) throw historyError;
+
+      let updatePayload = {
+        scheduled_start_at: newStart,
+        scheduled_end_at: newEnd
+      };
+
+      if (phase.timer_status === "paused") {
+        const now = new Date();
+        const end = new Date(newEnd);
+        updatePayload.remaining_seconds = Math.max(0, Math.floor((end.getTime() - now.getTime()) / 1000));
+      }
+
+      const { error: updateError } = await supabase
+        .from("phases")
+        .update(updatePayload)
+        .eq("id", phase.id);
+      if (updateError) throw updateError;
+
+      setSuccess(`Timer modified successfully for Phase ${phase.phase_number}.`);
+      await fetchDashboardData(true);
+    } catch (err) {
+      console.error("Error modifying phase timer:", err);
+      setError(`Unable to modify timer for Phase ${phase.phase_number}.`);
     } finally {
       setUpdatingPhase(false);
     }
@@ -1064,47 +1206,104 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
                           </div>
                         </div>
 
-                        {/* Control buttons grid */}
-                        <div className="grid grid-cols-2 gap-2">
-                          {/* Start / Resume */}
-                          {phase.timer_status === 'paused' ? (
+                        {/* Action buttons based on status */}
+                        <div className="grid grid-cols-2 gap-2 mb-2">
+                          {phase.timer_status === 'upcoming' && (
                             <button
                               type="button"
                               disabled={updatingPhase}
-                              onClick={() => handleResumeTimer(phase)}
-                              className="rounded-lg bg-slate-100 hover:bg-slate-200 py-1.5 text-xs font-bold text-slate-700 transition cursor-pointer text-center"
-                            >
-                              Resume
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              disabled={updatingPhase || phase.timer_status === 'running' || phase.timer_status === 'closed'}
                               onClick={() => handleStartTimer(phase)}
-                              className="rounded-lg bg-slate-100 hover:bg-slate-200 py-1.5 text-xs font-bold text-slate-700 transition disabled:opacity-40 cursor-pointer text-center"
+                              className="col-span-2 rounded-lg bg-primary hover:bg-blue-900 py-1.5 text-xs font-bold text-white transition cursor-pointer text-center"
                             >
                               Start
                             </button>
                           )}
 
-                          {/* Pause */}
-                          <button
-                            type="button"
-                            disabled={updatingPhase || phase.timer_status !== 'running'}
-                            onClick={() => handlePauseTimer(phase)}
-                            className="rounded-lg bg-slate-100 hover:bg-slate-200 py-1.5 text-xs font-bold text-slate-700 transition disabled:opacity-40 cursor-pointer text-center"
-                          >
-                            Pause
-                          </button>
+                          {phase.timer_status === 'running' && (
+                            <>
+                              <button
+                                type="button"
+                                disabled={updatingPhase}
+                                onClick={() => handlePauseTimer(phase)}
+                                className="rounded-lg bg-amber-500 hover:bg-amber-600 py-1.5 text-xs font-bold text-white transition cursor-pointer text-center"
+                              >
+                                Pause
+                              </button>
+                              <button
+                                type="button"
+                                disabled={updatingPhase}
+                                onClick={() => handleStopTimer(phase)}
+                                className="rounded-lg bg-red-600 hover:bg-red-700 py-1.5 text-xs font-bold text-white transition cursor-pointer text-center"
+                              >
+                                Stop
+                              </button>
+                            </>
+                          )}
 
-                          {/* Stop */}
+                          {phase.timer_status === 'paused' && (
+                            <>
+                              <button
+                                type="button"
+                                disabled={updatingPhase}
+                                onClick={() => handleResumeTimer(phase)}
+                                className="rounded-lg bg-green-600 hover:bg-green-700 py-1.5 text-xs font-bold text-white transition cursor-pointer text-center"
+                              >
+                                Resume
+                              </button>
+                              <button
+                                type="button"
+                                disabled={updatingPhase}
+                                onClick={() => handleStopTimer(phase)}
+                                className="rounded-lg bg-red-600 hover:bg-red-700 py-1.5 text-xs font-bold text-white transition cursor-pointer text-center"
+                              >
+                                Stop
+                              </button>
+                            </>
+                          )}
+
+                          {(phase.timer_status === 'completed' || phase.timer_status === 'closed') && (
+                            <button
+                              type="button"
+                              disabled={updatingPhase}
+                              onClick={() => handleStartTimer(phase)}
+                              className="col-span-2 rounded-lg bg-primary hover:bg-blue-900 py-1.5 text-xs font-bold text-white transition cursor-pointer text-center"
+                            >
+                              Start Again
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Modify & Extend always visible for every phase */}
+                        <div className="grid grid-cols-2 gap-2">
                           <button
                             type="button"
-                            disabled={updatingPhase || (phase.timer_status !== 'running' && phase.timer_status !== 'paused')}
-                            onClick={() => handleStopTimer(phase)}
-                            className="col-span-2 rounded-lg border border-slate-200 hover:bg-slate-50 py-1.5 text-xs font-bold text-slate-600 transition disabled:opacity-40 cursor-pointer text-center"
+                            disabled={updatingPhase}
+                            onClick={() => {
+                              setModifyTimerPhase(phase);
+                              const start = splitIsoDateTime(phase.scheduled_start_at);
+                              const end = splitIsoDateTime(phase.scheduled_end_at);
+                              setStartDate(start.date);
+                              setStartTime(start.time);
+                              setEndDate(end.date);
+                              setEndTime(end.time);
+                            }}
+                            className="rounded-lg border border-slate-300 bg-white hover:bg-slate-50 py-1.5 text-xs font-bold text-slate-700 transition cursor-pointer text-center"
                           >
-                            Stop Timer (Close)
+                            Modify
+                          </button>
+                          <button
+                            type="button"
+                            disabled={updatingPhase}
+                            onClick={() => {
+                              setExtendTimerPhase(phase);
+                              setExtDays(0);
+                              setExtHours(0);
+                              setExtMinutes(0);
+                              setExtSeconds(0);
+                            }}
+                            className="rounded-lg border border-slate-300 bg-white hover:bg-slate-50 py-1.5 text-xs font-bold text-slate-700 transition cursor-pointer text-center"
+                          >
+                            Extend
                           </button>
                         </div>
                       </div>
@@ -1654,6 +1853,182 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
                 className="rounded-xl bg-primary px-5 py-2 text-sm font-semibold text-white hover:bg-blue-900 cursor-pointer"
               >
                 Activate
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modify Timer Modal */}
+      {modifyTimerPhase && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true">
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setModifyTimerPhase(null)}></div>
+          <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl ring-1 ring-slate-200">
+            <h3 className="font-heading text-lg font-bold text-slate-900 mb-4">
+              Modify Phase {modifyTimerPhase.phase_number} Timer
+            </h3>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Scheduled Start</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                  />
+                  <input
+                    type="time"
+                    value={startTime}
+                    onChange={(e) => setStartTime(e.target.value)}
+                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Scheduled End</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="date"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                  />
+                  <input
+                    type="time"
+                    value={endTime}
+                    onChange={(e) => setEndTime(e.target.value)}
+                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setModifyTimerPhase(null)}
+                className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => handleModifyTimer(modifyTimerPhase)}
+                className="rounded-xl bg-primary px-5 py-2 text-sm font-semibold text-white hover:bg-blue-900 cursor-pointer"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Extend Timer Modal */}
+      {extendTimerPhase && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true">
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setExtendTimerPhase(null)}></div>
+          <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl ring-1 ring-slate-200">
+            <h3 className="font-heading text-lg font-bold text-slate-900 mb-4">
+              Extend Phase {extendTimerPhase.phase_number} Timer
+            </h3>
+
+            {/* Quick Add Buttons */}
+            <div className="mb-6">
+              <p className="text-xs font-semibold text-slate-500 uppercase mb-2">Quick Extend Options</p>
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleExtendTimer(extendTimerPhase, 3600)}
+                  className="rounded-lg border border-slate-200 hover:bg-slate-50 py-2 text-xs font-bold text-slate-700 transition cursor-pointer text-center"
+                >
+                  +1 Hour
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleExtendTimer(extendTimerPhase, 6 * 3600)}
+                  className="rounded-lg border border-slate-200 hover:bg-slate-50 py-2 text-xs font-bold text-slate-700 transition cursor-pointer text-center"
+                >
+                  +6 Hours
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleExtendTimer(extendTimerPhase, 24 * 3600)}
+                  className="rounded-lg border border-slate-200 hover:bg-slate-50 py-2 text-xs font-bold text-slate-700 transition cursor-pointer text-center"
+                >
+                  +1 Day
+                </button>
+              </div>
+            </div>
+
+            {/* Custom Duration Form */}
+            <div>
+              <p className="text-xs font-semibold text-slate-500 uppercase mb-2">Custom Extension Duration</p>
+              <div className="grid grid-cols-4 gap-2">
+                <div>
+                  <label className="block text-[10px] text-slate-400 mb-1 text-center">Days</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={extDays}
+                    onChange={(e) => setExtDays(Math.max(0, parseInt(e.target.value) || 0))}
+                    className="w-full text-center rounded-lg border border-slate-300 py-1 text-sm outline-none focus:border-primary"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-slate-400 mb-1 text-center">Hours</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={extHours}
+                    onChange={(e) => setExtHours(Math.max(0, parseInt(e.target.value) || 0))}
+                    className="w-full text-center rounded-lg border border-slate-300 py-1 text-sm outline-none focus:border-primary"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-slate-400 mb-1 text-center">Mins</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={extMinutes}
+                    onChange={(e) => setExtMinutes(Math.max(0, parseInt(e.target.value) || 0))}
+                    className="w-full text-center rounded-lg border border-slate-300 py-1 text-sm outline-none focus:border-primary"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-slate-400 mb-1 text-center">Secs</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={extSeconds}
+                    onChange={(e) => setExtSeconds(Math.max(0, parseInt(e.target.value) || 0))}
+                    className="w-full text-center rounded-lg border border-slate-300 py-1 text-sm outline-none focus:border-primary"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setExtendTimerPhase(null)}
+                className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const totalSeconds = (extDays * 24 * 3600) + (extHours * 3600) + (extMinutes * 60) + extSeconds;
+                  if (totalSeconds > 0) {
+                    handleExtendTimer(extendTimerPhase, totalSeconds);
+                  }
+                }}
+                className="rounded-xl bg-primary px-5 py-2 text-sm font-semibold text-white hover:bg-blue-900 cursor-pointer"
+              >
+                Apply Extension
               </button>
             </div>
           </div>
