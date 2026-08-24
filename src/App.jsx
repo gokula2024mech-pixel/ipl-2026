@@ -5,6 +5,7 @@ import Navbar from './components/Navbar'
 import Hero from './components/Hero'
 import RegistrationModal from './components/RegistrationModal'
 import { supabase } from './supabaseClient'
+import PublicFloatingTimer from './components/PublicFloatingTimer'
 
 const About = lazy(() => import('./components/About'))
 const ProgramHighlights = lazy(() => import('./components/ProgramHighlights'))
@@ -289,6 +290,10 @@ export default function App() {
         >
           Return to Admin Console
         </button>
+      )}
+
+      {viewMode === "public" && (
+        <PublicFloatingTimer isAdminPublicView={profile?.role === 'admin'} />
       )}
     </>
   )

@@ -75,6 +75,10 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
   const [confirmActivatePhase, setConfirmActivatePhase] = useState(null);
   const [updatingPhase, setUpdatingPhase] = useState(false);
   const [countdownStates, setCountdownStates] = useState({});
+  const [registrationTimer, setRegistrationTimer] = useState(null);
+  const [regCountdown, setRegCountdown] = useState(null);
+  const [modifyTimerType, setModifyTimerType] = useState(""); // "phase" | "registration"
+  const [extendTimerType, setExtendTimerType] = useState(""); // "phase" | "registration"
 
   // Modify & Extend overlay states
   const [modifyTimerPhase, setModifyTimerPhase] = useState(null);
@@ -116,6 +120,14 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
       setPhases(phasesData || []);
 
       const activePhase = phasesData?.find(p => p.is_active);
+
+      // Fetch registration timer
+      const { data: regTimerData, error: regTimerError } = await supabase
+        .from("registration_timer")
+        .select("*")
+        .maybeSingle();
+      if (regTimerError) throw regTimerError;
+      setRegistrationTimer(regTimerData);
 
       // 2. Fetch profiles
       const { data: profilesData, error: profilesError } = await supabase
@@ -179,6 +191,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
       const newStates = {};
       let needsRefresh = false;
 
+      // 1. Phase Timers Countdowns
       phases.forEach(async (phase) => {
         if (phase.is_timer_running && phase.scheduled_end_at) {
           const end = new Date(phase.scheduled_end_at).getTime();
@@ -224,15 +237,66 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
           newStates[phase.id] = null;
         }
       });
-
       setCountdownStates(newStates);
+
+      // 2. Registration Timer Countdown
+      if (registrationTimer) {
+        let regState = null;
+        if (registrationTimer.is_timer_running && registrationTimer.scheduled_end_at) {
+          const end = new Date(registrationTimer.scheduled_end_at).getTime();
+          let diff = end - Date.now();
+          if (registrationTimer.is_timer_paused && registrationTimer.remaining_seconds) {
+            diff = Number(registrationTimer.remaining_seconds) * 1000;
+          }
+          if (diff <= 0) {
+            regState = { days: 0, hours: 0, minutes: 0, seconds: 0, isOver: true };
+            if (registrationTimer.timer_status === "running") {
+              needsRefresh = true;
+              registrationTimer.timer_status = "completed";
+              registrationTimer.is_timer_running = false;
+              registrationTimer.is_timer_paused = false;
+              const updateRegTimer = async () => {
+                try {
+                  await supabase
+                    .from("registration_timer")
+                    .update({
+                      timer_status: "completed",
+                      is_timer_running: false,
+                      is_timer_paused: false,
+                      remaining_seconds: 0
+                    })
+                    .eq("id", registrationTimer.id);
+                } catch (e) {
+                  console.error("Error updating completed registration timer status:", e);
+                }
+              };
+              updateRegTimer();
+            }
+          } else {
+            const seconds = Math.floor((diff / 1000) % 60);
+            const minutes = Math.floor((diff / 1000 / 60) % 60);
+            const hours = Math.floor((diff / (1000 * 60 * 60)) % 24);
+            const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+            regState = { days, hours, minutes, seconds, isOver: false };
+          }
+        } else if (registrationTimer.timer_status === "paused" && registrationTimer.remaining_seconds) {
+          const diff = Number(registrationTimer.remaining_seconds) * 1000;
+          const seconds = Math.floor((diff / 1000) % 60);
+          const minutes = Math.floor((diff / 1000 / 60) % 60);
+          const hours = Math.floor((diff / (1000 * 60 * 60)) % 24);
+          const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+          regState = { days, hours, minutes, seconds, isOver: false };
+        }
+        setRegCountdown(regState);
+      }
+
       if (needsRefresh) {
         fetchDashboardData(true);
       }
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [phases]);
+  }, [phases, registrationTimer]);
 
   const handleRefresh = () => {
     setRefreshing(true);
@@ -613,6 +677,322 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
     } catch (err) {
       console.error("Error modifying phase timer:", err);
       setError(`Unable to modify timer for Phase ${phase.phase_number}.`);
+    } finally {
+      setUpdatingPhase(false);
+    }
+  };
+
+  const handleStartRegTimer = async () => {
+    if (!registrationTimer) return;
+    setUpdatingPhase(true);
+    setError("");
+    setSuccess("");
+
+    try {
+      const now = new Date();
+      const scheduledStart = registrationTimer.scheduled_start_at ? new Date(registrationTimer.scheduled_start_at) : now;
+      let scheduledEnd = registrationTimer.scheduled_end_at ? new Date(registrationTimer.scheduled_end_at) : null;
+
+      if (registrationTimer.timer_status === "completed" || registrationTimer.timer_status === "closed" || !scheduledEnd) {
+        scheduledEnd = new Date(now.getTime() + 7 * 24 * 3600 * 1000); // 7 days
+      }
+
+      // History entry
+      const { error: historyError } = await supabase
+        .from("registration_timer_history")
+        .insert({
+          registration_timer_id: registrationTimer.id,
+          action: "START",
+          old_start_at: registrationTimer.scheduled_start_at,
+          old_end_at: registrationTimer.scheduled_end_at,
+          new_start_at: scheduledStart.toISOString(),
+          new_end_at: scheduledEnd.toISOString(),
+          duration_added_seconds: null,
+          performed_by: user.id
+        });
+      if (historyError) throw historyError;
+
+      // Update state in DB
+      const { error: updateError } = await supabase
+        .from("registration_timer")
+        .update({
+          timer_status: "running",
+          scheduled_start_at: scheduledStart.toISOString(),
+          scheduled_end_at: scheduledEnd.toISOString(),
+          is_timer_running: true,
+          is_timer_paused: false,
+          last_started_at: now.toISOString(),
+          remaining_seconds: null
+        })
+        .eq("id", registrationTimer.id);
+      if (updateError) throw updateError;
+
+      setSuccess("Registration timer started successfully.");
+      await fetchDashboardData(true);
+    } catch (err) {
+      console.error("Error starting registration timer:", err);
+      setError("Unable to start registration timer.");
+    } finally {
+      setUpdatingPhase(false);
+    }
+  };
+
+  const handlePauseRegTimer = async () => {
+    if (!registrationTimer) return;
+    setUpdatingPhase(true);
+    setError("");
+    setSuccess("");
+
+    try {
+      const now = new Date();
+      const end = new Date(registrationTimer.scheduled_end_at);
+      const remaining = Math.max(0, Math.floor((end.getTime() - now.getTime()) / 1000));
+
+      const { error: historyError } = await supabase
+        .from("registration_timer_history")
+        .insert({
+          registration_timer_id: registrationTimer.id,
+          action: "PAUSE",
+          old_start_at: registrationTimer.scheduled_start_at,
+          old_end_at: registrationTimer.scheduled_end_at,
+          new_start_at: registrationTimer.scheduled_start_at,
+          new_end_at: registrationTimer.scheduled_end_at,
+          duration_added_seconds: null,
+          performed_by: user.id
+        });
+      if (historyError) throw historyError;
+
+      const { error: updateError } = await supabase
+        .from("registration_timer")
+        .update({
+          timer_status: "paused",
+          is_timer_running: false,
+          is_timer_paused: true,
+          paused_at: now.toISOString(),
+          remaining_seconds: remaining
+        })
+        .eq("id", registrationTimer.id);
+      if (updateError) throw updateError;
+
+      setSuccess("Registration timer paused successfully.");
+      await fetchDashboardData(true);
+    } catch (err) {
+      console.error("Error pausing registration timer:", err);
+      setError("Unable to pause registration timer.");
+    } finally {
+      setUpdatingPhase(false);
+    }
+  };
+
+  const handleResumeRegTimer = async () => {
+    if (!registrationTimer) return;
+    setUpdatingPhase(true);
+    setError("");
+    setSuccess("");
+
+    try {
+      const now = new Date();
+      const remaining = registrationTimer.remaining_seconds || 0;
+      const newEnd = new Date(now.getTime() + remaining * 1000);
+
+      const { error: historyError } = await supabase
+        .from("registration_timer_history")
+        .insert({
+          registration_timer_id: registrationTimer.id,
+          action: "RESUME",
+          old_start_at: registrationTimer.scheduled_start_at,
+          old_end_at: registrationTimer.scheduled_end_at,
+          new_start_at: registrationTimer.scheduled_start_at,
+          new_end_at: newEnd.toISOString(),
+          duration_added_seconds: null,
+          performed_by: user.id
+        });
+      if (historyError) throw historyError;
+
+      const { error: updateError } = await supabase
+        .from("registration_timer")
+        .update({
+          timer_status: "running",
+          is_timer_running: true,
+          is_timer_paused: false,
+          scheduled_end_at: newEnd.toISOString(),
+          last_started_at: now.toISOString(),
+          remaining_seconds: null,
+          paused_at: null
+        })
+        .eq("id", registrationTimer.id);
+      if (updateError) throw updateError;
+
+      setSuccess("Registration timer resumed successfully.");
+      await fetchDashboardData(true);
+    } catch (err) {
+      console.error("Error resuming registration timer:", err);
+      setError("Unable to resume registration timer.");
+    } finally {
+      setUpdatingPhase(false);
+    }
+  };
+
+  const handleStopRegTimer = async () => {
+    if (!registrationTimer) return;
+    setUpdatingPhase(true);
+    setError("");
+    setSuccess("");
+
+    try {
+      const { error: historyError } = await supabase
+        .from("registration_timer_history")
+        .insert({
+          registration_timer_id: registrationTimer.id,
+          action: "STOP",
+          old_start_at: registrationTimer.scheduled_start_at,
+          old_end_at: registrationTimer.scheduled_end_at,
+          new_start_at: registrationTimer.scheduled_start_at,
+          new_end_at: registrationTimer.scheduled_end_at,
+          duration_added_seconds: null,
+          performed_by: user.id
+        });
+      if (historyError) throw historyError;
+
+      const { error: updateError } = await supabase
+        .from("registration_timer")
+        .update({
+          timer_status: "closed",
+          is_timer_running: false,
+          is_timer_paused: false
+        })
+        .eq("id", registrationTimer.id);
+      if (updateError) throw updateError;
+
+      setSuccess("Registration timer stopped successfully.");
+      await fetchDashboardData(true);
+    } catch (err) {
+      console.error("Error stopping registration timer:", err);
+      setError("Unable to stop registration timer.");
+    } finally {
+      setUpdatingPhase(false);
+    }
+  };
+
+  const handleExtendRegTimer = async (durationAddedSeconds) => {
+    if (!registrationTimer) return;
+    setUpdatingPhase(true);
+    setError("");
+    setSuccess("");
+    setExtendTimerPhase(null);
+
+    try {
+      const now = new Date();
+      const currentEnd = registrationTimer.scheduled_end_at ? new Date(registrationTimer.scheduled_end_at) : now;
+      const baseTime = currentEnd.getTime() > now.getTime() ? currentEnd : now;
+      const newEnd = new Date(baseTime.getTime() + durationAddedSeconds * 1000);
+
+      let updatePayload = {
+        scheduled_end_at: newEnd.toISOString(),
+        extended_at: now.toISOString()
+      };
+
+      if (registrationTimer.timer_status === "paused") {
+        updatePayload.remaining_seconds = Number(registrationTimer.remaining_seconds || 0) + durationAddedSeconds;
+      } else if (
+        registrationTimer.timer_status === "completed" ||
+        registrationTimer.timer_status === "closed" ||
+        registrationTimer.timer_status === "upcoming"
+      ) {
+        if (newEnd.getTime() > now.getTime()) {
+          updatePayload.timer_status = "running";
+          updatePayload.is_timer_running = true;
+          updatePayload.is_timer_paused = false;
+          updatePayload.last_started_at = now.toISOString();
+          updatePayload.remaining_seconds = null;
+        }
+      }
+
+      // History
+      const { error: historyError } = await supabase
+        .from("registration_timer_history")
+        .insert({
+          registration_timer_id: registrationTimer.id,
+          action: "EXTEND",
+          old_start_at: registrationTimer.scheduled_start_at,
+          old_end_at: registrationTimer.scheduled_end_at,
+          new_start_at: registrationTimer.scheduled_start_at,
+          new_end_at: newEnd.toISOString(),
+          duration_added_seconds: durationAddedSeconds,
+          performed_by: user.id
+        });
+      if (historyError) throw historyError;
+
+      // Update timer config
+      const { error: updateError } = await supabase
+        .from("registration_timer")
+        .update(updatePayload)
+        .eq("id", registrationTimer.id);
+      if (updateError) throw updateError;
+
+      setSuccess("Registration timer extended successfully.");
+      await fetchDashboardData(true);
+    } catch (err) {
+      console.error("Error extending registration timer:", err);
+      setError("Unable to extend registration timer.");
+    } finally {
+      setUpdatingPhase(false);
+    }
+  };
+
+  const handleModifyRegTimer = async () => {
+    if (!registrationTimer) return;
+    if (!startDate || !startTime || !endDate || !endTime) {
+      setError("Please specify all start and end dates/times.");
+      return;
+    }
+    setUpdatingPhase(true);
+    setError("");
+    setSuccess("");
+    setModifyTimerPhase(null);
+
+    try {
+      const newStart = new Date(`${startDate}T${startTime}`).toISOString();
+      const newEnd = new Date(`${endDate}T${endTime}`).toISOString();
+
+      // History
+      const { error: historyError } = await supabase
+        .from("registration_timer_history")
+        .insert({
+          registration_timer_id: registrationTimer.id,
+          action: "MODIFY",
+          old_start_at: registrationTimer.scheduled_start_at,
+          old_end_at: registrationTimer.scheduled_end_at,
+          new_start_at: newStart,
+          new_end_at: newEnd,
+          duration_added_seconds: null,
+          performed_by: user.id
+        });
+      if (historyError) throw historyError;
+
+      let updatePayload = {
+        scheduled_start_at: newStart,
+        scheduled_end_at: newEnd
+      };
+
+      if (registrationTimer.timer_status === "paused") {
+        const now = new Date();
+        const end = new Date(newEnd);
+        updatePayload.remaining_seconds = Math.max(0, Math.floor((end.getTime() - now.getTime()) / 1000));
+      }
+
+      // Update timer config
+      const { error: updateError } = await supabase
+        .from("registration_timer")
+        .update(updatePayload)
+        .eq("id", registrationTimer.id);
+      if (updateError) throw updateError;
+
+      setSuccess("Registration timer modified successfully.");
+      await fetchDashboardData(true);
+    } catch (err) {
+      console.error("Error modifying registration timer:", err);
+      setError("Unable to modify registration timer.");
     } finally {
       setUpdatingPhase(false);
     }
@@ -1128,12 +1508,175 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
 
               {/* 2. PHASES TAB */}
               {activeTab === "phases" && (
-                <section className="grid gap-6 md:grid-cols-3">
-                  {phases.map((phase) => (
-                    <article
-                      key={phase.id}
-                      className="flex flex-col rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200"
-                    >
+                <div className="space-y-8">
+                  {/* Registration Timer Card */}
+                  {registrationTimer && (
+                    <article className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200 max-w-xl">
+                      <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
+                        <div>
+                          <h3 className="text-lg font-bold text-slate-900">Registration Timer</h3>
+                          <p className="text-xs text-slate-500">Configure and manage the global student team registration window.</p>
+                        </div>
+                        <span className={`inline-flex items-center rounded-md px-2.5 py-1 text-xs font-bold ring-1 ring-inset ${
+                          registrationTimer.timer_status === 'running' ? 'bg-green-50 text-green-700 ring-green-600/20 animate-pulse' :
+                          registrationTimer.timer_status === 'paused' ? 'bg-amber-50 text-amber-700 ring-amber-600/20' :
+                          registrationTimer.timer_status === 'closed' ? 'bg-slate-50 text-slate-600 ring-slate-500/10' :
+                          registrationTimer.timer_status === 'completed' ? 'bg-blue-50 text-blue-700 ring-blue-600/20' :
+                          'bg-slate-50 text-slate-500 ring-slate-500/10'
+                        }`}>
+                          {registrationTimer.timer_status ? registrationTimer.timer_status.toUpperCase() : 'UPCOMING'}
+                        </span>
+                      </div>
+
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        {/* Countdown */}
+                        <div className="rounded-xl bg-slate-50 p-4 flex flex-col justify-center">
+                          <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Remaining Time</span>
+                          <span className="font-mono text-xl font-bold text-slate-800 mt-1">
+                            {regCountdown ? (
+                              `${String(regCountdown.days).padStart(2, '0')}d : ` +
+                              `${String(regCountdown.hours).padStart(2, '0')}h : ` +
+                              `${String(regCountdown.minutes).padStart(2, '0')}m : ` +
+                              `${String(regCountdown.seconds).padStart(2, '0')}s`
+                            ) : registrationTimer.timer_status === 'closed' ? (
+                              'Closed'
+                            ) : registrationTimer.timer_status === 'completed' ? (
+                              'Completed'
+                            ) : (
+                              '--d : --h : --m : --s'
+                            )}
+                          </span>
+                        </div>
+
+                        {/* Timing details */}
+                        <div className="text-xs text-slate-600 flex flex-col justify-center space-y-1">
+                          <div className="flex justify-between">
+                            <span>Start:</span>
+                            <span className="font-semibold text-slate-900">
+                              {registrationTimer.scheduled_start_at ? new Date(registrationTimer.scheduled_start_at).toLocaleString() : 'Not scheduled'}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>End:</span>
+                            <span className="font-semibold text-slate-900">
+                              {registrationTimer.scheduled_end_at ? new Date(registrationTimer.scheduled_end_at).toLocaleString() : 'Not scheduled'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Controls grid */}
+                      <div className="mt-6 flex flex-wrap gap-2">
+                        {registrationTimer.timer_status === 'upcoming' && (
+                          <button
+                            type="button"
+                            disabled={updatingPhase}
+                            onClick={handleStartRegTimer}
+                            className="rounded-lg bg-primary hover:bg-blue-900 px-4 py-2 text-xs font-bold text-white transition cursor-pointer"
+                          >
+                            Start Timer
+                          </button>
+                        )}
+
+                        {registrationTimer.timer_status === 'running' && (
+                          <>
+                            <button
+                              type="button"
+                              disabled={updatingPhase}
+                              onClick={handlePauseRegTimer}
+                              className="rounded-lg bg-amber-500 hover:bg-amber-600 px-4 py-2 text-xs font-bold text-white transition cursor-pointer"
+                            >
+                              Pause
+                            </button>
+                            <button
+                              type="button"
+                              disabled={updatingPhase}
+                              onClick={handleStopRegTimer}
+                              className="rounded-lg bg-red-600 hover:bg-red-700 px-4 py-2 text-xs font-bold text-white transition cursor-pointer"
+                            >
+                              Stop
+                            </button>
+                          </>
+                        )}
+
+                        {registrationTimer.timer_status === 'paused' && (
+                          <>
+                            <button
+                              type="button"
+                              disabled={updatingPhase}
+                              onClick={handleResumeRegTimer}
+                              className="rounded-lg bg-green-600 hover:bg-green-700 px-4 py-2 text-xs font-bold text-white transition cursor-pointer"
+                            >
+                              Resume
+                            </button>
+                            <button
+                              type="button"
+                              disabled={updatingPhase}
+                              onClick={handleStopRegTimer}
+                              className="rounded-lg bg-red-600 hover:bg-red-700 px-4 py-2 text-xs font-bold text-white transition cursor-pointer"
+                            >
+                              Stop
+                            </button>
+                          </>
+                        )}
+
+                        {(registrationTimer.timer_status === 'completed' || registrationTimer.timer_status === 'closed') && (
+                          <button
+                            type="button"
+                            disabled={updatingPhase}
+                            onClick={handleStartRegTimer}
+                            className="rounded-lg bg-primary hover:bg-blue-900 px-4 py-2 text-xs font-bold text-white transition cursor-pointer"
+                          >
+                            Start Again
+                          </button>
+                        )}
+
+                        {/* Modify and Extend */}
+                        <button
+                          type="button"
+                          disabled={updatingPhase}
+                          onClick={() => {
+                            setModifyTimerType("registration");
+                            setModifyTimerPhase(registrationTimer);
+                            const start = splitIsoDateTime(registrationTimer.scheduled_start_at);
+                            const end = splitIsoDateTime(registrationTimer.scheduled_end_at);
+                            setStartDate(start.date);
+                            setStartTime(start.time);
+                            setEndDate(end.date);
+                            setEndTime(end.time);
+                          }}
+                          className="rounded-lg border border-slate-300 bg-white hover:bg-slate-50 px-4 py-2 text-xs font-bold text-slate-700 transition cursor-pointer"
+                        >
+                          Modify
+                        </button>
+                        <button
+                          type="button"
+                          disabled={updatingPhase}
+                          onClick={() => {
+                            setExtendTimerType("registration");
+                            setExtendTimerPhase(registrationTimer);
+                            setExtDays(0);
+                            setExtHours(0);
+                            setExtMinutes(0);
+                            setExtSeconds(0);
+                          }}
+                          className="rounded-lg border border-slate-300 bg-white hover:bg-slate-50 px-4 py-2 text-xs font-bold text-slate-700 transition cursor-pointer"
+                        >
+                          Extend
+                        </button>
+                      </div>
+                    </article>
+                  )}
+
+                  {/* Phase Timer Cards */}
+                  <div>
+                    <h3 className="text-lg font-bold text-slate-900 mb-4">Phase Timers</h3>
+                    <section className="grid gap-6 md:grid-cols-3">
+                      {phases.map((phase) => (
+                        <article
+                          key={phase.id}
+                          className="flex flex-col rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200"
+                        >
                       <div className="flex items-center justify-between">
                         <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-primary">
                           PHASE {phase.phase_number}
@@ -1211,11 +1754,11 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
                           {phase.timer_status === 'upcoming' && (
                             <button
                               type="button"
-                              disabled={updatingPhase}
+                              disabled={updatingPhase || !phase.is_active}
                               onClick={() => handleStartTimer(phase)}
-                              className="col-span-2 rounded-lg bg-primary hover:bg-blue-900 py-1.5 text-xs font-bold text-white transition cursor-pointer text-center"
+                              className="col-span-2 rounded-lg bg-primary hover:bg-blue-900 py-1.5 text-xs font-bold text-white transition disabled:opacity-40 disabled:hover:bg-primary cursor-pointer text-center"
                             >
-                              Start
+                              {phase.is_active ? "Start" : "Start (Activate Phase first)"}
                             </button>
                           )}
 
@@ -1264,11 +1807,11 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
                           {(phase.timer_status === 'completed' || phase.timer_status === 'closed') && (
                             <button
                               type="button"
-                              disabled={updatingPhase}
+                              disabled={updatingPhase || !phase.is_active}
                               onClick={() => handleStartTimer(phase)}
-                              className="col-span-2 rounded-lg bg-primary hover:bg-blue-900 py-1.5 text-xs font-bold text-white transition cursor-pointer text-center"
+                              className="col-span-2 rounded-lg bg-primary hover:bg-blue-900 py-1.5 text-xs font-bold text-white transition disabled:opacity-40 disabled:hover:bg-primary cursor-pointer text-center"
                             >
-                              Start Again
+                              {phase.is_active ? "Start Again" : "Start Again (Activate Phase first)"}
                             </button>
                           )}
                         </div>
@@ -1279,6 +1822,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
                             type="button"
                             disabled={updatingPhase}
                             onClick={() => {
+                              setModifyTimerType("phase");
                               setModifyTimerPhase(phase);
                               const start = splitIsoDateTime(phase.scheduled_start_at);
                               const end = splitIsoDateTime(phase.scheduled_end_at);
@@ -1295,6 +1839,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
                             type="button"
                             disabled={updatingPhase}
                             onClick={() => {
+                              setExtendTimerType("phase");
                               setExtendTimerPhase(phase);
                               setExtDays(0);
                               setExtHours(0);
@@ -1331,7 +1876,9 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
                       </div>
                     </article>
                   ))}
-                </section>
+                    </section>
+                  </div>
+                </div>
               )}
 
               {/* 3. EVALUATORS TAB */}
@@ -1865,7 +2412,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
           <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setModifyTimerPhase(null)}></div>
           <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl ring-1 ring-slate-200">
             <h3 className="font-heading text-lg font-bold text-slate-900 mb-4">
-              Modify Phase {modifyTimerPhase.phase_number} Timer
+              Modify {modifyTimerType === "registration" ? "Registration" : `Phase ${modifyTimerPhase.phase_number}`} Timer
             </h3>
 
             <div className="space-y-4">
@@ -1916,7 +2463,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
               </button>
               <button
                 type="button"
-                onClick={() => handleModifyTimer(modifyTimerPhase)}
+                onClick={() => modifyTimerType === "registration" ? handleModifyRegTimer() : handleModifyTimer(modifyTimerPhase)}
                 className="rounded-xl bg-primary px-5 py-2 text-sm font-semibold text-white hover:bg-blue-900 cursor-pointer"
               >
                 Save
@@ -1932,7 +2479,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
           <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setExtendTimerPhase(null)}></div>
           <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl ring-1 ring-slate-200">
             <h3 className="font-heading text-lg font-bold text-slate-900 mb-4">
-              Extend Phase {extendTimerPhase.phase_number} Timer
+              Extend {extendTimerType === "registration" ? "Registration" : `Phase ${extendTimerPhase.phase_number}`} Timer
             </h3>
 
             {/* Quick Add Buttons */}
@@ -1941,21 +2488,21 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
               <div className="grid grid-cols-3 gap-2">
                 <button
                   type="button"
-                  onClick={() => handleExtendTimer(extendTimerPhase, 3600)}
+                  onClick={() => extendTimerType === "registration" ? handleExtendRegTimer(3600) : handleExtendTimer(extendTimerPhase, 3600)}
                   className="rounded-lg border border-slate-200 hover:bg-slate-50 py-2 text-xs font-bold text-slate-700 transition cursor-pointer text-center"
                 >
                   +1 Hour
                 </button>
                 <button
                   type="button"
-                  onClick={() => handleExtendTimer(extendTimerPhase, 6 * 3600)}
+                  onClick={() => extendTimerType === "registration" ? handleExtendRegTimer(6 * 3600) : handleExtendTimer(extendTimerPhase, 6 * 3600)}
                   className="rounded-lg border border-slate-200 hover:bg-slate-50 py-2 text-xs font-bold text-slate-700 transition cursor-pointer text-center"
                 >
                   +6 Hours
                 </button>
                 <button
                   type="button"
-                  onClick={() => handleExtendTimer(extendTimerPhase, 24 * 3600)}
+                  onClick={() => extendTimerType === "registration" ? handleExtendRegTimer(24 * 3600) : handleExtendTimer(extendTimerPhase, 24 * 3600)}
                   className="rounded-lg border border-slate-200 hover:bg-slate-50 py-2 text-xs font-bold text-slate-700 transition cursor-pointer text-center"
                 >
                   +1 Day
@@ -2023,7 +2570,11 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
                 onClick={() => {
                   const totalSeconds = (extDays * 24 * 3600) + (extHours * 3600) + (extMinutes * 60) + extSeconds;
                   if (totalSeconds > 0) {
-                    handleExtendTimer(extendTimerPhase, totalSeconds);
+                    if (extendTimerType === "registration") {
+                      handleExtendRegTimer(totalSeconds);
+                    } else {
+                      handleExtendTimer(extendTimerPhase, totalSeconds);
+                    }
                   }
                 }}
                 className="rounded-xl bg-primary px-5 py-2 text-sm font-semibold text-white hover:bg-blue-900 cursor-pointer"
