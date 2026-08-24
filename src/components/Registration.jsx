@@ -16,21 +16,38 @@ export default function Registration({ onRegisterClick }) {
   const [regTimer, setRegTimer] = useState(null)
   const [regCountdown, setRegCountdown] = useState(null)
 
-  useEffect(() => {
-    const fetchRegTimer = async () => {
-      try {
-        const { data, error } = await supabase
-          .from("registration_timer")
-          .select("*")
-          .maybeSingle()
-        if (!error && data) {
-          setRegTimer(data)
-        }
-      } catch (err) {
-        console.error("Error loading registration timer:", err)
+  const fetchRegTimer = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("registration_timer")
+        .select("*")
+        .maybeSingle()
+      if (!error && data) {
+        setRegTimer(data)
       }
+    } catch (err) {
+      console.error("Error loading registration timer:", err)
     }
+  }
+
+  useEffect(() => {
     fetchRegTimer()
+
+    // Subscribe to realtime updates on the 'registration_timer' table
+    const channel = supabase
+      .channel("public-registration-timer")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "registration_timer" },
+        () => {
+          fetchRegTimer()
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
   }, [])
 
   // Local ticker countdown

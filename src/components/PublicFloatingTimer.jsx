@@ -5,48 +5,55 @@ import { supabase } from '../supabaseClient'
 
 export default function PublicFloatingTimer({ isAdminPublicView }) {
   const [dbPhases, setDbPhases] = useState([])
-  const [regTimer, setRegTimer] = useState(null)
   const [countdownStates, setCountdownStates] = useState({})
   const [isMinimized, setIsMinimized] = useState(true) // Start minimized to not block page content
   const [currentIndex, setCurrentIndex] = useState(0)
 
   // 1. Fetch data on mount
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        // Fetch phases
-        const { data: phasesData, error: phasesError } = await supabase
-          .from("phases")
-          .select("*")
-          .order("phase_number", { ascending: true })
-        if (!phasesError && phasesData) {
-          setDbPhases(phasesData)
-        }
-
-        // Fetch registration timer
-        const { data: regData, error: regError } = await supabase
-          .from("registration_timer")
-          .select("*")
-          .maybeSingle()
-        if (!regError && regData) {
-          setRegTimer(regData)
-        }
-      } catch (err) {
-        console.error("Error loading public floating timers:", err)
+  const fetchPhases = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("phases")
+        .select("*")
+        .order("phase_number", { ascending: true })
+      if (!error && data) {
+        setDbPhases(data)
       }
+    } catch (err) {
+      console.error("Error loading public phases in floating timer:", err)
     }
-    fetchData()
+  }
+
+  useEffect(() => {
+    fetchPhases()
+
+    // Realtime channel subscription
+    const channel = supabase
+      .channel("public-floating-phases")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "phases" },
+        () => {
+          fetchPhases()
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
   }, [])
 
   // 2. Local countdown ticker (runs every second, updates local state only)
   useEffect(() => {
+    if (dbPhases.length === 0) return
+
     const interval = setInterval(() => {
       const newStates = {}
       let needsRefresh = false
 
-      // Calculate for phases
       dbPhases.forEach((p) => {
-        if (p.is_timer_running && p.scheduled_end_at) {
+        if (p.timer_status === "running" && p.scheduled_end_at) {
           const end = new Date(p.scheduled_end_at).getTime()
           let diff = end - Date.now()
           if (p.is_timer_paused && p.remaining_seconds) {
@@ -55,12 +62,10 @@ export default function PublicFloatingTimer({ isAdminPublicView }) {
 
           if (diff <= 0) {
             newStates[`phase-${p.id}`] = { days: 0, hours: 0, minutes: 0, seconds: 0, statusText: "Completed" }
-            if (p.timer_status === "running") {
-              p.timer_status = "completed"
-              p.is_timer_running = false
-              p.is_timer_paused = false
-              needsRefresh = true
-            }
+            p.timer_status = "completed"
+            p.is_timer_running = false
+            p.is_timer_paused = false
+            needsRefresh = true
           } else {
             const seconds = Math.floor((diff / 1000) % 60)
             const minutes = Math.floor((diff / 1000 / 60) % 60)
@@ -93,69 +98,18 @@ export default function PublicFloatingTimer({ isAdminPublicView }) {
         }
       })
 
-      // Calculate for registration timer
-      if (regTimer) {
-        if (regTimer.is_timer_running && regTimer.scheduled_end_at) {
-          const end = new Date(regTimer.scheduled_end_at).getTime()
-          let diff = end - Date.now()
-          if (regTimer.is_timer_paused && regTimer.remaining_seconds) {
-            diff = Number(regTimer.remaining_seconds) * 1000
-          }
-
-          if (diff <= 0) {
-            newStates[`reg-${regTimer.id}`] = { days: 0, hours: 0, minutes: 0, seconds: 0, statusText: "Completed" }
-            if (regTimer.timer_status === "running") {
-              regTimer.timer_status = "completed"
-              regTimer.is_timer_running = false
-              regTimer.is_timer_paused = false
-              needsRefresh = true
-            }
-          } else {
-            const seconds = Math.floor((diff / 1000) % 60)
-            const minutes = Math.floor((diff / 1000 / 60) % 60)
-            const hours = Math.floor((diff / (1000 * 60 * 60)) % 24)
-            const days = Math.floor(diff / (1000 * 60 * 60 * 24))
-
-            let statusText = "In Progress"
-            const totalSeconds = diff / 1000
-            if (totalSeconds <= 3600) {
-              statusText = "Ending Shortly"
-            } else if (totalSeconds <= 86400) {
-              statusText = "Ending Soon"
-            }
-
-            newStates[`reg-${regTimer.id}`] = { days, hours, minutes, seconds, statusText }
-          }
-        } else if (regTimer.timer_status === "paused") {
-          const diff = Number(regTimer.remaining_seconds || 0) * 1000
-          const seconds = Math.floor((diff / 1000) % 60)
-          const minutes = Math.floor((diff / 1000 / 60) % 60)
-          const hours = Math.floor((diff / (1000 * 60 * 60)) % 24)
-          const days = Math.floor(diff / (1000 * 60 * 60 * 24))
-          newStates[`reg-${regTimer.id}`] = { days, hours, minutes, seconds, statusText: "Paused" }
-        } else if (regTimer.timer_status === "completed") {
-          newStates[`reg-${regTimer.id}`] = { days: 0, hours: 0, minutes: 0, seconds: 0, statusText: "Completed" }
-        } else if (regTimer.timer_status === "closed") {
-          newStates[`reg-${regTimer.id}`] = { days: 0, hours: 0, minutes: 0, seconds: 0, statusText: "Closed" }
-        } else {
-          newStates[`reg-${regTimer.id}`] = { days: 0, hours: 0, minutes: 0, seconds: 0, statusText: "Upcoming" }
-        }
-      }
-
       setCountdownStates(newStates)
       if (needsRefresh) {
         setDbPhases([...dbPhases])
-        if (regTimer) setRegTimer({ ...regTimer })
       }
     }, 1000)
 
     return () => clearInterval(interval)
-  }, [dbPhases, regTimer])
+  }, [dbPhases])
 
-  // 3. Assemble active running timers
+  // 3. Assemble active running timers (phases only)
   const runningTimers = []
 
-  // Add running/paused phases
   dbPhases.forEach((p) => {
     if (p.timer_status === "running" || p.timer_status === "paused") {
       runningTimers.push({
@@ -168,18 +122,7 @@ export default function PublicFloatingTimer({ isAdminPublicView }) {
     }
   })
 
-  // Add running/paused registration
-  if (regTimer && (regTimer.timer_status === "running" || regTimer.timer_status === "paused")) {
-    runningTimers.push({
-      id: `reg-${regTimer.id}`,
-      title: "REGISTRATION",
-      subtitle: "Join IPL 2026",
-      countdownKey: `reg-${regTimer.id}`,
-      timerStatus: regTimer.timer_status
-    })
-  }
-
-  // If there are no active running/paused timers, do not render anything
+  // If there are no active running/paused phase timers, do not render anything
   if (runningTimers.length === 0) return null
 
   // Ensure current index is within bounds
@@ -250,7 +193,7 @@ export default function PublicFloatingTimer({ isAdminPublicView }) {
           <motion.article
             key="expanded"
             layoutId="floating-timer-container"
-            className="w-72 rounded-2xl bg-slate-900 border border-white/10 shadow-2xl p-4 text-white"
+            className="w-[calc(100vw-32px)] max-w-[360px] md:w-96 rounded-2xl bg-slate-900 border border-white/10 shadow-2xl p-5 text-white"
             initial={{ scale: 0.95, opacity: 0, y: 10 }}
             animate={{ scale: 1, opacity: 1, y: 0 }}
             exit={{ scale: 0.95, opacity: 0, y: 10 }}

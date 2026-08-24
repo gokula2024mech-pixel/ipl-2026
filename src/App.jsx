@@ -14,6 +14,7 @@ const Domains = lazy(() => import('./components/Domains'))
 const WhatYouGain = lazy(() => import('./components/WhatYouGain'))
 const FeaturesBenefits = lazy(() => import('./components/FeaturesBenefits'))
 const Journey = lazy(() => import('./components/Journey'))
+const PhaseSpotlight = lazy(() => import('./components/Journey').then(m => ({ default: m.PhaseSpotlight })))
 const Judging = lazy(() => import('./components/Judging'))
 const Timeline = lazy(() => import('./components/Timeline'))
 const ProgramFlow = lazy(() => import('./components/ProgramFlow'))
@@ -255,6 +256,7 @@ export default function App() {
       <main>
         <Hero onRegisterClick={handleOpenRegistration} />
         <Suspense fallback={<SectionFallback />}>
+          <PhaseSpotlight />
           <About />
           <ProgramHighlights />
           <Eligibility />
