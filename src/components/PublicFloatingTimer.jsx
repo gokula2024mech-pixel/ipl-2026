@@ -5,53 +5,77 @@ import { supabase } from '../supabaseClient'
 
 export default function PublicFloatingTimer({ isAdminPublicView }) {
   const [dbPhases, setDbPhases] = useState([])
+  const [regTimer, setRegTimer] = useState(null)
   const [countdownStates, setCountdownStates] = useState({})
   const [isMinimized, setIsMinimized] = useState(true) // Start minimized to not block page content
   const [currentIndex, setCurrentIndex] = useState(0)
+  const [hasDefaultSelected, setHasDefaultSelected] = useState(false)
+  const [resetKey, setResetKey] = useState(0)
 
   // 1. Fetch data on mount
-  const fetchPhases = async () => {
+  const fetchData = async () => {
     try {
-      const { data, error } = await supabase
+      // Fetch phases
+      const { data: phasesData, error: phasesError } = await supabase
         .from("phases")
         .select("*")
         .order("phase_number", { ascending: true })
-      if (!error && data) {
-        setDbPhases(data)
+      if (!phasesError && phasesData) {
+        setDbPhases(phasesData)
+      }
+
+      // Fetch registration timer
+      const { data: regData, error: regError } = await supabase
+        .from("registration_timer")
+        .select("*")
+        .maybeSingle()
+      if (!regError && regData) {
+        setRegTimer(regData)
       }
     } catch (err) {
-      console.error("Error loading public phases in floating timer:", err)
+      console.error("Error loading public floating timers:", err)
     }
   }
 
   useEffect(() => {
-    fetchPhases()
+    fetchData()
 
-    // Realtime channel subscription
-    const channel = supabase
+    // Realtime channel subscriptions
+    const phasesChannel = supabase
       .channel("public-floating-phases")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "phases" },
         () => {
-          fetchPhases()
+          fetchData()
+        }
+      )
+      .subscribe()
+
+    const regChannel = supabase
+      .channel("public-floating-reg")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "registration_timer" },
+        () => {
+          fetchData()
         }
       )
       .subscribe()
 
     return () => {
-      supabase.removeChannel(channel)
+      supabase.removeChannel(phasesChannel)
+      supabase.removeChannel(regChannel)
     }
   }, [])
 
   // 2. Local countdown ticker (runs every second, updates local state only)
   useEffect(() => {
-    if (dbPhases.length === 0) return
-
     const interval = setInterval(() => {
       const newStates = {}
       let needsRefresh = false
 
+      // Calculate for phases
       dbPhases.forEach((p) => {
         if (p.timer_status === "running" && p.scheduled_end_at) {
           const end = new Date(p.scheduled_end_at).getTime()
@@ -82,6 +106,18 @@ export default function PublicFloatingTimer({ isAdminPublicView }) {
 
             newStates[`phase-${p.id}`] = { days, hours, minutes, seconds, statusText }
           }
+        } else if (p.timer_status === "upcoming" && p.scheduled_start_at) {
+          const start = new Date(p.scheduled_start_at).getTime()
+          const diff = start - Date.now()
+          if (diff > 0) {
+            const seconds = Math.floor((diff / 1000) % 60)
+            const minutes = Math.floor((diff / 1000 / 60) % 60)
+            const hours = Math.floor((diff / (1000 * 60 * 60)) % 24)
+            const days = Math.floor(diff / (1000 * 60 * 60 * 24))
+            newStates[`phase-${p.id}`] = { days, hours, minutes, seconds, statusText: "Upcoming", isStartingSoon: true }
+          } else {
+            newStates[`phase-${p.id}`] = { days: 0, hours: 0, minutes: 0, seconds: 0, statusText: "Upcoming", isStartingSoon: false }
+          }
         } else if (p.timer_status === "paused") {
           const diff = Number(p.remaining_seconds || 0) * 1000
           const seconds = Math.floor((diff / 1000) % 60)
@@ -98,46 +134,161 @@ export default function PublicFloatingTimer({ isAdminPublicView }) {
         }
       })
 
+      // Calculate for registration timer
+      if (regTimer) {
+        if (regTimer.timer_status === "running" && regTimer.scheduled_end_at) {
+          const end = new Date(regTimer.scheduled_end_at).getTime()
+          let diff = end - Date.now()
+          if (regTimer.is_timer_paused && regTimer.remaining_seconds) {
+            diff = Number(regTimer.remaining_seconds) * 1000
+          }
+
+          if (diff <= 0) {
+            newStates[`reg-${regTimer.id}`] = { days: 0, hours: 0, minutes: 0, seconds: 0, statusText: "Completed" }
+            regTimer.timer_status = "completed"
+            regTimer.is_timer_running = false
+            regTimer.is_timer_paused = false
+            needsRefresh = true
+          } else {
+            const seconds = Math.floor((diff / 1000) % 60)
+            const minutes = Math.floor((diff / 1000 / 60) % 60)
+            const hours = Math.floor((diff / (1000 * 60 * 60)) % 24)
+            const days = Math.floor(diff / (1000 * 60 * 60 * 24))
+
+            let statusText = "In Progress"
+            const totalSeconds = diff / 1000
+            if (totalSeconds <= 3600) {
+              statusText = "Ending Shortly"
+            } else if (totalSeconds <= 86400) {
+              statusText = "Ending Soon"
+            }
+
+            newStates[`reg-${regTimer.id}`] = { days, hours, minutes, seconds, statusText }
+          }
+        } else if (regTimer.timer_status === "upcoming" && regTimer.scheduled_start_at) {
+          const start = new Date(regTimer.scheduled_start_at).getTime()
+          const diff = start - Date.now()
+          if (diff > 0) {
+            const seconds = Math.floor((diff / 1000) % 60)
+            const minutes = Math.floor((diff / 1000 / 60) % 60)
+            const hours = Math.floor((diff / (1000 * 60 * 60)) % 24)
+            const days = Math.floor(diff / (1000 * 60 * 60 * 24))
+            newStates[`reg-${regTimer.id}`] = { days, hours, minutes, seconds, statusText: "Upcoming", isStartingSoon: true }
+          } else {
+            newStates[`reg-${regTimer.id}`] = { days: 0, hours: 0, minutes: 0, seconds: 0, statusText: "Upcoming", isStartingSoon: false }
+          }
+        } else if (regTimer.timer_status === "paused") {
+          const diff = Number(regTimer.remaining_seconds || 0) * 1000
+          const seconds = Math.floor((diff / 1000) % 60)
+          const minutes = Math.floor((diff / 1000 / 60) % 60)
+          const hours = Math.floor((diff / (1000 * 60 * 60)) % 24)
+          const days = Math.floor(diff / (1000 * 60 * 60 * 24))
+          newStates[`reg-${regTimer.id}`] = { days, hours, minutes, seconds, statusText: "Paused" }
+        } else if (regTimer.timer_status === "completed") {
+          newStates[`reg-${regTimer.id}`] = { days: 0, hours: 0, minutes: 0, seconds: 0, statusText: "Completed" }
+        } else if (regTimer.timer_status === "closed") {
+          newStates[`reg-${regTimer.id}`] = { days: 0, hours: 0, minutes: 0, seconds: 0, statusText: "Closed" }
+        } else {
+          newStates[`reg-${regTimer.id}`] = { days: 0, hours: 0, minutes: 0, seconds: 0, statusText: "Upcoming" }
+        }
+      }
+
       setCountdownStates(newStates)
       if (needsRefresh) {
         setDbPhases([...dbPhases])
+        if (regTimer) setRegTimer({ ...regTimer })
       }
     }, 1000)
 
     return () => clearInterval(interval)
-  }, [dbPhases])
+  }, [dbPhases, regTimer])
 
-  // 3. Assemble active running timers (phases only)
-  const runningTimers = []
+  // 3. Assemble Carousel items (exactly 4: Registration, Phase 1, Phase 2, Phase 3)
+  const carouselItems = []
 
+  // Item 0: Registration
+  if (regTimer) {
+    carouselItems.push({
+      id: `reg-${regTimer.id}`,
+      title: "REGISTRATION",
+      subtitle: "Join IPL 2026",
+      countdownKey: `reg-${regTimer.id}`,
+      timerStatus: regTimer.timer_status,
+      type: "registration"
+    })
+  }
+
+  // Items 1, 2, 3: Phases
   dbPhases.forEach((p) => {
-    if (p.timer_status === "running" || p.timer_status === "paused") {
-      runningTimers.push({
-        id: `phase-${p.id}`,
-        title: `PHASE ${p.phase_number}`,
-        subtitle: p.name,
-        countdownKey: `phase-${p.id}`,
-        timerStatus: p.timer_status
-      })
-    }
+    carouselItems.push({
+      id: `phase-${p.id}`,
+      title: `PHASE ${p.phase_number}`,
+      subtitle: p.name,
+      countdownKey: `phase-${p.id}`,
+      timerStatus: p.timer_status,
+      type: "phase"
+    })
   })
 
-  // If there are no active running/paused phase timers, do not render anything
-  if (runningTimers.length === 0) return null
+  useEffect(() => {
+    if (dbPhases.length === 0 || !regTimer || hasDefaultSelected) return
 
-  // Ensure current index is within bounds
-  const activeIndex = Math.min(currentIndex, runningTimers.length - 1)
-  const activeTimer = runningTimers[activeIndex >= 0 ? activeIndex : 0]
+    // Priority:
+    // 1. Registration RUNNING
+    // 2. Registration PAUSED
+    // 3. Running Phase
+    // 4. Paused Phase
+    // 5. Fallback index 0
+    let targetIdx = 0
+
+    if (regTimer.timer_status === "running") {
+      targetIdx = 0
+    } else if (regTimer.timer_status === "paused") {
+      targetIdx = 0
+    } else {
+      // Find running phase (indexes 1, 2, 3)
+      const runningPhaseIdx = dbPhases.findIndex(p => p.timer_status === "running")
+      if (runningPhaseIdx !== -1) {
+        targetIdx = runningPhaseIdx + 1 // +1 because item 0 is registration
+      } else {
+        // Find paused phase
+        const pausedPhaseIdx = dbPhases.findIndex(p => p.timer_status === "paused")
+        if (pausedPhaseIdx !== -1) {
+          targetIdx = pausedPhaseIdx + 1
+        }
+      }
+    }
+
+    setCurrentIndex(targetIdx)
+    setHasDefaultSelected(true)
+  }, [dbPhases, hasDefaultSelected, regTimer])
+
+  // Automatic phase auto-scroll every 4 seconds (resets whenever resetKey or items length changes)
+  useEffect(() => {
+    if (carouselItems.length <= 1) return
+
+    const timer = setInterval(() => {
+      setCurrentIndex((current) => (current + 1) % carouselItems.length)
+    }, 4000)
+
+    return () => clearInterval(timer)
+  }, [carouselItems.length, resetKey])
+
+  if (carouselItems.length === 0) return null
+
+  const activeTimer = carouselItems[currentIndex]
   const activeCountdown = activeTimer ? countdownStates[activeTimer.countdownKey] : null
 
   const handlePrev = (e) => {
     e.stopPropagation()
-    setCurrentIndex((prev) => (prev === 0 ? runningTimers.length - 1 : prev - 1))
+    setCurrentIndex((current) => (current - 1 + carouselItems.length) % carouselItems.length)
+    setResetKey((prev) => prev + 1)
   }
 
   const handleNext = (e) => {
     e.stopPropagation()
-    setCurrentIndex((prev) => (prev === runningTimers.length - 1 ? 0 : prev + 1))
+    setCurrentIndex((current) => (current + 1) % carouselItems.length)
+    setResetKey((prev) => prev + 1)
   }
 
   // Determine status color and label
@@ -164,6 +315,29 @@ export default function PublicFloatingTimer({ isAdminPublicView }) {
     } else {
       statusLabel = "In Progress"
       statusColor = "bg-green-500/25 text-green-300 ring-green-500/30"
+    }
+  }
+
+  // Determine countdown labels for compact headers
+  let countdownLabelHeader = "TIME REMAINING"
+  let showDigits = false
+
+  if (activeTimer) {
+    if (activeTimer.timerStatus === "running") {
+      countdownLabelHeader = activeTimer.type === "registration" ? "REGISTRATION IS OPEN" : "TIME REMAINING"
+      showDigits = true
+    } else if (activeTimer.timerStatus === "paused") {
+      countdownLabelHeader = activeTimer.type === "registration" ? "REGISTRATION PAUSED" : "PHASE PAUSED"
+      showDigits = true
+    } else if (activeTimer.timerStatus === "upcoming") {
+      countdownLabelHeader = activeTimer.type === "registration" ? "REGISTRATION OPENS IN" : "STARTS IN"
+      showDigits = !!(activeCountdown && activeCountdown.isStartingSoon)
+    } else if (activeTimer.timerStatus === "completed") {
+      countdownLabelHeader = activeTimer.type === "registration" ? "REGISTRATION CLOSED" : "PHASE COMPLETED"
+      showDigits = false
+    } else if (activeTimer.timerStatus === "closed") {
+      countdownLabelHeader = activeTimer.type === "registration" ? "REGISTRATION CLOSED" : "PHASE CLOSED"
+      showDigits = false
     }
   }
 
@@ -202,7 +376,7 @@ export default function PublicFloatingTimer({ isAdminPublicView }) {
             <div className="flex items-center justify-between border-b border-white/10 pb-2 mb-3">
               <div className="flex items-center gap-2">
                 <Clock size={16} className="text-accent" />
-                <span className="text-xs font-bold uppercase tracking-wider text-slate-400">IPL 2026 Timers</span>
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-400">⏱ IPL 2026 TIMERS</span>
               </div>
               <button
                 type="button"
@@ -226,14 +400,21 @@ export default function PublicFloatingTimer({ isAdminPublicView }) {
 
                 {/* Countdown display */}
                 <div className="mt-3 py-2 px-3 rounded-lg bg-white/5 text-center">
+                  <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider mb-1">
+                    {countdownLabelHeader}
+                  </p>
                   <p className="font-mono text-base font-bold text-white tracking-widest">
-                    {activeCountdown ? (
+                    {showDigits && activeCountdown ? (
                       `${String(activeCountdown.days).padStart(2, "0")}d : ` +
                       `${String(activeCountdown.hours).padStart(2, "0")}h : ` +
                       `${String(activeCountdown.minutes).padStart(2, "0")}m : ` +
                       `${String(activeCountdown.seconds).padStart(2, "0")}s`
+                    ) : activeTimer.timerStatus === "completed" ? (
+                      activeTimer.type === "registration" ? "Registration period has ended." : "Completed"
+                    ) : activeTimer.timerStatus === "closed" ? (
+                      "Closed"
                     ) : (
-                      "--d : --h : --m : --s"
+                      activeTimer.timerStatus.toUpperCase()
                     )}
                   </p>
                 </div>
@@ -241,31 +422,29 @@ export default function PublicFloatingTimer({ isAdminPublicView }) {
                 {/* Status indicator */}
                 <div className="mt-3 flex items-center justify-between">
                   <span className={`inline-flex items-center rounded px-2 py-0.5 text-[10px] font-bold ring-1 ring-inset ${statusColor}`}>
-                    {statusLabel}
+                    ● {statusLabel.toUpperCase()}
                   </span>
 
                   {/* Carousel cycling controls */}
-                  {runningTimers.length > 1 && (
-                    <div className="flex items-center gap-1.5 text-slate-400">
-                      <button
-                        type="button"
-                        onClick={handlePrev}
-                        className="hover:text-white p-1 rounded hover:bg-white/5 transition cursor-pointer"
-                      >
-                        <ChevronLeft size={14} />
-                      </button>
-                      <span className="text-[10px] font-mono">
-                        {activeIndex + 1} / {runningTimers.length}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={handleNext}
-                        className="hover:text-white p-1 rounded hover:bg-white/5 transition cursor-pointer"
-                      >
-                        <ChevronRight size={14} />
-                      </button>
-                    </div>
-                  )}
+                  <div className="flex items-center gap-1.5 text-slate-400">
+                    <button
+                      type="button"
+                      onClick={handlePrev}
+                      className="hover:text-white p-1 rounded hover:bg-white/5 transition cursor-pointer"
+                    >
+                      <ChevronLeft size={14} />
+                    </button>
+                    <span className="text-[10px] font-mono">
+                      {currentIndex + 1} / {carouselItems.length}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleNext}
+                      className="hover:text-white p-1 rounded hover:bg-white/5 transition cursor-pointer"
+                    >
+                      <ChevronRight size={14} />
+                    </button>
+                  </div>
                 </div>
               </div>
             )}

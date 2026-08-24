@@ -14,7 +14,7 @@ const Domains = lazy(() => import('./components/Domains'))
 const WhatYouGain = lazy(() => import('./components/WhatYouGain'))
 const FeaturesBenefits = lazy(() => import('./components/FeaturesBenefits'))
 const Journey = lazy(() => import('./components/Journey'))
-const PhaseSpotlight = lazy(() => import('./components/Journey').then(m => ({ default: m.PhaseSpotlight })))
+const TimerSpotlight = lazy(() => import('./components/Journey').then(m => ({ default: m.TimerSpotlight })))
 const Judging = lazy(() => import('./components/Judging'))
 const Timeline = lazy(() => import('./components/Timeline'))
 const ProgramFlow = lazy(() => import('./components/ProgramFlow'))
@@ -93,7 +93,7 @@ export default function App() {
 
     // If session is signed out or null
     if (!currentSession || eventType === "SIGNED_OUT") {
-      // If we are in the middle of an OAuth callback (hash contains access_token), 
+      // If we are in the middle of an OAuth callback (hash contains access_token),
       // do NOT reset the state or clear the loading screen yet. We wait for the SIGNED_IN event.
       if (window.location.hash.includes('access_token=')) {
         console.log(`[AUTH] Ignoring null session during OAuth callback hash parsing (eventType: ${eventType})`)
@@ -256,7 +256,7 @@ export default function App() {
       <main>
         <Hero onRegisterClick={handleOpenRegistration} />
         <Suspense fallback={<SectionFallback />}>
-          <PhaseSpotlight />
+          <TimerSpotlight />
           <About />
           <ProgramHighlights />
           <Eligibility />
