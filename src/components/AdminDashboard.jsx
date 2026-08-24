@@ -581,7 +581,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
 
       {/* Main Content Area (offset by sidebar width on desktop) */}
       <main className="md:pl-64 min-h-[calc(100vh-4rem)]">
-        <div className="mx-auto max-w-7xl px-4 py-8 md:px-8">
+        <div className={`mx-auto px-4 py-8 md:px-8 ${activeTab === "teams" ? "w-full max-w-none" : "max-w-7xl"}`}>
           
           {/* Alerts Block */}
           {error && (
@@ -977,18 +977,18 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
                     <p className="text-sm text-slate-500 italic py-8 text-center bg-slate-50 rounded-xl">No matching teams found.</p>
                   ) : (
                     <div className="overflow-x-auto border border-slate-200 rounded-xl shadow-inner">
-                      <table className="w-full border-collapse text-left text-sm text-slate-600 min-w-[1300px]">
+                      <table className="w-full border-collapse text-left text-sm text-slate-600 min-w-[1600px]">
                         <thead className="bg-slate-50 font-bold text-slate-700 uppercase border-b border-slate-200">
                           <tr>
-                            <th className="px-5 py-4 w-28">Reg ID</th>
-                            <th className="px-5 py-4 w-48">Team Name</th>
-                            <th className="px-5 py-4 w-72">Project Title</th>
-                            <th className="px-5 py-4 w-48">Domain</th>
-                            <th className="px-5 py-4 w-24">TRL</th>
-                            <th className="px-5 py-4 w-56">Team Leader</th>
-                            <th className="px-5 py-4 w-60">Members</th>
-                            <th className="px-5 py-4 w-48">Faculty Mentor</th>
-                            <th className="px-5 py-4 w-32">Date</th>
+                            <th className="px-5 py-4 w-32 min-w-[120px]">Reg ID</th>
+                            <th className="px-5 py-4 w-64 min-w-[220px]">Team Name</th>
+                            <th className="px-5 py-4 w-96 min-w-[360px]">Project Title</th>
+                            <th className="px-5 py-4 w-52 min-w-[180px]">Domain</th>
+                            <th className="px-5 py-4 w-28 min-w-[100px]">TRL</th>
+                            <th className="px-5 py-4 w-64 min-w-[220px]">Team Leader</th>
+                            <th className="px-5 py-4 w-72 min-w-[260px]">Members</th>
+                            <th className="px-5 py-4 w-56 min-w-[200px]">Faculty Mentor</th>
+                            <th className="px-5 py-4 w-36 min-w-[130px]">Date</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 bg-white">
