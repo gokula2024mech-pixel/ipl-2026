@@ -91,6 +91,13 @@ export default function App() {
 
     // If session is signed out or null
     if (!currentSession || eventType === "SIGNED_OUT") {
+      // If we are in the middle of an OAuth callback (hash contains access_token), 
+      // do NOT reset the state or clear the loading screen yet. We wait for the SIGNED_IN event.
+      if (window.location.hash.includes('access_token=')) {
+        console.log(`[AUTH] Ignoring null session during OAuth callback hash parsing (eventType: ${eventType})`)
+        return
+      }
+
       const generation = ++authGenerationRef.current
       console.log(`[AUTH] SIGNED_OUT event or null session. Incrementing generation to ${generation}. Resetting states.`)
       setSession(null)
@@ -141,14 +148,20 @@ export default function App() {
         setSession(currentSession)
         setProfile(userProfile)
 
-        if (userProfile?.role === "admin") {
-          console.log('[AUTH] Admin role detected. Setting viewMode to admin')
-          setViewMode("admin")
-        } else {
-          console.log('[AUTH] Student role detected. Setting viewMode to public')
-          setViewMode("public")
-        }
+        const finalViewMode = userProfile?.role === "admin" ? "admin" : "public"
+        setViewMode(finalViewMode)
+        console.log(`[AUTH] Setting viewMode to ${finalViewMode}`)
         setLoading(false)
+
+        if (hasHashToken) {
+          console.log('[AUTH] OAuth callback origin:', window.location.origin)
+          console.log('[AUTH] OAuth callback URL:', window.location.href.split('#')[0])
+          console.log('[AUTH] OAuth callback session exists:', true)
+          console.log('[AUTH] OAuth callback user email:', email)
+          console.log('[AUTH] OAuth callback profile:', userProfile ? 'exists' : 'null')
+          console.log('[AUTH] OAuth callback profile role:', userProfile?.role || 'none')
+          console.log('[AUTH] Final viewMode:', finalViewMode)
+        }
       } else {
         console.log(`[AUTH] Stale loadProfile result ignored for generation ${generation}. Current is ${authGenerationRef.current}.`)
       }

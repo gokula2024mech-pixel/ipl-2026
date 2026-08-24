@@ -10,10 +10,11 @@ export default function EmailGate({ loginError }) {
     setError('')
     setIsLoggingIn(false)
     try {
+      const redirectTo = `${window.location.origin}/`
       const { error: authError } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: window.location.origin,
+          redirectTo,
         },
       })
       if (authError) {
