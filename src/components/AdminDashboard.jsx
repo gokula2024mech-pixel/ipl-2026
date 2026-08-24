@@ -1,0 +1,1204 @@
+import { useEffect, useState } from "react";
+import { supabase } from "../supabaseClient";
+import { 
+  Menu,
+  LogOut, 
+  RefreshCw, 
+  Users, 
+  Layers, 
+  ClipboardList, 
+  CheckCircle2, 
+  AlertTriangle, 
+  Plus, 
+  Trash2, 
+  UserPlus,
+  BookOpen,
+  Download,
+  ShieldAlert
+} from "lucide-react";
+
+export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
+  const [activeTab, setActiveTab] = useState("overview");
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // DB Data States
+  const [phases, setPhases] = useState([]);
+  const [evaluators, setEvaluators] = useState([]);
+  const [assignments, setAssignments] = useState([]);
+  const [registrations, setRegistrations] = useState([]);
+  const [evaluations, setEvaluations] = useState([]);
+
+  // Form & Interaction States
+  const [newEvaluatorEmail, setNewEvaluatorEmail] = useState("");
+  const [submittingEvaluator, setSubmittingEvaluator] = useState(false);
+  const [assigneeForPhase, setAssigneeForPhase] = useState({}); // { [phaseId]: evaluatorUserId }
+  const [submittingAssignment, setSubmittingAssignment] = useState({}); // { [phaseId]: 'assigning' | 'removing' }
+  const [confirmActivatePhase, setConfirmActivatePhase] = useState(null);
+  const [updatingPhase, setUpdatingPhase] = useState(false);
+
+  // Teams search filter
+  const [teamsSearch, setTeamsSearch] = useState("");
+
+  // Statistics State
+  const [stats, setStats] = useState({
+    totalTeams: 0,
+    totalStudents: 0,
+    totalEvaluators: 0,
+    activePhaseName: "None",
+    totalEvaluations: 0
+  });
+
+  const fetchDashboardData = async (isSilent = false) => {
+    if (!isSilent) setLoading(true);
+    setError("");
+
+    try {
+      // 1. Fetch phases
+      const { data: phasesData, error: phasesError } = await supabase
+        .from("phases")
+        .select("*")
+        .order("phase_number", { ascending: true });
+      if (phasesError) throw phasesError;
+      setPhases(phasesData || []);
+
+      const activePhase = phasesData?.find(p => p.is_active);
+
+      // 2. Fetch profiles
+      const { data: profilesData, error: profilesError } = await supabase
+        .from("profiles")
+        .select("*");
+      if (profilesError) throw profilesError;
+
+      const students = profilesData?.filter(p => p.role === "student") || [];
+      const evals = profilesData?.filter(p => p.role === "evaluator") || [];
+      setEvaluators(evals);
+
+      // 3. Fetch registrations
+      const { data: registrationsData, error: registrationsError } = await supabase
+        .from("registrations")
+        .select("*")
+        .order("created_at", { ascending: false });
+      if (registrationsError) throw registrationsError;
+      setRegistrations(registrationsData || []);
+
+      // 4. Fetch evaluator assignments
+      const { data: assignmentsData, error: assignmentsError } = await supabase
+        .from("evaluator_assignments")
+        .select("*");
+      if (assignmentsError) throw assignmentsError;
+      setAssignments(assignmentsData || []);
+
+      // 5. Fetch evaluations
+      const { data: evaluationsData, error: evaluationsError } = await supabase
+        .from("evaluations")
+        .select("*")
+        .order("submitted_at", { ascending: false });
+      if (evaluationsError) throw evaluationsError;
+      setEvaluations(evaluationsData || []);
+
+      // Update statistics
+      setStats({
+        totalTeams: registrationsData?.length || 0,
+        totalStudents: students.length,
+        totalEvaluators: evals.length,
+        activePhaseName: activePhase ? `Phase ${activePhase.phase_number}: ${activePhase.name}` : "None",
+        totalEvaluations: evaluationsData?.length || 0
+      });
+
+    } catch (err) {
+      console.error("Error loading dashboard data:", err);
+      setError("Unable to load dashboard data. Please verify database RLS policies have been executed.");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    if (profile?.role === "admin") {
+      fetchDashboardData();
+    }
+  }, [profile]);
+
+  const handleRefresh = () => {
+    setRefreshing(true);
+    setSuccess("");
+    fetchDashboardData(true);
+  };
+
+  const handleLogout = async () => {
+    try {
+      const { error: logOutError } = await supabase.auth.signOut();
+      if (logOutError) throw logOutError;
+    } catch (err) {
+      console.error("Logout exception:", err);
+      setError("Unable to sign out. Please try again.");
+    }
+  };
+
+  // Phase Operations
+  const handleActivatePhase = async () => {
+    if (!confirmActivatePhase) return;
+    setUpdatingPhase(true);
+    setError("");
+    setSuccess("");
+    const phaseToActivate = confirmActivatePhase;
+    setConfirmActivatePhase(null);
+
+    try {
+      // Deactivate all phases
+      const { error: deactivateError } = await supabase
+        .from("phases")
+        .update({ is_active: false })
+        .neq("id", "00000000-0000-0000-0000-000000000000");
+      if (deactivateError) throw deactivateError;
+
+      // Activate selected phase
+      const { error: activateError } = await supabase
+        .from("phases")
+        .update({ is_active: true })
+        .eq("id", phaseToActivate.id);
+      if (activateError) throw activateError;
+
+      setSuccess(`Successfully activated Phase ${phaseToActivate.phase_number}: ${phaseToActivate.name}`);
+      await fetchDashboardData(true);
+    } catch (err) {
+      console.error("Error activating phase:", err);
+      setError(`Unable to activate Phase ${phaseToActivate.phase_number}.`);
+    } finally {
+      setUpdatingPhase(false);
+    }
+  };
+
+  const handleDeactivatePhase = async (phase) => {
+    setUpdatingPhase(true);
+    setError("");
+    setSuccess("");
+
+    try {
+      const { error: deactivateError } = await supabase
+        .from("phases")
+        .update({ is_active: false })
+        .eq("id", phase.id);
+      if (deactivateError) throw deactivateError;
+
+      setSuccess(`Successfully deactivated Phase ${phase.phase_number}: ${phase.name}`);
+      await fetchDashboardData(true);
+    } catch (err) {
+      console.error("Error deactivating phase:", err);
+      setError(`Unable to deactivate Phase ${phase.phase_number}.`);
+    } finally {
+      setUpdatingPhase(false);
+    }
+  };
+
+  // Evaluator Operations
+  const handleAddEvaluator = async (e) => {
+    e.preventDefault();
+    if (!newEvaluatorEmail.trim()) return;
+    setSubmittingEvaluator(true);
+    setError("");
+    setSuccess("");
+
+    try {
+      const { error: rpcError } = await supabase.rpc("promote_user_to_evaluator_by_email", {
+        p_email: newEvaluatorEmail.trim()
+      });
+
+      if (rpcError) throw rpcError;
+
+      setSuccess(`Successfully promoted ${newEvaluatorEmail.trim()} to Evaluator.`);
+      setNewEvaluatorEmail("");
+      await fetchDashboardData(true);
+    } catch (err) {
+      console.error("Error promoting user to evaluator:", err);
+      setError(err.message || "Failed to add evaluator. Make sure the email exists in student profiles.");
+    } finally {
+      setSubmittingEvaluator(false);
+    }
+  };
+
+  const handleAssignEvaluator = async (phaseId) => {
+    const evaluatorUserId = assigneeForPhase[phaseId];
+    if (!evaluatorUserId) return;
+    
+    setSubmittingAssignment(prev => ({ ...prev, [phaseId]: "assigning" }));
+    setError("");
+    setSuccess("");
+
+    try {
+      const { error: assignError } = await supabase
+        .from("evaluator_assignments")
+        .insert([{ phase_id: phaseId, evaluator_user_id: evaluatorUserId }]);
+
+      if (assignError) {
+        if (assignError.code === "23505") {
+          setError("This evaluator is already assigned to this phase.");
+          return;
+        }
+        throw assignError;
+      }
+
+      setSuccess("Evaluator assigned successfully.");
+      setAssigneeForPhase(prev => ({ ...prev, [phaseId]: "" }));
+      await fetchDashboardData(true);
+    } catch (err) {
+      console.error("Error assigning evaluator:", err);
+      setError(err.message || "Unable to assign evaluator.");
+    } finally {
+      setSubmittingAssignment(prev => ({ ...prev, [phaseId]: null }));
+    }
+  };
+
+  const handleRemoveEvaluator = async (assignmentId, phaseId) => {
+    setSubmittingAssignment(prev => ({ ...prev, [phaseId]: "removing" }));
+    setError("");
+    setSuccess("");
+
+    try {
+      const { error: removeError } = await supabase
+        .from("evaluator_assignments")
+        .delete()
+        .eq("id", assignmentId);
+
+      if (removeError) throw removeError;
+
+      setSuccess("Evaluator removed from phase successfully.");
+      await fetchDashboardData(true);
+    } catch (err) {
+      console.error("Error removing evaluator:", err);
+      setError(err.message || "Unable to remove evaluator.");
+    } finally {
+      setSubmittingAssignment(prev => ({ ...prev, [phaseId]: null }));
+    }
+  };
+
+  // CSV Export Utility (Excel Compatible)
+  const downloadCSV = (headers, rows, filename) => {
+    const escapeCell = (val) => {
+      if (val === null || val === undefined) return '';
+      const str = String(val);
+      // Double quotes are escaped by doubling them, and the cell is wrapped in quotes
+      return '"' + str.replace(/"/g, '""') + '"';
+    };
+
+    const headerLine = headers.map(escapeCell).join(',');
+    const rowLines = rows.map(row => row.map(escapeCell).join(','));
+    
+    // Add UTF-8 BOM so Excel opens it with proper formatting
+    const csvContent = '\uFEFF' + [headerLine, ...rowLines].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", filename);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleExportTeams = () => {
+    const headers = [
+      "Registration ID",
+      "Team Name",
+      "Project Title",
+      "Innovation Domain",
+      "TRL Level",
+      "SDG Goals",
+      "Leader Name",
+      "Leader Email",
+      "Leader Mobile",
+      "Leader Department",
+      "Member 2 Name",
+      "Member 2 Email",
+      "Member 2 Mobile",
+      "Member 2 Department",
+      "Member 3 Name",
+      "Member 3 Email",
+      "Member 3 Mobile",
+      "Member 3 Department",
+      "Member 4 Name",
+      "Member 4 Email",
+      "Member 4 Mobile",
+      "Member 4 Department",
+      "Mentor Name",
+      "Mentor Department",
+      "Registration Date"
+    ];
+    
+    const rows = registrations.map(t => [
+      t.registration_id,
+      t.team_name,
+      t.project_title,
+      t.innovation_domain,
+      t.trl_level !== null && t.trl_level !== undefined ? t.trl_level : 'N/A',
+      t.sdg_goals ? t.sdg_goals.join('; ') : 'N/A',
+      t.leader_name,
+      t.leader_email,
+      t.leader_mobile,
+      t.leader_department,
+      t.member2_name || '',
+      t.member2_email || '',
+      t.member2_mobile || '',
+      t.member2_department || '',
+      t.member3_name || '',
+      t.member3_email || '',
+      t.member3_mobile || '',
+      t.member3_department || '',
+      t.member4_name || '',
+      t.member4_email || '',
+      t.member4_mobile || '',
+      t.member4_department || '',
+      t.mentor_name,
+      t.mentor_department,
+      formatDate(t.created_at)
+    ]);
+
+    downloadCSV(headers, rows, "IPL_2026_Teams.csv");
+    setSuccess("Teams list exported successfully to IPL_2026_Teams.csv");
+  };
+
+  const handleExportEvaluations = () => {
+    const headers = [
+      "Phase Number",
+      "Phase Name",
+      "Registration ID",
+      "Team Name",
+      "Project Title",
+      "Evaluator Name",
+      "Evaluator Email",
+      "Score",
+      "Comments",
+      "Submitted Date"
+    ];
+    
+    const rows = evaluations.map(evalItem => {
+      const phase = phases.find(p => p.id === evalItem.phase_id);
+      const evaluator = evaluators.find(e => e.user_id === evalItem.evaluator_user_id);
+      const registration = registrations.find(r => r.registration_id === evalItem.registration_id);
+      
+      return [
+        phase ? phase.phase_number : 'Unknown',
+        phase ? phase.name : 'Unknown',
+        evalItem.registration_id,
+        registration ? registration.team_name : 'Unknown',
+        registration ? registration.project_title : 'Unknown',
+        evaluator ? evaluator.name : 'Unknown',
+        evaluator ? evaluator.email : 'Unknown',
+        evalItem.score,
+        evalItem.comments || '',
+        formatDate(evalItem.submitted_at)
+      ];
+    });
+
+    downloadCSV(headers, rows, "IPL_2026_Evaluations.csv");
+    setSuccess("Evaluations history exported successfully to IPL_2026_Evaluations.csv");
+  };
+
+  // Helper formatting dates
+  const formatDate = (dateStr) => {
+    if (!dateStr) return "N/A";
+    const date = new Date(dateStr);
+    return date.toLocaleDateString("en-IN", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+  };
+
+  // Render Access Denied if user role check fails
+  if (profile?.role !== "admin") {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-primary px-4">
+        <div className="w-full max-w-md rounded-2xl bg-white p-8 text-center shadow-2xl">
+          <ShieldAlert className="mx-auto h-16 w-16 text-red-500" />
+          <h1 className="mt-4 text-2xl font-bold text-slate-900">Access Denied</h1>
+          <p className="mt-2 text-slate-600">
+            You do not have administrator access.
+          </p>
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="mt-6 inline-flex items-center gap-2 rounded-full bg-primary px-6 py-2.5 text-sm font-semibold text-white shadow-md hover:bg-blue-900 cursor-pointer"
+          >
+            <LogOut size={16} /> Logout
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Filtered registrations based on search
+  const filteredRegistrations = registrations.filter(r => {
+    const searchLower = teamsSearch.toLowerCase();
+    return (
+      r.registration_id.toLowerCase().includes(searchLower) ||
+      r.team_name.toLowerCase().includes(searchLower) ||
+      r.project_title.toLowerCase().includes(searchLower) ||
+      r.innovation_domain.toLowerCase().includes(searchLower) ||
+      r.leader_name.toLowerCase().includes(searchLower) ||
+      r.leader_email.toLowerCase().includes(searchLower)
+    );
+  });
+
+  return (
+    <div className="min-h-screen bg-slate-50 font-body pt-16">
+      {/* Fixed Compact Header */}
+      <header className="fixed top-0 left-0 right-0 z-40 flex h-16 items-center justify-between bg-primary px-4 text-white shadow-md md:px-8">
+        <div className="flex items-center gap-3">
+          {/* Mobile menu toggle */}
+          <button
+            type="button"
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            className="rounded-lg p-1.5 hover:bg-blue-900/60 md:hidden cursor-pointer"
+            aria-label="Toggle menu"
+          >
+            <Menu size={20} />
+          </button>
+          
+          <img
+            src="/logo.png"
+            alt="IPL Logo"
+            className="h-9 w-auto object-contain"
+          />
+        </div>
+
+        <div className="flex items-center gap-4 text-xs md:text-sm">
+          <div className="hidden text-right md:block">
+            <p className="font-bold text-white">
+              {profile?.name || "Administrator"}
+            </p>
+            <p className="text-[10px] text-blue-200">{user?.email}</p>
+          </div>
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="inline-flex items-center gap-2 rounded-full border border-blue-400/30 bg-blue-950/60 px-4 py-2 text-xs font-bold text-white transition hover:bg-blue-900 cursor-pointer"
+          >
+            Logout
+          </button>
+        </div>
+      </header>
+
+      {/* Sidebar Backdrop for Mobile */}
+      {sidebarOpen && (
+        <div 
+          className="fixed inset-0 z-30 bg-slate-900/60 backdrop-blur-sm md:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
+      {/* Left Sidebar Layout */}
+      <aside
+        className={`fixed bottom-0 top-16 left-0 z-30 w-64 border-r border-slate-200 bg-white transition-transform md:translate-x-0 ${
+          sidebarOpen ? "translate-x-0" : "-translate-x-full"
+        }`}
+      >
+        <div className="flex h-full flex-col justify-between py-6">
+          <nav className="space-y-1 px-4" aria-label="Sidebar sections">
+            {[
+              { id: "overview", label: "Overview", icon: Users },
+              { id: "phases", label: "Phases", icon: Layers },
+              { id: "evaluators", label: "Evaluators", icon: UserPlus },
+              { id: "teams", label: "Teams", icon: BookOpen },
+              { id: "evaluations", label: "Evaluations", icon: ClipboardList },
+              { id: "reports", label: "Reports", icon: Download }
+            ].map((tab) => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => {
+                    setActiveTab(tab.id);
+                    setSuccess("");
+                    setSidebarOpen(false); // Close mobile menu drawer
+                  }}
+                  className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-semibold transition-colors cursor-pointer ${
+                    isActive
+                      ? "bg-blue-50 text-primary"
+                      : "text-slate-600 hover:bg-slate-50 hover:text-slate-950"
+                  }`}
+                >
+                  <Icon size={18} />
+                  {tab.label}
+                </button>
+              );
+            })}
+          </nav>
+
+          <div className="border-t border-slate-100 px-4 pt-4">
+            <button
+              type="button"
+              onClick={() => {
+                setSidebarOpen(false);
+                onViewPublicPortal();
+              }}
+              className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-950 transition-colors cursor-pointer"
+            >
+              <LogOut size={18} className="rotate-180" />
+              View Public Portal
+            </button>
+          </div>
+        </div>
+      </aside>
+
+      {/* Main Content Area (offset by sidebar width on desktop) */}
+      <main className="md:pl-64 min-h-[calc(100vh-4rem)]">
+        <div className="mx-auto max-w-7xl px-4 py-8 md:px-8">
+          
+          {/* Alerts Block */}
+          {error && (
+            <div className="mb-6 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 shadow-sm" role="alert">
+              <AlertTriangle className="h-5 w-5 shrink-0 text-red-500" />
+              <div>
+                <span className="font-bold">Error:</span> {error}
+              </div>
+            </div>
+          )}
+
+          {success && (
+            <div className="mb-6 flex items-start gap-3 rounded-xl border border-green-200 bg-green-50 p-4 text-sm text-green-700 shadow-sm" role="alert">
+              <CheckCircle2 className="h-5 w-5 shrink-0 text-green-500" />
+              <div>
+                <span className="font-bold">Success:</span> {success}
+              </div>
+            </div>
+          )}
+
+          {/* Loading state spinner */}
+          {loading ? (
+            <div className="flex flex-col items-center justify-center py-20">
+              <div className="h-10 w-10 animate-spin rounded-full border-4 border-primary border-t-transparent"></div>
+              <p className="mt-4 text-sm font-medium text-slate-500">Loading data...</p>
+            </div>
+          ) : (
+            <>
+              {/* Context header */}
+              <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-xl font-bold text-slate-900 capitalize md:text-2xl">
+                    {activeTab === "reports" ? "Export Center" : activeTab === "teams" ? "Team Registrations" : activeTab === "evaluations" ? "Evaluations History" : activeTab}
+                  </h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    {activeTab === "overview" && "High-level summary of program metrics."}
+                    {activeTab === "phases" && "Configure evaluation windows. Only one phase can be active at a time."}
+                    {activeTab === "evaluators" && "Add new evaluators and assign them to specific phases."}
+                    {activeTab === "teams" && "Overview of all registered student teams."}
+                    {activeTab === "evaluations" && "Review details and scores submitted by evaluators."}
+                    {activeTab === "reports" && "Download reports and data in Excel-compatible format."}
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleRefresh}
+                  disabled={refreshing}
+                  className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
+                >
+                  <RefreshCw size={14} className={refreshing ? "animate-spin" : ""} />
+                  {refreshing ? "Refreshing..." : "Refresh Data"}
+                </button>
+              </div>
+
+              {/* PANEL RENDERS */}
+
+              {/* 1. OVERVIEW TAB */}
+              {activeTab === "overview" && (
+                <section className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+                  {/* Total Teams Card */}
+                  <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-bold text-slate-500 uppercase">Total Teams</span>
+                      <span className="rounded-xl bg-blue-50 p-2 text-primary">
+                        <BookOpen size={20} />
+                      </span>
+                    </div>
+                    <p className="mt-4 text-3xl font-bold text-slate-900">{stats.totalTeams}</p>
+                    <p className="mt-2 text-xs text-slate-500">Registered in public.registrations</p>
+                  </div>
+
+                  {/* Total Students Card */}
+                  <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-bold text-slate-500 uppercase">Students</span>
+                      <span className="rounded-xl bg-orange-50 p-2 text-accent">
+                        <Users size={20} />
+                      </span>
+                    </div>
+                    <p className="mt-4 text-3xl font-bold text-slate-900">{stats.totalStudents}</p>
+                    <p className="mt-2 text-xs text-slate-500">Profiles with role student</p>
+                  </div>
+
+                  {/* Total Evaluators Card */}
+                  <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-bold text-slate-500 uppercase">Evaluators</span>
+                      <span className="rounded-xl bg-green-50 p-2 text-green-600">
+                        <UserPlus size={20} />
+                      </span>
+                    </div>
+                    <p className="mt-4 text-3xl font-bold text-slate-900">{stats.totalEvaluators}</p>
+                    <p className="mt-2 text-xs text-slate-500">Profiles with role evaluator</p>
+                  </div>
+
+                  {/* Active Phase Card */}
+                  <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-bold text-slate-500 uppercase">Active Phase</span>
+                      <span className="rounded-xl bg-purple-50 p-2 text-purple-600">
+                        <Layers size={20} />
+                      </span>
+                    </div>
+                    <p className="mt-4 text-lg font-bold text-slate-900 truncate">
+                      {stats.activePhaseName}
+                    </p>
+                    <p className="mt-2 text-xs text-slate-500">Currently active evaluation round</p>
+                  </div>
+
+                  {/* Evaluations Stats Card */}
+                  <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200 sm:col-span-2 lg:col-span-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-bold text-slate-500 uppercase">Evaluations</span>
+                      <span className="rounded-xl bg-purple-50 p-2 text-purple-600">
+                        <ClipboardList size={20} />
+                      </span>
+                    </div>
+                    <p className="mt-4 text-3xl font-bold text-slate-900">{stats.totalEvaluations}</p>
+                    <p className="mt-2 text-xs text-slate-500">Total submitted grades</p>
+                  </div>
+                </section>
+              )}
+
+              {/* 2. PHASES TAB */}
+              {activeTab === "phases" && (
+                <section className="grid gap-6 md:grid-cols-3">
+                  {phases.map((phase) => (
+                    <article
+                      key={phase.id}
+                      className="flex flex-col rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-primary">
+                          PHASE {phase.phase_number}
+                        </span>
+                        <span
+                          className={`rounded-full px-3 py-1 text-xs font-bold ${
+                            phase.is_active
+                              ? "bg-green-100 text-green-700"
+                              : "bg-slate-100 text-slate-500"
+                          }`}
+                        >
+                          {phase.is_active ? "Active" : "Inactive"}
+                        </span>
+                      </div>
+
+                      <h3 className="mt-4 text-lg font-bold text-slate-900">
+                        {phase.name}
+                      </h3>
+                      <p className="mt-2 flex-grow text-sm leading-6 text-slate-600">
+                        {phase.description}
+                      </p>
+
+                      <div className="mt-5 border-t border-slate-100 pt-4 text-sm text-slate-600">
+                        <div className="flex justify-between">
+                          <span>Duration:</span>
+                          <span className="font-semibold text-slate-900">{phase.duration}</span>
+                        </div>
+                        <div className="mt-2 flex justify-between">
+                          <span>Max Score:</span>
+                          <span className="font-semibold text-slate-900">{phase.max_score} pts</span>
+                        </div>
+                      </div>
+
+                      <div className="mt-6 pt-4">
+                        {phase.is_active ? (
+                          <button
+                            type="button"
+                            disabled={updatingPhase}
+                            onClick={() => handleDeactivatePhase(phase)}
+                            className="w-full rounded-xl border border-red-200 bg-red-50 py-2.5 text-sm font-bold text-red-700 transition hover:bg-red-100 disabled:opacity-50 cursor-pointer"
+                          >
+                            Deactivate Phase
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled={updatingPhase}
+                            onClick={() => setConfirmActivatePhase(phase)}
+                            className="w-full rounded-xl bg-primary py-2.5 text-sm font-bold text-white transition hover:bg-blue-900 disabled:opacity-50 cursor-pointer"
+                          >
+                            Activate Phase
+                          </button>
+                        )}
+                      </div>
+                    </article>
+                  ))}
+                </section>
+              )}
+
+              {/* 3. EVALUATORS TAB */}
+              {activeTab === "evaluators" && (
+                <section className="space-y-8">
+                  {/* 3a. Add Evaluator form */}
+                  <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+                    <h3 className="text-lg font-bold text-slate-900">Add Evaluator Profile</h3>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Promote a registered student account to the evaluator role. They must already have logged in at least once to create their profile.
+                    </p>
+
+                    <form onSubmit={handleAddEvaluator} className="mt-4 flex flex-col gap-3 sm:flex-row sm:max-w-xl">
+                      <div className="grow">
+                        <label htmlFor="evaluator-email" className="sr-only">Email address</label>
+                        <input
+                          id="evaluator-email"
+                          type="email"
+                          required
+                          placeholder="e.g. professor@sece.ac.in"
+                          value={newEvaluatorEmail}
+                          onChange={(e) => setNewEvaluatorEmail(e.target.value)}
+                          className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm outline-none ring-primary transition focus:border-primary focus:ring-2"
+                        />
+                      </div>
+                      <button
+                        type="submit"
+                        disabled={submittingEvaluator || !newEvaluatorEmail.trim()}
+                        className="inline-flex items-center justify-center gap-2 rounded-xl bg-accent px-6 py-2.5 text-sm font-bold text-white shadow transition hover:bg-amber-600 disabled:opacity-50 cursor-pointer"
+                      >
+                        <UserPlus size={16} />
+                        {submittingEvaluator ? "Adding..." : "Add Evaluator"}
+                      </button>
+                    </form>
+                  </div>
+
+                  {/* 3b. Evaluators list */}
+                  <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+                    <h3 className="text-lg font-bold text-slate-900">Evaluators Pool</h3>
+                    {evaluators.length === 0 ? (
+                      <p className="mt-4 text-sm text-slate-500 italic">No evaluators have been added yet.</p>
+                    ) : (
+                      <div className="mt-4 overflow-x-auto">
+                        <table className="w-full border-collapse text-left text-sm text-slate-600">
+                          <thead className="bg-slate-50 text-xs font-bold text-slate-700 uppercase">
+                            <tr>
+                              <th className="px-6 py-3 border-b border-slate-200">Name</th>
+                              <th className="px-6 py-3 border-b border-slate-200">Email</th>
+                              <th className="px-6 py-3 border-b border-slate-200">Date Added</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {evaluators.map((evaluator) => (
+                              <tr key={evaluator.user_id} className="hover:bg-slate-50/50">
+                                <td className="px-6 py-4 font-semibold text-slate-900">{evaluator.name || "N/A"}</td>
+                                <td className="px-6 py-4">{evaluator.email}</td>
+                                <td className="px-6 py-4">{formatDate(evaluator.created_at)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 3c. Phase Assignments */}
+                  <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+                    <h3 className="text-lg font-bold text-slate-900">Phase-wise Evaluator Assignments</h3>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Assign the evaluators defined in the pool to active evaluation phases.
+                    </p>
+
+                    <div className="mt-6 grid gap-6 md:grid-cols-3">
+                      {phases.map((phase) => {
+                        // Get assignments for this phase
+                        const phaseAssignments = assignments.filter(a => a.phase_id === phase.id);
+                        // Map to evaluator profiles
+                        const assignedEvaluators = phaseAssignments.map(a => {
+                          const profileData = evaluators.find(e => e.user_id === a.evaluator_user_id);
+                          return {
+                            assignmentId: a.id,
+                            userId: a.evaluator_user_id,
+                            name: profileData?.name || "Unknown Name",
+                            email: profileData?.email || "Unknown Email"
+                          };
+                        });
+
+                        // Available to assign (in pool but not assigned to this phase)
+                        const availableEvaluators = evaluators.filter(e => 
+                          !assignedEvaluators.some(ae => ae.userId === e.user_id)
+                        );
+
+                        const selectedEvaluatorId = assigneeForPhase[phase.id] || "";
+                        const isWorking = submittingAssignment[phase.id] !== null && submittingAssignment[phase.id] !== undefined;
+
+                        return (
+                          <div key={phase.id} className="rounded-xl border border-slate-150 bg-slate-50/50 p-5 shadow-sm ring-1 ring-slate-200/40">
+                            <h4 className="font-heading text-sm font-bold text-slate-950">
+                              Phase {phase.phase_number}: {phase.name}
+                            </h4>
+                            
+                            {/* List of assigned */}
+                            <div className="mt-4 space-y-2">
+                              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Assigned Evaluators</p>
+                              {assignedEvaluators.length === 0 ? (
+                                <p className="text-xs text-slate-500 italic py-2">No evaluators assigned.</p>
+                              ) : (
+                                <ul className="divide-y divide-slate-200/60">
+                                  {assignedEvaluators.map((ae) => (
+                                    <li key={ae.assignmentId} className="flex items-center justify-between py-2 text-xs">
+                                      <div className="min-w-0 pr-2">
+                                        <p className="font-semibold text-slate-900 truncate">{ae.name}</p>
+                                        <p className="text-slate-500 truncate">{ae.email}</p>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        disabled={isWorking}
+                                        onClick={() => handleRemoveEvaluator(ae.assignmentId, phase.id)}
+                                        className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-50 transition cursor-pointer"
+                                        title="Remove from phase"
+                                      >
+                                        <Trash2 size={14} />
+                                      </button>
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </div>
+
+                            {/* Assignment form */}
+                            <div className="mt-5 border-t border-slate-200/60 pt-4">
+                              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Assign New</p>
+                              {availableEvaluators.length === 0 ? (
+                                <p className="text-xs text-slate-500 italic">No pool evaluators available.</p>
+                              ) : (
+                                <div className="flex gap-2">
+                                  <select
+                                    value={selectedEvaluatorId}
+                                    onChange={(e) => setAssigneeForPhase(prev => ({ ...prev, [phase.id]: e.target.value }))}
+                                    disabled={isWorking}
+                                    className="grow rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs outline-none focus:border-primary"
+                                  >
+                                    <option value="">-- Choose Evaluator --</option>
+                                    {availableEvaluators.map((e) => (
+                                      <option key={e.user_id} value={e.user_id}>
+                                        {e.name || e.email}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  <button
+                                    type="button"
+                                    disabled={isWorking || !selectedEvaluatorId}
+                                    onClick={() => handleAssignEvaluator(phase.id)}
+                                    className="inline-flex items-center justify-center rounded-lg bg-primary p-2 text-white hover:bg-blue-900 disabled:opacity-50 cursor-pointer"
+                                    title="Assign to phase"
+                                  >
+                                    <Plus size={14} />
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </section>
+              )}
+
+              {/* 4. TEAMS TAB */}
+              {activeTab === "teams" && (
+                <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-6">
+                    <div className="grow max-w-md">
+                      <label htmlFor="search-teams" className="sr-only">Search teams</label>
+                      <input
+                        id="search-teams"
+                        type="text"
+                        placeholder="Search by ID, name, project, domain, or leader..."
+                        value={teamsSearch}
+                        onChange={(e) => setTeamsSearch(e.target.value)}
+                        className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm outline-none ring-primary focus:border-primary focus:ring-2"
+                      />
+                    </div>
+                    <div className="flex items-center gap-3 justify-between sm:justify-end">
+                      <span className="text-xs font-semibold text-slate-500 bg-slate-100 px-3 py-1.5 rounded-full whitespace-nowrap">
+                        {filteredRegistrations.length} of {registrations.length} Teams
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleExportTeams}
+                        className="inline-flex items-center gap-2 rounded-xl bg-accent px-4 py-2 text-sm font-bold text-white shadow hover:bg-amber-600 cursor-pointer whitespace-nowrap"
+                      >
+                        <Download size={14} />
+                        Export Teams
+                      </button>
+                    </div>
+                  </div>
+
+                  {filteredRegistrations.length === 0 ? (
+                    <p className="text-sm text-slate-500 italic py-8 text-center bg-slate-50 rounded-xl">No matching teams found.</p>
+                  ) : (
+                    <div className="overflow-x-auto border border-slate-200 rounded-xl shadow-inner">
+                      <table className="w-full border-collapse text-left text-sm text-slate-600 min-w-[1300px]">
+                        <thead className="bg-slate-50 font-bold text-slate-700 uppercase border-b border-slate-200">
+                          <tr>
+                            <th className="px-5 py-4 w-28">Reg ID</th>
+                            <th className="px-5 py-4 w-48">Team Name</th>
+                            <th className="px-5 py-4 w-72">Project Title</th>
+                            <th className="px-5 py-4 w-48">Domain</th>
+                            <th className="px-5 py-4 w-24">TRL</th>
+                            <th className="px-5 py-4 w-56">Team Leader</th>
+                            <th className="px-5 py-4 w-60">Members</th>
+                            <th className="px-5 py-4 w-48">Faculty Mentor</th>
+                            <th className="px-5 py-4 w-32">Date</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 bg-white">
+                          {filteredRegistrations.map((team) => (
+                            <tr key={team.id} className="hover:bg-slate-50/50 align-top">
+                              <td className="px-5 py-4 font-bold text-primary select-all">{team.registration_id}</td>
+                              <td className="px-5 py-4 font-semibold text-slate-900 whitespace-pre-wrap">{team.team_name}</td>
+                              <td className="px-5 py-4 whitespace-pre-wrap text-slate-800 leading-relaxed font-medium">
+                                {team.project_title}
+                              </td>
+                              <td className="px-5 py-4 whitespace-pre-wrap text-xs font-semibold bg-slate-50/30">{team.innovation_domain}</td>
+                              <td className="px-5 py-4 whitespace-nowrap">
+                                {team.trl_level !== null && team.trl_level !== undefined ? (
+                                  <span className="rounded-md bg-amber-50 px-2.5 py-1 text-xs font-bold text-amber-700 ring-1 ring-amber-600/20">
+                                    TRL {team.trl_level}
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-400 italic">N/A</span>
+                                )}
+                              </td>
+                              <td className="px-5 py-4">
+                                <div className="space-y-0.5">
+                                  <p className="font-bold text-slate-900">{team.leader_name}</p>
+                                  <p className="text-[11px] text-slate-500 select-all">{team.leader_email}</p>
+                                  <p className="text-[11px] text-slate-500">{team.leader_mobile}</p>
+                                  <p className="text-[10px] inline-block bg-blue-50 text-primary px-1.5 py-0.5 rounded font-bold uppercase">{team.leader_department}</p>
+                                </div>
+                              </td>
+                              <td className="px-5 py-4">
+                                <ul className="space-y-2">
+                                  {team.member2_name && (
+                                    <li className="text-xs">
+                                      <p className="font-semibold text-slate-800">{team.member2_name}</p>
+                                      <p className="text-[10px] text-slate-400 select-all">{team.member2_email}</p>
+                                      <p className="text-[10px] text-slate-400">{team.member2_mobile} | {team.member2_department}</p>
+                                    </li>
+                                  )}
+                                  {team.member3_name && (
+                                    <li className="text-xs border-t border-slate-100 pt-1.5">
+                                      <p className="font-semibold text-slate-800">{team.member3_name}</p>
+                                      <p className="text-[10px] text-slate-400 select-all">{team.member3_email}</p>
+                                      <p className="text-[10px] text-slate-400">{team.member3_mobile} | {team.member3_department}</p>
+                                    </li>
+                                  )}
+                                  {team.member4_name && (
+                                    <li className="text-xs border-t border-slate-100 pt-1.5">
+                                      <p className="font-semibold text-slate-800">{team.member4_name}</p>
+                                      <p className="text-[10px] text-slate-400 select-all">{team.member4_email}</p>
+                                      <p className="text-[10px] text-slate-400">{team.member4_mobile} | {team.member4_department}</p>
+                                    </li>
+                                  )}
+                                </ul>
+                              </td>
+                              <td className="px-5 py-4">
+                                <div className="space-y-0.5">
+                                  <p className="font-bold text-slate-900">{team.mentor_name}</p>
+                                  <p className="text-[11px] text-slate-500">{team.mentor_department} Dept</p>
+                                </div>
+                              </td>
+                              <td className="px-5 py-4 whitespace-nowrap text-slate-500">
+                                {formatDate(team.created_at).split(",")[0]}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </section>
+              )}
+
+              {/* 5. EVALUATIONS TAB */}
+              {activeTab === "evaluations" && (
+                <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-4">
+                    <h3 className="text-lg font-bold text-slate-900">Submitted Evaluations</h3>
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs font-semibold text-slate-500 bg-slate-100 px-3 py-1.5 rounded-full">
+                        {evaluations.length} Evaluations Record
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleExportEvaluations}
+                        className="inline-flex items-center gap-2 rounded-xl bg-accent px-4 py-2 text-sm font-bold text-white shadow hover:bg-amber-600 cursor-pointer whitespace-nowrap"
+                      >
+                        <Download size={14} />
+                        Export Evaluations
+                      </button>
+                    </div>
+                  </div>
+
+                  {evaluations.length === 0 ? (
+                    <p className="text-sm text-slate-500 italic py-8 text-center bg-slate-50 rounded-xl">No evaluations have been submitted yet.</p>
+                  ) : (
+                    <div className="overflow-x-auto border border-slate-200 rounded-xl">
+                      <table className="w-full border-collapse text-left text-xs text-slate-600 min-w-[700px]">
+                        <thead className="bg-slate-50 font-bold text-slate-700 uppercase border-b border-slate-200">
+                          <tr>
+                            <th className="px-4 py-3">Phase</th>
+                            <th className="px-4 py-3">Reg ID</th>
+                            <th className="px-4 py-3">Team / Project</th>
+                            <th className="px-4 py-3">Evaluator</th>
+                            <th className="px-4 py-3">Score</th>
+                            <th className="px-4 py-3">Comments</th>
+                            <th className="px-4 py-3">Submitted At</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {evaluations.map((evalItem) => {
+                            const phase = phases.find(p => p.id === evalItem.phase_id);
+                            const evaluator = evaluators.find(e => e.user_id === evalItem.evaluator_user_id);
+                            const registration = registrations.find(r => r.registration_id === evalItem.registration_id);
+                            
+                            return (
+                              <tr key={evalItem.id} className="hover:bg-slate-50/50 align-top">
+                                <td className="px-4 py-3 whitespace-nowrap">
+                                  <span className="rounded bg-blue-50 px-2.5 py-1 font-bold text-primary">
+                                    Phase {phase?.phase_number || "?"}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-3 font-semibold text-primary">{evalItem.registration_id}</td>
+                                <td className="px-4 py-3">
+                                  <p className="font-bold text-slate-900">{registration?.team_name || "N/A"}</p>
+                                  <p className="text-[10px] text-slate-500 truncate max-w-[180px]" title={registration?.project_title}>
+                                    {registration?.project_title || "N/A"}
+                                  </p>
+                                </td>
+                                <td className="px-4 py-3">
+                                  <p className="font-semibold text-slate-800">{evaluator?.name || "N/A"}</p>
+                                  <p className="text-[10px] text-slate-500">{evaluator?.email}</p>
+                                </td>
+                                <td className="px-4 py-3">
+                                  <span className="font-heading text-sm font-bold text-slate-900">
+                                    {Number(evalItem.score).toFixed(2)}
+                                  </span>
+                                  <span className="text-[10px] text-slate-400 font-semibold"> / {phase?.max_score || 100}</span>
+                                </td>
+                                <td className="px-4 py-3 max-w-[200px] whitespace-pre-wrap leading-relaxed">
+                                  {evalItem.comments || <span className="text-slate-400 italic">No comments</span>}
+                                </td>
+                                <td className="px-4 py-3 whitespace-nowrap text-slate-500">
+                                  {formatDate(evalItem.submitted_at)}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </section>
+              )}
+
+              {/* 6. REPORTS TAB */}
+              {activeTab === "reports" && (
+                <section className="grid gap-6 md:grid-cols-2">
+                  {/* Export Teams Card */}
+                  <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-50 text-primary">
+                      <BookOpen size={24} />
+                    </div>
+                    <h3 className="mt-4 text-lg font-bold text-slate-900">Registered Teams Report</h3>
+                    <p className="mt-2 text-sm leading-6 text-slate-600">
+                      Download the complete roster of registered teams, project titles, domains, leader contacts, full member listings, and mentor details in an Excel-compatible CSV format.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={handleExportTeams}
+                      className="mt-6 inline-flex items-center gap-2 rounded-xl bg-accent px-5 py-2.5 text-sm font-bold text-white shadow hover:bg-amber-600 cursor-pointer"
+                    >
+                      <Download size={16} />
+                      Export Teams
+                    </button>
+                  </div>
+
+                  {/* Export Evaluations Card */}
+                  <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-green-50 text-green-600">
+                      <ClipboardList size={24} />
+                    </div>
+                    <h3 className="mt-4 text-lg font-bold text-slate-900">Evaluations History Report</h3>
+                    <p className="mt-2 text-sm leading-6 text-slate-600">
+                      Download all grading records submitted by evaluators, including phase numbers, target team IDs, evaluator names, scoring breakdowns, comments, and submission dates.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={handleExportEvaluations}
+                      className="mt-6 inline-flex items-center gap-2 rounded-xl bg-accent px-5 py-2.5 text-sm font-bold text-white shadow hover:bg-amber-600 cursor-pointer"
+                    >
+                      <Download size={16} />
+                      Export Evaluations
+                    </button>
+                  </div>
+                </section>
+              )}
+            </>
+          )}
+        </div>
+      </main>
+
+      {/* Confirmation Modal for Phase Activation */}
+      {confirmActivatePhase && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true">
+          {/* Backdrop */}
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setConfirmActivatePhase(null)}></div>
+          
+          {/* Card */}
+          <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl ring-1 ring-slate-200">
+            <div className="flex items-center gap-3 text-amber-500">
+              <AlertTriangle className="h-6 w-6" />
+              <h3 className="font-heading text-lg font-bold text-slate-900">
+                Activate Phase {confirmActivatePhase.phase_number}?
+              </h3>
+            </div>
+            
+            <p className="mt-3 text-sm leading-6 text-slate-600">
+              You are about to activate <span className="font-bold text-slate-800">Phase {confirmActivatePhase.phase_number}: {confirmActivatePhase.name}</span>.
+            </p>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              Only <span className="font-semibold text-slate-800">one phase</span> can be active at a time. All other phases will be set to inactive automatically.
+            </p>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setConfirmActivatePhase(null)}
+                className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleActivatePhase}
+                className="rounded-xl bg-primary px-5 py-2 text-sm font-semibold text-white hover:bg-blue-900 cursor-pointer"
+              >
+                Activate
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

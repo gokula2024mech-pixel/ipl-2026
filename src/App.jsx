@@ -1,5 +1,6 @@
-import { lazy, Suspense, useState, useEffect } from 'react'
+import { lazy, Suspense, useState, useEffect, useRef } from 'react'
 import EmailGate from './components/EmailGate'
+import AdminDashboard from './components/AdminDashboard'
 import Navbar from './components/Navbar'
 import Hero from './components/Hero'
 import RegistrationModal from './components/RegistrationModal'
@@ -33,6 +34,9 @@ export default function App() {
   const [loading, setLoading] = useState(true)
   const [loginError, setLoginError] = useState('')
   const [isRegistrationOpen, setIsRegistrationOpen] = useState(false)
+  const [viewMode, setViewMode] = useState("public")
+
+  const lastProcessedUserIdRef = useRef(null)
 
   const handleOpenRegistration = () => {
     setIsRegistrationOpen(true)
@@ -55,22 +59,62 @@ export default function App() {
         .maybeSingle()
 
       if (error) {
-        console.error('Error fetching profile:', error.message)
+        console.error('[AUTH] loadProfile error:', error.message)
+      } else {
+        console.log('[AUTH] loadProfile result:', data)
       }
       return data
     } catch (err) {
-      console.error('Unexpected error loading profile:', err)
+      console.error('[AUTH] loadProfile error (exception):', err)
       return null
     }
   }
 
-  const handleSession = async (currentSession) => {
+  const handleSession = async (currentSession, eventType) => {
+    console.log('[AUTH] current URL:', window.location.href)
+    const hasHashToken = window.location.hash.includes('access_token=')
+    console.log('[AUTH] URL hash contains access_token:', hasHashToken)
+    
+    try {
+      const storedKeys = Object.keys(localStorage).filter(k => k.includes('supabase.auth.token'))
+      if (storedKeys.length > 0) {
+        const storedVal = localStorage.getItem(storedKeys[0])
+        console.log('[AUTH] localStorage Supabase session:', !!storedVal)
+      } else {
+        console.log('[AUTH] localStorage Supabase session:', false)
+      }
+    } catch (e) {
+      console.error('[AUTH] Error reading localStorage:', e)
+    }
+
+    const currentUserId = currentSession?.user?.id || null
+    console.log(`[AUTH] handleSession called, eventType: ${eventType}, currentUserId: ${currentUserId}, lastProcessedUserId: ${lastProcessedUserIdRef.current}`)
+
+    // Lock condition to prevent duplicate executions and races
+    if (currentUserId === lastProcessedUserIdRef.current) {
+      console.log(`[AUTH] User ID unchanged (${currentUserId}), skipping profile reload.`)
+      if (currentSession) {
+        setSession(currentSession)
+      }
+      setLoading(false)
+      return
+    }
+
+    // Update ref lock
+    lastProcessedUserIdRef.current = currentUserId
+
     if (currentSession?.user) {
+      setLoading(true)
       const email = currentSession.user.email || ''
+      console.log('[AUTH] session user email:', email)
+      
       if (!email.toLowerCase().endsWith('@sece.ac.in')) {
+        console.log('[AUTH] signOut called (invalid email domain)')
         setLoginError('Please sign in using your @sece.ac.in college account.')
         setSession(null)
         setProfile(null)
+        setViewMode("public")
+        lastProcessedUserIdRef.current = null
         await supabase.auth.signOut()
         setLoading(false)
         return
@@ -81,31 +125,55 @@ export default function App() {
       
       const userProfile = await loadProfile(currentSession.user)
       setProfile(userProfile)
+
+      // Explicitly adjust viewMode for newly established/re-established sessions
+      if (userProfile?.role === "admin") {
+        console.log('[AUTH] Setting viewMode to admin')
+        setViewMode("admin")
+      } else {
+        console.log('[AUTH] Setting viewMode to public')
+        setViewMode("public")
+      }
     } else {
+      console.log('[AUTH] Resetting session, profile, and viewMode to public')
       setSession(null)
       setProfile(null)
+      setViewMode("public")
     }
     setLoading(false)
   }
 
   useEffect(() => {
+    console.log('[AUTH] App.jsx useEffect mounting...')
+    
     // Get initial session
     supabase.auth.getSession().then(({ data: { session: initialSession } }) => {
-      handleSession(initialSession)
+      console.log('[AUTH] getSession result:', !!initialSession)
+      if (initialSession) {
+        console.log('[AUTH] getSession user email:', initialSession.user?.email)
+      }
+      handleSession(initialSession, "INITIAL_LOAD")
     })
 
     // Listen for auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, newSession) => {
-      if (event === 'SIGNED_IN') {
-        handleSession(newSession)
-      } else if (event === 'SIGNED_OUT') {
+      console.log('[AUTH] auth event:', event)
+      console.log('[AUTH] newSession exists:', !!newSession)
+      if (newSession) {
+        console.log('[AUTH] auth state change user email:', newSession.user?.email)
+        handleSession(newSession, event)
+      } else {
+        console.log('[AUTH] clearing session/profile from onAuthStateChange (newSession is null)')
         setSession(null)
         setProfile(null)
+        setViewMode("public")
+        lastProcessedUserIdRef.current = null
         setLoading(false)
       }
     })
 
     return () => {
+      console.log('[AUTH] App.jsx useEffect cleanup unmounting...')
       subscription.unsubscribe()
     }
   }, [])
@@ -123,6 +191,16 @@ export default function App() {
 
   if (!session) {
     return <EmailGate loginError={loginError} />
+  }
+
+  if (profile?.role === 'admin' && viewMode === 'admin') {
+    return (
+      <AdminDashboard 
+        user={session.user} 
+        profile={profile} 
+        onViewPublicPortal={() => setViewMode("public")} 
+      />
+    )
   }
 
   return (
@@ -161,6 +239,16 @@ export default function App() {
         isOpen={isRegistrationOpen}
         onClose={handleCloseRegistration}
       />
+
+      {profile?.role === 'admin' && viewMode === 'public' && (
+        <button
+          type="button"
+          onClick={() => setViewMode("admin")}
+          className="fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-full bg-accent px-5 py-3 text-sm font-bold text-white shadow-lg hover:bg-amber-600 cursor-pointer"
+        >
+          Return to Admin Console
+        </button>
+      )}
     </>
   )
 }
