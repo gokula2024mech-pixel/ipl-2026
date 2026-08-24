@@ -17,6 +17,33 @@ import {
   ShieldAlert
 } from "lucide-react";
 
+const parseDurationToSeconds = (durationText) => {
+  if (!durationText) return 7 * 24 * 3600; // default 7 days fallback
+  const lower = durationText.toLowerCase();
+  if (lower.includes("weeks 2-3") || lower.includes("2 weeks") || lower.includes("weeks")) {
+    if (lower.includes("2-3")) return 14 * 24 * 3600; // 14 days
+    const match = lower.match(/(\d+)\s*weeks?/);
+    if (match) return parseInt(match[1], 10) * 7 * 24 * 3600;
+    return 14 * 24 * 3600; // fallback for Weeks
+  }
+  if (lower.includes("week")) {
+    const match = lower.match(/(\d+)\s*weeks?/);
+    if (match) return parseInt(match[1], 10) * 7 * 24 * 3600;
+    return 7 * 24 * 3600; // fallback for Week
+  }
+  if (lower.includes("day")) {
+    const match = lower.match(/(\d+)\s*days?/);
+    if (match) return parseInt(match[1], 10) * 24 * 3600;
+    return 24 * 3600;
+  }
+  if (lower.includes("hour")) {
+    const match = lower.match(/(\d+)\s*hours?/);
+    if (match) return parseInt(match[1], 10) * 3600;
+    return 3600;
+  }
+  return 7 * 24 * 3600; // default fallback 7 days
+};
+
 export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
   const [activeTab, setActiveTab] = useState("overview");
   const [loading, setLoading] = useState(true);
@@ -39,6 +66,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
   const [submittingAssignment, setSubmittingAssignment] = useState({}); // { [phaseId]: 'assigning' | 'removing' }
   const [confirmActivatePhase, setConfirmActivatePhase] = useState(null);
   const [updatingPhase, setUpdatingPhase] = useState(false);
+  const [countdownStates, setCountdownStates] = useState({});
 
   // Teams search filter & Pagination
   const [teamsSearch, setTeamsSearch] = useState("");
@@ -125,6 +153,66 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
     }
   }, [profile]);
 
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const newStates = {};
+      let needsRefresh = false;
+
+      phases.forEach(async (phase) => {
+        if (phase.is_timer_running && phase.scheduled_end_at) {
+          const end = new Date(phase.scheduled_end_at).getTime();
+          let diff = end - Date.now();
+          if (phase.is_timer_paused && phase.remaining_seconds) {
+            diff = Number(phase.remaining_seconds) * 1000;
+          }
+          if (diff <= 0) {
+            newStates[phase.id] = { days: 0, hours: 0, minutes: 0, seconds: 0, isOver: true };
+            if (phase.timer_status === "running") {
+              needsRefresh = true;
+              phase.timer_status = "completed";
+              phase.is_timer_running = false;
+              phase.is_timer_paused = false;
+              try {
+                await supabase
+                  .from("phases")
+                  .update({
+                    timer_status: "completed",
+                    is_timer_running: false,
+                    is_timer_paused: false
+                  })
+                  .eq("id", phase.id);
+              } catch (e) {
+                console.error("Error updating completed timer status:", e);
+              }
+            }
+          } else {
+            const seconds = Math.floor((diff / 1000) % 60);
+            const minutes = Math.floor((diff / 1000 / 60) % 60);
+            const hours = Math.floor((diff / (1000 * 60 * 60)) % 24);
+            const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+            newStates[phase.id] = { days, hours, minutes, seconds, isOver: false };
+          }
+        } else if (phase.timer_status === "paused" && phase.remaining_seconds) {
+          const diff = Number(phase.remaining_seconds) * 1000;
+          const seconds = Math.floor((diff / 1000) % 60);
+          const minutes = Math.floor((diff / 1000 / 60) % 60);
+          const hours = Math.floor((diff / (1000 * 60 * 60)) % 24);
+          const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+          newStates[phase.id] = { days, hours, minutes, seconds, isOver: false };
+        } else {
+          newStates[phase.id] = null;
+        }
+      });
+
+      setCountdownStates(newStates);
+      if (needsRefresh) {
+        fetchDashboardData(true);
+      }
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [phases]);
+
   const handleRefresh = () => {
     setRefreshing(true);
     setSuccess("");
@@ -193,6 +281,196 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
     } catch (err) {
       console.error("Error deactivating phase:", err);
       setError(`Unable to deactivate Phase ${phase.phase_number}.`);
+    } finally {
+      setUpdatingPhase(false);
+    }
+  };
+  const handleStartTimer = async (phase) => {
+    setUpdatingPhase(true);
+    setError("");
+    setSuccess("");
+
+    try {
+      const now = new Date();
+      const durationSeconds = parseDurationToSeconds(phase.duration);
+      const scheduledStart = phase.scheduled_start_at ? new Date(phase.scheduled_start_at) : now;
+      const scheduledEnd = phase.scheduled_end_at ? new Date(phase.scheduled_end_at) : new Date(scheduledStart.getTime() + durationSeconds * 1000);
+
+      // Create history entry
+      const { error: historyError } = await supabase
+        .from("phase_timer_history")
+        .insert({
+          phase_id: phase.id,
+          action: "START",
+          old_start_at: phase.scheduled_start_at,
+          old_end_at: phase.scheduled_end_at,
+          new_start_at: scheduledStart.toISOString(),
+          new_end_at: scheduledEnd.toISOString(),
+          duration_added_seconds: null,
+          performed_by: user.id
+        });
+      if (historyError) throw historyError;
+
+      // Update phase timer status
+      const { error: updateError } = await supabase
+        .from("phases")
+        .update({
+          timer_status: "running",
+          scheduled_start_at: scheduledStart.toISOString(),
+          scheduled_end_at: scheduledEnd.toISOString(),
+          is_timer_running: true,
+          is_timer_paused: false,
+          last_started_at: now.toISOString(),
+          remaining_seconds: null
+        })
+        .eq("id", phase.id);
+      if (updateError) throw updateError;
+
+      setSuccess(`Timer started successfully for Phase ${phase.phase_number}.`);
+      await fetchDashboardData(true);
+    } catch (err) {
+      console.error("Error starting phase timer:", err);
+      setError(`Unable to start timer for Phase ${phase.phase_number}.`);
+    } finally {
+      setUpdatingPhase(false);
+    }
+  };
+
+  const handlePauseTimer = async (phase) => {
+    setUpdatingPhase(true);
+    setError("");
+    setSuccess("");
+
+    try {
+      const now = new Date();
+      const end = new Date(phase.scheduled_end_at);
+      const remaining = Math.max(0, Math.floor((end.getTime() - now.getTime()) / 1000));
+
+      // Create history entry
+      const { error: historyError } = await supabase
+        .from("phase_timer_history")
+        .insert({
+          phase_id: phase.id,
+          action: "PAUSE",
+          old_start_at: phase.scheduled_start_at,
+          old_end_at: phase.scheduled_end_at,
+          new_start_at: phase.scheduled_start_at,
+          new_end_at: phase.scheduled_end_at,
+          duration_added_seconds: null,
+          performed_by: user.id
+        });
+      if (historyError) throw historyError;
+
+      // Update phase timer status
+      const { error: updateError } = await supabase
+        .from("phases")
+        .update({
+          timer_status: "paused",
+          is_timer_running: false,
+          is_timer_paused: true,
+          paused_at: now.toISOString(),
+          remaining_seconds: remaining
+        })
+        .eq("id", phase.id);
+      if (updateError) throw updateError;
+
+      setSuccess(`Timer paused successfully for Phase ${phase.phase_number}.`);
+      await fetchDashboardData(true);
+    } catch (err) {
+      console.error("Error pausing phase timer:", err);
+      setError(`Unable to pause timer for Phase ${phase.phase_number}.`);
+    } finally {
+      setUpdatingPhase(false);
+    }
+  };
+
+  const handleResumeTimer = async (phase) => {
+    setUpdatingPhase(true);
+    setError("");
+    setSuccess("");
+
+    try {
+      const now = new Date();
+      const remaining = phase.remaining_seconds || 0;
+      const newEnd = new Date(now.getTime() + remaining * 1000);
+
+      // Create history entry
+      const { error: historyError } = await supabase
+        .from("phase_timer_history")
+        .insert({
+          phase_id: phase.id,
+          action: "RESUME",
+          old_start_at: phase.scheduled_start_at,
+          old_end_at: phase.scheduled_end_at,
+          new_start_at: phase.scheduled_start_at,
+          new_end_at: newEnd.toISOString(),
+          duration_added_seconds: null,
+          performed_by: user.id
+        });
+      if (historyError) throw historyError;
+
+      // Update phase timer status
+      const { error: updateError } = await supabase
+        .from("phases")
+        .update({
+          timer_status: "running",
+          is_timer_running: true,
+          is_timer_paused: false,
+          scheduled_end_at: newEnd.toISOString(),
+          last_started_at: now.toISOString(),
+          remaining_seconds: null,
+          paused_at: null
+        })
+        .eq("id", phase.id);
+      if (updateError) throw updateError;
+
+      setSuccess(`Timer resumed successfully for Phase ${phase.phase_number}.`);
+      await fetchDashboardData(true);
+    } catch (err) {
+      console.error("Error resuming phase timer:", err);
+      setError(`Unable to resume timer for Phase ${phase.phase_number}.`);
+    } finally {
+      setUpdatingPhase(false);
+    }
+  };
+
+  const handleStopTimer = async (phase) => {
+    setUpdatingPhase(true);
+    setError("");
+    setSuccess("");
+
+    try {
+      // Create history entry
+      const { error: historyError } = await supabase
+        .from("phase_timer_history")
+        .insert({
+          phase_id: phase.id,
+          action: "STOP",
+          old_start_at: phase.scheduled_start_at,
+          old_end_at: phase.scheduled_end_at,
+          new_start_at: phase.scheduled_start_at,
+          new_end_at: phase.scheduled_end_at,
+          duration_added_seconds: null,
+          performed_by: user.id
+        });
+      if (historyError) throw historyError;
+
+      // Update phase timer status
+      const { error: updateError } = await supabase
+        .from("phases")
+        .update({
+          timer_status: "closed",
+          is_timer_running: false,
+          is_timer_paused: false
+        })
+        .eq("id", phase.id);
+      if (updateError) throw updateError;
+
+      setSuccess(`Timer stopped successfully for Phase ${phase.phase_number}.`);
+      await fetchDashboardData(true);
+    } catch (err) {
+      console.error("Error stopping phase timer:", err);
+      setError(`Unable to stop timer for Phase ${phase.phase_number}.`);
     } finally {
       setUpdatingPhase(false);
     }
@@ -744,6 +1022,90 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
                         <div className="mt-2 flex justify-between">
                           <span>Max Score:</span>
                           <span className="font-semibold text-slate-900">{phase.max_score} pts</span>
+                        </div>
+                      </div>
+
+                      {/* Phase Timer controls section */}
+                      <div className="mt-5 border-t border-slate-100 pt-4">
+                        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Phase Timer</h4>
+
+                        {/* Status and Countdown */}
+                        <div className="flex flex-col gap-2 rounded-xl bg-slate-50 p-3 mb-4">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-medium text-slate-500">Status:</span>
+                            <span className={`inline-flex items-center rounded-md px-2 py-1 text-xs font-bold ring-1 ring-inset ${
+                              phase.timer_status === 'running' ? 'bg-green-50 text-green-700 ring-green-600/20 animate-pulse' :
+                              phase.timer_status === 'paused' ? 'bg-amber-50 text-amber-700 ring-amber-600/20' :
+                              phase.timer_status === 'closed' ? 'bg-slate-50 text-slate-600 ring-slate-500/10' :
+                              phase.timer_status === 'completed' ? 'bg-blue-50 text-blue-700 ring-blue-600/20' :
+                              'bg-slate-50 text-slate-500 ring-slate-500/10'
+                            }`}>
+                              {phase.timer_status ? phase.timer_status.toUpperCase() : 'UPCOMING'}
+                            </span>
+                          </div>
+
+                          {/* Countdown display */}
+                          <div className="flex items-center justify-between mt-1">
+                            <span className="text-xs font-medium text-slate-500">Remaining:</span>
+                            <span className="font-mono text-sm font-bold text-slate-800">
+                              {countdownStates[phase.id] ? (
+                                `${String(countdownStates[phase.id].days).padStart(2, '0')}d : ` +
+                                `${String(countdownStates[phase.id].hours).padStart(2, '0')}h : ` +
+                                `${String(countdownStates[phase.id].minutes).padStart(2, '0')}m : ` +
+                                `${String(countdownStates[phase.id].seconds).padStart(2, '0')}s`
+                              ) : phase.timer_status === 'closed' ? (
+                                'Closed'
+                              ) : phase.timer_status === 'completed' ? (
+                                'Completed'
+                              ) : (
+                                '--d : --h : --m : --s'
+                              )}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Control buttons grid */}
+                        <div className="grid grid-cols-2 gap-2">
+                          {/* Start / Resume */}
+                          {phase.timer_status === 'paused' ? (
+                            <button
+                              type="button"
+                              disabled={updatingPhase}
+                              onClick={() => handleResumeTimer(phase)}
+                              className="rounded-lg bg-slate-100 hover:bg-slate-200 py-1.5 text-xs font-bold text-slate-700 transition cursor-pointer text-center"
+                            >
+                              Resume
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled={updatingPhase || phase.timer_status === 'running' || phase.timer_status === 'closed'}
+                              onClick={() => handleStartTimer(phase)}
+                              className="rounded-lg bg-slate-100 hover:bg-slate-200 py-1.5 text-xs font-bold text-slate-700 transition disabled:opacity-40 cursor-pointer text-center"
+                            >
+                              Start
+                            </button>
+                          )}
+
+                          {/* Pause */}
+                          <button
+                            type="button"
+                            disabled={updatingPhase || phase.timer_status !== 'running'}
+                            onClick={() => handlePauseTimer(phase)}
+                            className="rounded-lg bg-slate-100 hover:bg-slate-200 py-1.5 text-xs font-bold text-slate-700 transition disabled:opacity-40 cursor-pointer text-center"
+                          >
+                            Pause
+                          </button>
+
+                          {/* Stop */}
+                          <button
+                            type="button"
+                            disabled={updatingPhase || (phase.timer_status !== 'running' && phase.timer_status !== 'paused')}
+                            onClick={() => handleStopTimer(phase)}
+                            className="col-span-2 rounded-lg border border-slate-200 hover:bg-slate-50 py-1.5 text-xs font-bold text-slate-600 transition disabled:opacity-40 cursor-pointer text-center"
+                          >
+                            Stop Timer (Close)
+                          </button>
                         </div>
                       </div>
 
