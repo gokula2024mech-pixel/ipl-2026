@@ -67,148 +67,33 @@ export default function Leaderboard() {
       setLoading(true)
       setError(null)
 
-      // Fetch active departments
-      const { data: departmentsData, error: deptErr } = await supabase
-        .from('departments')
-        .select('id, name')
-        .eq('is_active', true)
-      if (deptErr) throw deptErr
+      // Call the secure aggregate RPC function
+      const { data: rpcData, error: rpcErr } = await supabase.rpc('get_leaderboard_v2')
+      if (rpcErr) throw rpcErr
 
-      // Fetch products
-      const { data: productsData, error: prodErr } = await supabase
-        .from('products')
-        .select('id, team_id, innovation_domain, product_title, product_number, created_at')
-      if (prodErr) throw prodErr
+      if (!rpcData) {
+        throw new Error('Leaderboard RPC returned empty payload.')
+      }
 
-      // Fetch product members
-      const { data: membersData, error: memErr } = await supabase
-        .from('product_members')
-        .select('product_id, department_id, is_team_leader, role, member_email, member_name')
-      if (memErr) throw memErr
+      const { kpis: fetchedKpis, team_rankings, dept_rankings, domain_rankings } = rpcData
 
-      // Fetch teams
-      const { data: teamsData, error: teamErr } = await supabase
-        .from('teams')
-        .select('id, team_name')
-      if (teamErr) throw teamErr
-
-      // 1. Basic KPI Calculations
-      const totalTeams = teamsData ? teamsData.length : 0
-      const totalIdeas = productsData ? productsData.length : 0
-      const totalDepartments = departmentsData ? departmentsData.length : 0
-
-      // Unique student count (using member_email)
-      const studentEmails = new Set()
-      ;(membersData || []).forEach(m => {
-        if (m.member_email && m.member_email.trim()) {
-          studentEmails.add(m.member_email.toLowerCase().trim())
-        }
-      })
-      const totalStudents = studentEmails.size
-
-      // Unique innovation domains
-      const domainsSet = new Set()
-      ;(productsData || []).forEach(p => {
-        if (p.innovation_domain && p.innovation_domain.trim()) {
-          domainsSet.add(p.innovation_domain.trim())
-        }
-      })
-      const totalDomains = domainsSet.size
-
+      // 1. Set KPIs
       setKpis({
-        totalTeams,
-        totalStudents,
-        totalIdeas,
-        totalDepartments,
-        totalDomains
+        totalTeams: Number(fetchedKpis.totalTeams || 0),
+        totalStudents: Number(fetchedKpis.totalStudents || 0),
+        totalIdeas: Number(fetchedKpis.totalIdeas || 0),
+        totalDepartments: Number(fetchedKpis.totalDepartments || 0),
+        totalDomains: Number(fetchedKpis.totalDomains || 0)
       })
 
-      // 2. Build Lookup Maps
-      const deptIdToName = {}
-      ;(departmentsData || []).forEach(d => {
-        deptIdToName[d.id] = d.name
-      })
+      // 2. Set Overall Stats / Team Rankings
+      const teamList = team_rankings || []
+      const top5Teams = teamList.slice(0, 5)
 
-      // Group products by team_id
-      const teamProducts = {}
-      ;(productsData || []).forEach(p => {
-        if (p.team_id) {
-          if (!teamProducts[p.team_id]) {
-            teamProducts[p.team_id] = []
-          }
-          teamProducts[p.team_id].push(p)
-        }
-      })
-
-      // Resolve department for each product based on leader
-      const productDept = {}
-      ;(productsData || []).forEach(p => {
-        const prodMembers = (membersData || []).filter(m => m.product_id === p.id)
-        const leader = prodMembers.find(m => m.is_team_leader || m.role === 'Team Leader') || prodMembers[0] || {}
-        const deptName = deptIdToName[leader.department_id] || 'Unknown Department'
-        productDept[p.id] = deptName
-      })
-
-      // Resolve department for each team based on its product #1 leader
-      const teamDept = {}
-      ;(teamsData || []).forEach(t => {
-        const tProds = teamProducts[t.id] || []
-        const firstProd = tProds.find(p => p.product_number === 1) || tProds[0]
-        if (firstProd) {
-          teamDept[t.id] = productDept[firstProd.id]
-        } else {
-          teamDept[t.id] = 'Unknown Department'
-        }
-      })
-
-      // 3. Overall Stats / Top Teams Calculations
-      const teamList = (teamsData || []).map(t => {
-        const tProds = teamProducts[t.id] || []
-        const ideasCount = tProds.length
-
-        // Find earliest submission timestamp for tie-breaker
-        let earliestTimestamp = null
-        let earliestTimeVal = Infinity
-        tProds.forEach(p => {
-          if (p.created_at) {
-            const val = new Date(p.created_at).getTime()
-            if (val < earliestTimeVal) {
-              earliestTimeVal = val
-              earliestTimestamp = p.created_at
-            }
-          }
-        })
-
-        return {
-          id: t.id,
-          teamName: t.team_name,
-          department: teamDept[t.id],
-          ideas: ideasCount,
-          earliestTime: earliestTimestamp,
-          earliestTimeVal: earliestTimeVal === Infinity ? null : earliestTimeVal
-        }
-      })
-
-      // Sort teams: total ideas DESC, earliest submission ASC, team ID comparison ASC (fallback)
-      teamList.sort((a, b) => {
-        if (b.ideas !== a.ideas) return b.ideas - a.ideas
-        const timeA = a.earliestTimeVal !== null ? a.earliestTimeVal : Infinity
-        const timeB = b.earliestTimeVal !== null ? b.earliestTimeVal : Infinity
-        if (timeA !== timeB) return timeA - timeB
-        return String(a.id).localeCompare(String(b.id))
-      })
-
-      const rankedOverallTeams = teamList.map((item, index) => ({
-        rank: index + 1,
-        ...item
-      }))
-
-      const top5Teams = rankedOverallTeams.slice(0, 5)
-
-      // Idea distribution
+      // Compute idea distribution from team rankings
       const distribution = {}
-      ;(teamsData || []).forEach(t => {
-        const count = (teamProducts[t.id] || []).length
+      teamList.forEach(t => {
+        const count = t.ideas || 0
         distribution[count] = (distribution[count] || 0) + 1
       })
       const ideaDistribution = Object.keys(distribution).map(count => ({
@@ -220,108 +105,11 @@ export default function Leaderboard() {
       setOverallStats({
         top5Teams,
         ideaDistribution,
-        allTeams: rankedOverallTeams
+        allTeams: teamList
       })
 
-      // 4. Department-Wise Calculations
-      const deptStats = {}
-      const deptStudentsMap = {}
-
-      // Initialize all active departments with 0 counts
-      ;(departmentsData || []).forEach(d => {
-        deptStats[d.name] = {
-          id: d.id,
-          teamIds: new Set(),
-          ideasCount: 0,
-          earliestTimeVal: Infinity,
-          earliestTimestamp: null
-        }
-        deptStudentsMap[d.name] = new Set()
-      })
-
-      // Initialize Unknown Department
-      deptStats['Unknown Department'] = {
-        id: 'unknown-dept-uuid',
-        teamIds: new Set(),
-        ideasCount: 0,
-        earliestTimeVal: Infinity,
-        earliestTimestamp: null
-      }
-      deptStudentsMap['Unknown Department'] = new Set()
-
-      ;(productsData || []).forEach(prod => {
-        const deptName = productDept[prod.id] || 'Unknown Department'
-
-        if (!deptStats[deptName]) {
-          deptStats[deptName] = {
-            id: 'dynamic-unknown-uuid-' + deptName,
-            teamIds: new Set(),
-            ideasCount: 0,
-            earliestTimeVal: Infinity,
-            earliestTimestamp: null
-          }
-          deptStudentsMap[deptName] = new Set()
-        }
-
-        if (prod.team_id) {
-          deptStats[deptName].teamIds.add(prod.team_id)
-        }
-        deptStats[deptName].ideasCount += 1
-
-        // Update department's earliest submission
-        if (prod.created_at) {
-          const val = new Date(prod.created_at).getTime()
-          if (val < deptStats[deptName].earliestTimeVal) {
-            deptStats[deptName].earliestTimeVal = val
-            deptStats[deptName].earliestTimestamp = prod.created_at
-          }
-        }
-
-        const prodMembers = (membersData || []).filter(m => m.product_id === prod.id)
-        prodMembers.forEach(m => {
-          if (m.member_email && m.member_email.trim()) {
-            deptStudentsMap[deptName].add(m.member_email.toLowerCase().trim())
-          }
-        })
-      })
-
-      // If 'Unknown Department' has 0 ideas, delete it from stats
-      if (deptStats['Unknown Department'].ideasCount === 0) {
-        delete deptStats['Unknown Department']
-        delete deptStudentsMap['Unknown Department']
-      }
-
-      const deptList = Object.keys(deptStats).map(deptName => {
-        const stats = deptStats[deptName]
-        const teamsCount = stats.teamIds.size
-        const ideasCount = stats.ideasCount
-        const studentsCount = deptStudentsMap[deptName] ? deptStudentsMap[deptName].size : 0
-
-        return {
-          id: stats.id,
-          department: deptName,
-          teams: teamsCount,
-          students: studentsCount,
-          ideas: ideasCount,
-          earliestTime: stats.earliestTimestamp,
-          earliestTimeVal: stats.earliestTimeVal === Infinity ? null : stats.earliestTimeVal
-        }
-      })
-
-      // Sort departments: total ideas DESC, earliest submission ASC, ID comparison fallback
-      deptList.sort((a, b) => {
-        if (b.ideas !== a.ideas) return b.ideas - a.ideas
-        const timeA = a.earliestTimeVal !== null ? a.earliestTimeVal : Infinity
-        const timeB = b.earliestTimeVal !== null ? b.earliestTimeVal : Infinity
-        if (timeA !== timeB) return timeA - timeB
-        return String(a.id).localeCompare(String(b.id))
-      })
-
-      const rankedDepts = deptList.map((item, index) => ({
-        rank: index + 1,
-        ...item
-      }))
-
+      // 3. Set Department Standings
+      const rankedDepts = dept_rankings || []
       setDeptRankings(rankedDepts)
 
       // Find department highlights
@@ -344,77 +132,8 @@ export default function Leaderboard() {
         topIdeasDept: maxIdeasDept
       })
 
-      // 5. Domain-Wise Calculations
-      const domainStats = {}
-      const domainStudentsMap = {}
-
-      ;(productsData || []).forEach(prod => {
-        const domain = prod.innovation_domain || 'Open Innovation'
-
-        if (!domainStats[domain]) {
-          domainStats[domain] = {
-            id: 'domain-id-' + domain,
-            teamIds: new Set(),
-            ideasCount: 0,
-            earliestTimeVal: Infinity,
-            earliestTimestamp: null
-          }
-          domainStudentsMap[domain] = new Set()
-        }
-
-        if (prod.team_id) {
-          domainStats[domain].teamIds.add(prod.team_id)
-        }
-        domainStats[domain].ideasCount += 1
-
-        // Update domain's earliest submission
-        if (prod.created_at) {
-          const val = new Date(prod.created_at).getTime()
-          if (val < domainStats[domain].earliestTimeVal) {
-            domainStats[domain].earliestTimeVal = val
-            domainStats[domain].earliestTimestamp = prod.created_at
-          }
-        }
-
-        const prodMembers = (membersData || []).filter(m => m.product_id === prod.id)
-        prodMembers.forEach(m => {
-          if (m.member_email && m.member_email.trim()) {
-            domainStudentsMap[domain].add(m.member_email.toLowerCase().trim())
-          }
-        })
-      })
-
-      const domainList = Object.keys(domainStats).map(domainName => {
-        const stats = domainStats[domainName]
-        const teamsCount = stats.teamIds.size
-        const ideasCount = stats.ideasCount
-        const studentsCount = domainStudentsMap[domainName] ? domainStudentsMap[domainName].size : 0
-
-        return {
-          id: stats.id,
-          domain: domainName,
-          teams: teamsCount,
-          students: studentsCount,
-          ideas: ideasCount,
-          earliestTime: stats.earliestTimestamp,
-          earliestTimeVal: stats.earliestTimeVal === Infinity ? null : stats.earliestTimeVal
-        }
-      })
-
-      // Sort domains: ideas DESC, earliest submission ASC, ID comparison fallback
-      domainList.sort((a, b) => {
-        if (b.ideas !== a.ideas) return b.ideas - a.ideas
-        const timeA = a.earliestTimeVal !== null ? a.earliestTimeVal : Infinity
-        const timeB = b.earliestTimeVal !== null ? b.earliestTimeVal : Infinity
-        if (timeA !== timeB) return timeA - timeB
-        return String(a.id).localeCompare(String(b.id))
-      })
-
-      const rankedDomains = domainList.map((item, index) => ({
-        rank: index + 1,
-        ...item
-      }))
-
+      // 4. Set Domain Standings
+      const rankedDomains = domain_rankings || []
       setDomainRankings(rankedDomains)
 
       // Find domain highlights
