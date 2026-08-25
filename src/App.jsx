@@ -17,6 +17,7 @@ const Journey = lazy(() => import('./components/Journey'))
 const TimerSpotlight = lazy(() => import('./components/Journey').then(m => ({ default: m.TimerSpotlight })))
 const Judging = lazy(() => import('./components/Judging'))
 const Timeline = lazy(() => import('./components/Timeline'))
+const Leaderboard = lazy(() => import('./components/Leaderboard'))
 const ProgramFlow = lazy(() => import('./components/ProgramFlow'))
 const Commercialization = lazy(() => import('./components/Commercialization'))
 const IncubationSupport = lazy(() => import('./components/IncubationSupport'))
@@ -37,6 +38,38 @@ export default function App() {
   const [loginError, setLoginError] = useState('')
   const [isRegistrationOpen, setIsRegistrationOpen] = useState(false)
   const [viewMode, setViewMode] = useState("public")
+  const [currentHash, setCurrentHash] = useState(window.location.hash)
+
+  useEffect(() => {
+    const handleHashChange = () => {
+      setCurrentHash(window.location.hash)
+    }
+    window.addEventListener('hashchange', handleHashChange)
+    return () => {
+      window.removeEventListener('hashchange', handleHashChange)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (viewMode === 'public') {
+      const hash = window.location.hash
+      if (hash && hash !== '#leaderboard') {
+        setTimeout(() => {
+          const element = document.querySelector(hash)
+          if (element) {
+            const navbarHeight = 80
+            const targetPosition = element.getBoundingClientRect().top + window.scrollY - navbarHeight
+            window.scrollTo({
+              top: targetPosition,
+              behavior: 'smooth'
+            })
+          }
+        }, 150)
+      } else if (hash === '#leaderboard') {
+        window.scrollTo({ top: 0, behavior: 'smooth' })
+      }
+    }
+  }, [currentHash, viewMode])
 
   const authGenerationRef = useRef(0)
 
@@ -246,6 +279,8 @@ export default function App() {
     )
   }
 
+  const isLeaderboardPage = currentHash === '#leaderboard'
+
   return (
     <>
       <Navbar
@@ -254,26 +289,38 @@ export default function App() {
         profile={profile}
       />
       <main>
-        <Hero onRegisterClick={handleOpenRegistration} />
-        <Suspense fallback={<SectionFallback />}>
-          <TimerSpotlight />
-          <About />
-          <ProgramHighlights />
-          <Eligibility />
-          <Domains />
-          <WhatYouGain />
-          <FeaturesBenefits />
-          <Journey />
-          <Judging />
-          <Timeline />
-          <ProgramFlow />
-          <Commercialization />
-          <IncubationSupport />
-          <Vision />
-          <Mindset />
-          <Registration onRegisterClick={handleOpenRegistration} />
-          <CTABanner onRegisterClick={handleOpenRegistration} />
-        </Suspense>
+        {isLeaderboardPage ? (
+          <Suspense fallback={
+            <div className="flex min-h-[60vh] items-center justify-center bg-white py-20">
+              <div className="h-8 w-8 animate-spin rounded-full border-4 border-accent border-t-transparent mx-auto"></div>
+            </div>
+          }>
+            <Leaderboard />
+          </Suspense>
+        ) : (
+          <>
+            <Hero onRegisterClick={handleOpenRegistration} />
+            <Suspense fallback={<SectionFallback />}>
+              <TimerSpotlight />
+              <About />
+              <ProgramHighlights />
+              <Eligibility />
+              <Domains />
+              <WhatYouGain />
+              <FeaturesBenefits />
+              <Journey />
+              <Judging />
+              <Timeline />
+              <ProgramFlow />
+              <Commercialization />
+              <IncubationSupport />
+              <Vision />
+              <Mindset />
+              <Registration onRegisterClick={handleOpenRegistration} />
+              <CTABanner onRegisterClick={handleOpenRegistration} />
+            </Suspense>
+          </>
+        )}
       </main>
       <Suspense fallback={null}>
         <Footer />

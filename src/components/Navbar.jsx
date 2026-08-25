@@ -9,6 +9,7 @@ const NAV_LINKS = [
   { label: 'Domains', href: '#domains' },
   { label: 'Journey', href: '#journey' },
   { label: 'Timeline', href: '#timeline' },
+  { label: 'Leaderboard', href: '#leaderboard' },
   { label: 'Register', href: '#registration' },
   { label: 'Contact', href: '#contact' },
 ]
@@ -55,6 +56,9 @@ export default function Navbar({ onRegisterClick, user, profile }) {
 
     // Close mobile menu first
     setMobileOpen(false)
+
+    // Set hash so routing logic triggers
+    window.location.hash = href
 
     // Wait for menu closing before scrolling
     setTimeout(() => {
