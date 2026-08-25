@@ -1,16 +1,16 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../supabaseClient";
-import { 
+import {
   Menu,
-  LogOut, 
-  RefreshCw, 
-  Users, 
-  Layers, 
-  ClipboardList, 
-  CheckCircle2, 
-  AlertTriangle, 
-  Plus, 
-  Trash2, 
+  LogOut,
+  RefreshCw,
+  Users,
+  Layers,
+  ClipboardList,
+  CheckCircle2,
+  AlertTriangle,
+  Plus,
+  Trash2,
   UserPlus,
   BookOpen,
   Download,
@@ -97,6 +97,14 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
   const [teamsSearch, setTeamsSearch] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
 
+  // Filter States
+  const [filterDepartment, setFilterDepartment] = useState("");
+  const [filterDomain, setFilterDomain] = useState("");
+  const [filterTrl, setFilterTrl] = useState("");
+  const [filterStatus, setFilterStatus] = useState("");
+  const [filterProductNumber, setFilterProductNumber] = useState("");
+  const [departmentsList, setDepartmentsList] = useState([]);
+
   // Statistics State
   const [stats, setStats] = useState({
     totalTeams: 0,
@@ -139,13 +147,130 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
       const evals = profilesData?.filter(p => p.role === "evaluator") || [];
       setEvaluators(evals);
 
-      // 3. Fetch registrations
+      // 3. Fetch registrations, teams, products, product_members, departments
       const { data: registrationsData, error: registrationsError } = await supabase
         .from("registrations")
         .select("*")
         .order("created_at", { ascending: false });
       if (registrationsError) throw registrationsError;
-      setRegistrations(registrationsData || []);
+
+      const { data: teamsData, error: teamsError } = await supabase
+        .from("teams")
+        .select("*");
+      if (teamsError) throw teamsError;
+
+      const { data: productsData, error: productsError } = await supabase
+        .from("products")
+        .select("*");
+      if (productsError) throw productsError;
+
+      const { data: membersData, error: membersError } = await supabase
+        .from("product_members")
+        .select("*");
+      if (membersError) throw membersError;
+
+      const { data: departmentsData, error: departmentsError } = await supabase
+        .from("departments")
+        .select("*");
+      if (departmentsError) throw departmentsError;
+
+      setDepartmentsList(departmentsData || []);
+
+      // Build mapping lookups
+      const deptsMap = {};
+      (departmentsData || []).forEach(d => {
+        deptsMap[d.id] = d.name;
+      });
+
+      const regsMap = {};
+      (registrationsData || []).forEach(r => {
+        regsMap[r.registration_id] = r;
+      });
+
+      // Map each product to a virtual registration record
+      const normalizedRecords = (productsData || []).map(prod => {
+        const team = (teamsData || []).find(t => t.id === prod.team_id) || {};
+        const prodMembers = (membersData || []).filter(m => m.product_id === prod.id) || [];
+
+        const leader = prodMembers.find(m => m.is_team_leader || m.role === 'Team Leader') || {};
+        const otherMembers = prodMembers.filter(m => !m.is_team_leader && m.role !== 'Team Leader');
+        const m2 = otherMembers[0] || {};
+        const m3 = otherMembers[1] || {};
+        const m4 = otherMembers[2] || {};
+
+        let mentorName = '';
+        let mentorDept = '';
+        let regDate = prod.created_at || new Date().toISOString();
+        let displayRegId = prod.legacy_registration_id || '';
+
+        if (prod.legacy_registration_id && regsMap[prod.legacy_registration_id]) {
+          const origReg = regsMap[prod.legacy_registration_id];
+          mentorName = origReg.mentor_name || '';
+          mentorDept = origReg.mentor_department || '';
+          regDate = origReg.created_at || regDate;
+        } else {
+          // Fallback to first product for existing-team new idea submissions
+          const firstProd = (productsData || []).find(p => p.team_id === prod.team_id && p.product_number === 1);
+          if (firstProd && firstProd.legacy_registration_id) {
+            displayRegId = firstProd.legacy_registration_id;
+            if (regsMap[firstProd.legacy_registration_id]) {
+              const origReg = regsMap[firstProd.legacy_registration_id];
+              mentorName = origReg.mentor_name || '';
+              mentorDept = origReg.mentor_department || '';
+            }
+          }
+        }
+
+        const leaderDeptName = deptsMap[leader.department_id] || leader.department_id || '';
+        const m2DeptName = deptsMap[m2.department_id] || m2.department_id || '';
+        const m3DeptName = deptsMap[m3.department_id] || m3.department_id || '';
+        const m4DeptName = deptsMap[m4.department_id] || m4.department_id || '';
+
+        return {
+          id: prod.id,
+          registration_id: displayRegId,
+          team_name: team.team_name || '',
+          project_title: prod.product_title || '',
+          innovation_domain: prod.innovation_domain || '',
+          trl_level: prod.trl_level,
+          sdg_goals: prod.sdg_goals || [],
+          problem_area: prod.problem_area || '',
+          proposed_solution: prod.proposed_solution || '',
+          expected_impact: prod.expected_impact || '',
+          product_number: prod.product_number || 1,
+          status: prod.status || 'active',
+
+          leader_name: leader.member_name || '',
+          leader_email: leader.member_email || '',
+          leader_mobile: leader.member_mobile || '',
+          leader_department: leaderDeptName,
+
+          member2_name: m2.member_name || '',
+          member2_email: m2.member_email || '',
+          member2_mobile: m2.member_mobile || '',
+          member2_department: m2DeptName,
+
+          member3_name: m3.member_name || '',
+          member3_email: m3.member_email || '',
+          member3_mobile: m3.member_mobile || '',
+          member3_department: m3DeptName,
+
+          member4_name: m4.member_name || '',
+          member4_email: m4.member_email || '',
+          member4_mobile: m4.member_mobile || '',
+          member4_department: m4DeptName,
+
+          mentor_name: mentorName,
+          mentor_department: mentorDept,
+
+          created_at: regDate
+        };
+      });
+
+      // Sort by created_at descending
+      normalizedRecords.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+      setRegistrations(normalizedRecords);
 
       // 4. Fetch evaluator assignments
       const { data: assignmentsData, error: assignmentsError } = await supabase
@@ -164,7 +289,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
 
       // Update statistics
       setStats({
-        totalTeams: registrationsData?.length || 0,
+        totalTeams: normalizedRecords.length,
         totalStudents: students.length,
         totalEvaluators: evals.length,
         activePhaseName: activePhase ? `Phase ${activePhase.phase_number}: ${activePhase.name}` : "None",
@@ -1027,7 +1152,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
   const handleAssignEvaluator = async (phaseId) => {
     const evaluatorUserId = assigneeForPhase[phaseId];
     if (!evaluatorUserId) return;
-    
+
     setSubmittingAssignment(prev => ({ ...prev, [phaseId]: "assigning" }));
     setError("");
     setSuccess("");
@@ -1090,7 +1215,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
 
     const headerLine = headers.map(escapeCell).join(',');
     const rowLines = rows.map(row => row.map(escapeCell).join(','));
-    
+
     // Add UTF-8 BOM so Excel opens it with proper formatting
     const csvContent = '\uFEFF' + [headerLine, ...rowLines].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -1132,7 +1257,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
       "Mentor Department",
       "Registration Date"
     ];
-    
+
     const rows = filteredRegistrations.map(t => [
       t.registration_id,
       t.team_name,
@@ -1178,12 +1303,12 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
       "Comments",
       "Submitted Date"
     ];
-    
+
     const rows = evaluations.map(evalItem => {
       const phase = phases.find(p => p.id === evalItem.phase_id);
       const evaluator = evaluators.find(e => e.user_id === evalItem.evaluator_user_id);
       const registration = registrations.find(r => r.registration_id === evalItem.registration_id);
-      
+
       return [
         phase ? phase.phase_number : 'Unknown',
         phase ? phase.name : 'Unknown',
@@ -1237,17 +1362,91 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
     );
   }
 
-  // Filtered registrations based on search
+  // Filtered registrations based on search and filters
   const filteredRegistrations = registrations.filter(r => {
-    const searchLower = teamsSearch.toLowerCase();
-    return (
-      r.registration_id.toLowerCase().includes(searchLower) ||
-      r.team_name.toLowerCase().includes(searchLower) ||
-      r.project_title.toLowerCase().includes(searchLower) ||
-      r.innovation_domain.toLowerCase().includes(searchLower) ||
-      r.leader_name.toLowerCase().includes(searchLower) ||
-      r.leader_email.toLowerCase().includes(searchLower)
-    );
+    // 1. Search Bar Match
+    if (teamsSearch) {
+      const searchLower = teamsSearch.toLowerCase().trim();
+      const isNumeric = /^\d+$/.test(searchLower);
+      const queryNum = isNumeric ? parseInt(searchLower, 10) : null;
+      const isSingleDigit = searchLower.length === 1 && isNumeric;
+
+      const includesQuery = (val) => {
+        if (!val) return false;
+        return String(val).toLowerCase().includes(searchLower);
+      };
+
+      const matchesTrlOrProductNumber = queryNum !== null && (r.trl_level === queryNum || r.product_number === queryNum);
+
+      const matchesText =
+        includesQuery(r.team_name) ||
+        includesQuery(r.project_title) ||
+        includesQuery(r.innovation_domain) ||
+        includesQuery(r.problem_area) ||
+        includesQuery(r.proposed_solution) ||
+        includesQuery(r.expected_impact) ||
+
+        // Leader info
+        includesQuery(r.leader_name) ||
+        includesQuery(r.leader_email) ||
+        (!isSingleDigit && includesQuery(r.leader_mobile)) ||
+        includesQuery(r.leader_department) ||
+
+        // Member 2 info
+        includesQuery(r.member2_name) ||
+        includesQuery(r.member2_email) ||
+        (!isSingleDigit && includesQuery(r.member2_mobile)) ||
+        includesQuery(r.member2_department) ||
+
+        // Member 3 info
+        includesQuery(r.member3_name) ||
+        includesQuery(r.member3_email) ||
+        (!isSingleDigit && includesQuery(r.member3_mobile)) ||
+        includesQuery(r.member3_department) ||
+
+        // Mentor info
+        includesQuery(r.mentor_name) ||
+        includesQuery(r.mentor_department);
+
+      const matchesRegId = isSingleDigit ? false : includesQuery(r.registration_id);
+
+      if (!matchesTrlOrProductNumber && !matchesText && !matchesRegId) {
+        return false;
+      }
+    }
+
+    // 2. Department Filter
+    if (filterDepartment) {
+      const matchesLeaderDept = r.leader_department === filterDepartment;
+      const matchesM2Dept = r.member2_department === filterDepartment;
+      const matchesM3Dept = r.member3_department === filterDepartment;
+      const matchesM4Dept = r.member4_department === filterDepartment;
+      if (!matchesLeaderDept && !matchesM2Dept && !matchesM3Dept && !matchesM4Dept) {
+        return false;
+      }
+    }
+
+    // 3. Domain Filter
+    if (filterDomain && r.innovation_domain !== filterDomain) {
+      return false;
+    }
+
+    // 4. TRL Filter
+    if (filterTrl && String(r.trl_level) !== String(filterTrl)) {
+      return false;
+    }
+
+    // 5. Status Filter
+    if (filterStatus && r.status !== filterStatus) {
+      return false;
+    }
+
+    // 6. Product Number Filter
+    if (filterProductNumber && String(r.product_number) !== String(filterProductNumber)) {
+      return false;
+    }
+
+    return true;
   });
 
   // Pagination calculation
@@ -1290,7 +1489,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
           >
             <Menu size={20} />
           </button>
-          
+
           <img
             src="/logo.png"
             alt="IPL Logo"
@@ -1317,7 +1516,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
 
       {/* Sidebar Backdrop for Mobile */}
       {sidebarOpen && (
-        <div 
+        <div
           className="fixed inset-0 z-30 bg-slate-900/60 backdrop-blur-sm md:hidden"
           onClick={() => setSidebarOpen(false)}
         />
@@ -1382,7 +1581,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
       {/* Main Content Area (offset by sidebar width on desktop) */}
       <main className="md:pl-64 min-h-[calc(100vh-4rem)]">
         <div className={`mx-auto px-4 py-8 md:px-8 ${activeTab === "teams" ? "w-full max-w-none" : "max-w-7xl"}`}>
-          
+
           {/* Alerts Block */}
           {error && (
             <div className="mb-6 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 shadow-sm" role="alert">
@@ -1967,7 +2166,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
                         });
 
                         // Available to assign (in pool but not assigned to this phase)
-                        const availableEvaluators = evaluators.filter(e => 
+                        const availableEvaluators = evaluators.filter(e =>
                           !assignedEvaluators.some(ae => ae.userId === e.user_id)
                         );
 
@@ -1979,7 +2178,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
                             <h4 className="font-heading text-sm font-bold text-slate-950">
                               Phase {phase.phase_number}: {phase.name}
                             </h4>
-                            
+
                             {/* List of assigned */}
                             <div className="mt-4 space-y-2">
                               <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Assigned Evaluators</p>
@@ -2051,33 +2250,128 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
               {/* 4. TEAMS TAB */}
               {activeTab === "teams" && (
                 <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
-                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-6">
-                    <div className="grow max-w-md">
-                      <label htmlFor="search-teams" className="sr-only">Search teams</label>
-                      <input
-                        id="search-teams"
-                        type="text"
-                        placeholder="Search by ID, name, project, domain, or leader..."
-                        value={teamsSearch}
-                        onChange={(e) => {
-                          setTeamsSearch(e.target.value);
-                          setCurrentPage(1);
-                        }}
-                        className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm outline-none ring-primary focus:border-primary focus:ring-2"
-                      />
+                  <div className="flex flex-col gap-4 mb-6">
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="grow max-w-md">
+                        <label htmlFor="search-teams" className="sr-only">Search teams</label>
+                        <input
+                          id="search-teams"
+                          type="text"
+                          placeholder="Search by ID, name, project, domain, or leader..."
+                          value={teamsSearch}
+                          onChange={(e) => {
+                            setTeamsSearch(e.target.value);
+                            setCurrentPage(1);
+                          }}
+                          className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm outline-none ring-primary focus:border-primary focus:ring-2"
+                        />
+                      </div>
+                      <div className="flex items-center gap-3 justify-between sm:justify-end">
+                        <span className="text-xs font-semibold text-slate-500 bg-slate-100 px-3 py-1.5 rounded-full whitespace-nowrap">
+                          {filteredRegistrations.length} of {registrations.length} Teams
+                        </span>
+                        <button
+                          type="button"
+                          onClick={handleExportTeams}
+                          className="inline-flex items-center gap-2 rounded-xl bg-accent px-4 py-2 text-sm font-bold text-white shadow hover:bg-amber-600 cursor-pointer whitespace-nowrap"
+                        >
+                          <Download size={14} />
+                          Export Teams
+                        </button>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-3 justify-between sm:justify-end">
-                      <span className="text-xs font-semibold text-slate-500 bg-slate-100 px-3 py-1.5 rounded-full whitespace-nowrap">
-                        {filteredRegistrations.length} of {registrations.length} Teams
-                      </span>
-                      <button
-                        type="button"
-                        onClick={handleExportTeams}
-                        className="inline-flex items-center gap-2 rounded-xl bg-accent px-4 py-2 text-sm font-bold text-white shadow hover:bg-amber-600 cursor-pointer whitespace-nowrap"
-                      >
-                        <Download size={14} />
-                        Export Teams
-                      </button>
+
+                    {/* Filter controls row */}
+                    <div className="grid grid-cols-2 gap-3 sm:flex sm:flex-wrap sm:items-center sm:gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200/65">
+                      <div className="flex flex-col grow min-w-[150px]">
+                        <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Department</label>
+                        <select
+                          value={filterDepartment}
+                          onChange={(e) => { setFilterDepartment(e.target.value); setCurrentPage(1); }}
+                          className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs outline-none focus:border-primary text-slate-700 font-medium"
+                        >
+                          <option value="">All Departments</option>
+                          {departmentsList.map(dept => (
+                            <option key={dept.id} value={dept.name}>{dept.name}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="flex flex-col grow min-w-[150px]">
+                        <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Innovation Domain</label>
+                        <select
+                          value={filterDomain}
+                          onChange={(e) => { setFilterDomain(e.target.value); setCurrentPage(1); }}
+                          className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs outline-none focus:border-primary text-slate-700 font-medium"
+                        >
+                          <option value="">All Domains</option>
+                          {Array.from(new Set(registrations.map(r => r.innovation_domain).filter(Boolean))).sort().map(domain => (
+                            <option key={domain} value={domain}>{domain}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="flex flex-col grow min-w-[90px] max-w-[150px]">
+                        <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">TRL Level</label>
+                        <select
+                          value={filterTrl}
+                          onChange={(e) => { setFilterTrl(e.target.value); setCurrentPage(1); }}
+                          className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs outline-none focus:border-primary text-slate-700 font-medium"
+                        >
+                          <option value="">All TRL</option>
+                          {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(num => (
+                            <option key={num} value={String(num)}>TRL {num}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="flex flex-col grow min-w-[90px] max-w-[150px]">
+                        <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Product No</label>
+                        <select
+                          value={filterProductNumber}
+                          onChange={(e) => { setFilterProductNumber(e.target.value); setCurrentPage(1); }}
+                          className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs outline-none focus:border-primary text-slate-700 font-medium"
+                        >
+                          <option value="">All Prods</option>
+                          {Array.from(new Set(registrations.map(r => r.product_number).filter(n => n !== undefined))).sort((a,b)=>a-b).map(num => (
+                            <option key={num} value={String(num)}>Product {num}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="flex flex-col grow min-w-[90px] max-w-[150px]">
+                        <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Status</label>
+                        <select
+                          value={filterStatus}
+                          onChange={(e) => { setFilterStatus(e.target.value); setCurrentPage(1); }}
+                          className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs outline-none focus:border-primary text-slate-700 font-medium"
+                        >
+                          <option value="">All Statuses</option>
+                          {Array.from(new Set(registrations.map(r => r.status).filter(Boolean))).sort().map(status => (
+                            <option key={status} value={status}>{status}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {(filterDepartment || filterDomain || filterTrl || filterProductNumber || filterStatus || teamsSearch) && (
+                        <div className="flex items-end col-span-2 sm:col-span-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setFilterDepartment("");
+                              setFilterDomain("");
+                              setFilterTrl("");
+                              setFilterProductNumber("");
+                              setFilterStatus("");
+                              setTeamsSearch("");
+                              setCurrentPage(1);
+                            }}
+                            className="w-full text-xs text-red-500 hover:text-red-700 font-semibold px-3 py-1.5 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 transition cursor-pointer"
+                          >
+                            Clear Filters
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -2276,7 +2570,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
                             const phase = phases.find(p => p.id === evalItem.phase_id);
                             const evaluator = evaluators.find(e => e.user_id === evalItem.evaluator_user_id);
                             const registration = registrations.find(r => r.registration_id === evalItem.registration_id);
-                            
+
                             return (
                               <tr key={evalItem.id} className="hover:bg-slate-50/50 align-top">
                                 <td className="px-4 py-3 whitespace-nowrap">
@@ -2369,7 +2663,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true">
           {/* Backdrop */}
           <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setConfirmActivatePhase(null)}></div>
-          
+
           {/* Card */}
           <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl ring-1 ring-slate-200">
             <div className="flex items-center gap-3 text-amber-500">
@@ -2378,7 +2672,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
                 Activate Phase {confirmActivatePhase.phase_number}?
               </h3>
             </div>
-            
+
             <p className="mt-3 text-sm leading-6 text-slate-600">
               You are about to activate <span className="font-bold text-slate-800">Phase {confirmActivatePhase.phase_number}: {confirmActivatePhase.name}</span>.
             </p>

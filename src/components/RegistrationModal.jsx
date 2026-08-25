@@ -159,14 +159,29 @@ export default function RegistrationModal({ isOpen, onClose }) {
     setIsCheckingTeam(true)
     setErrors(prev => ({ ...prev, teamName: '' }))
     try {
-      const response = await fetch(`${API_BASE_URL}/api/check-team/${encodeURIComponent(teamName)}`)
+      const { data: { session } } = await supabase.auth.getSession()
+      const token = session?.access_token
+
+      const response = await fetch(`${API_BASE_URL}/api/check-team/${encodeURIComponent(teamName)}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      })
       const contentType = response.headers.get('content-type')
 
-      if (!response.ok || !contentType || !contentType.includes('application/json')) {
-        console.error(`API check-team failed with status ${response.status}`)
+      if (!response.ok) {
+        let msg = `Unable to verify team name (Server responded with status ${response.status}).`
+        if (response.status === 403 && contentType && contentType.includes('application/json')) {
+          try {
+            const errData = await response.json()
+            msg = errData.message || 'You are not authorized to submit a new idea for this team.'
+          } catch (e) {
+            msg = 'You are not authorized to submit a new idea for this team.'
+          }
+        }
         setErrors(prev => ({
           ...prev,
-          teamName: `Unable to verify team name (Server responded with status ${response.status}).`
+          teamName: msg
         }))
         setExistingTeamData(null)
         return
@@ -377,7 +392,7 @@ export default function RegistrationModal({ isOpen, onClose }) {
     // Member 2
     if (!formData.member2Name.trim())
       newErrors.member2Name = 'Member 2 name is required'
-    
+
     if (!formData.member2Email.trim()) {
       newErrors.member2Email = 'Member 2 email is required'
     } else if (!SECE_EMAIL_REGEX.test(formData.member2Email.trim())) {
@@ -542,9 +557,15 @@ export default function RegistrationModal({ isOpen, onClose }) {
           declarationAccepted: formData.declarationAccepted
         }
 
+        const { data: { session } } = await supabase.auth.getSession()
+        const token = session?.access_token
+
         response = await fetch(`${API_BASE_URL}/api/submit-new-idea`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
           body: JSON.stringify(payload),
         })
       } else {

@@ -629,6 +629,18 @@ router.get('/check-team/:teamName', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Team name is required.' });
     }
 
+    // Determine the authenticated user
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, message: 'Authentication required. Authorization header is missing or invalid.' });
+    }
+    const token = authHeader.split(' ')[1];
+    const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
+    if (authErr || !user) {
+      return res.status(401).json({ success: false, message: 'Invalid or expired authentication session.' });
+    }
+    const userEmail = user.email ? user.email.toLowerCase().trim() : '';
+
     const normalized = teamName.toLowerCase().trim();
 
     // 1. Check if team exists in teams table
@@ -717,6 +729,13 @@ router.get('/check-team/:teamName', async (req, res) => {
       }
     }
 
+    // 3. Verify user is a member of this team
+    const isMember = members.some(m => m.member_email && m.member_email.toLowerCase().trim() === userEmail);
+    if (!isMember) {
+      console.log(`[CHECK TEAM] User ${userEmail} is not authorized for team ${teamData.team_name}`);
+      return res.status(403).json({ success: false, message: 'You are not authorized to submit a new idea for this team.' });
+    }
+
     return res.json({
       exists: true,
       team: {
@@ -775,7 +794,19 @@ router.post('/submit-new-idea', async (req, res) => {
       return res.status(400).json({ success: false, message: 'You must agree to the declaration before submitting.' });
     }
 
-    // 1. Verify team exists
+    // Determine the authenticated user
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, message: 'Authentication required. Authorization header is missing or invalid.' });
+    }
+    const token = authHeader.split(' ')[1];
+    const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
+    if (authErr || !user) {
+      return res.status(401).json({ success: false, message: 'Invalid or expired authentication session.' });
+    }
+    const userEmail = user.email ? user.email.toLowerCase().trim() : '';
+
+    // 1. Verify team exists and get authoritative team ID
     const { data: team, error: teamErr } = await supabase
       .from('teams')
       .select('id, team_name')
@@ -787,11 +818,11 @@ router.post('/submit-new-idea', async (req, res) => {
       return res.status(404).json({ success: false, message: 'Existing team not found.' });
     }
 
-    // 2. Verify and fetch the team's first product's members
+    // 2. Fetch the team's first product's members
     const { data: productData, error: prodErr } = await supabase
       .from('products')
       .select('id')
-      .eq('team_id', teamId)
+      .eq('team_id', team.id)
       .order('product_number', { ascending: true })
       .limit(1)
       .maybeSingle();
@@ -811,6 +842,13 @@ router.post('/submit-new-idea', async (req, res) => {
       return res.status(500).json({ success: false, message: 'Failed to fetch existing team members.' });
     }
 
+    // 3. Verify user is a member of this team
+    const isMember = members.some(m => m.member_email && m.member_email.toLowerCase().trim() === userEmail);
+    if (!isMember) {
+      console.log(`[SubmitNewIdea] User ${userEmail} is not authorized for team "${team.team_name}" (teamId: ${team.id})`);
+      return res.status(403).json({ success: false, message: 'You are not authorized to submit a new idea for this team.' });
+    }
+
     if (!members || members.length !== 3) {
       console.error(`[SubmitNewIdea] Invalid team member count: ${members ? members.length : 0}`);
       return res.status(400).json({ success: false, message: 'This team must have exactly 3 members to reuse.' });
@@ -828,7 +866,7 @@ router.post('/submit-new-idea', async (req, res) => {
       const { data: maxProd, error: maxErr } = await supabase
         .from('products')
         .select('product_number')
-        .eq('team_id', teamId)
+        .eq('team_id', team.id)
         .order('product_number', { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -842,7 +880,7 @@ router.post('/submit-new-idea', async (req, res) => {
 
       // Try to insert product
       const productPayload = {
-        team_id: teamId,
+        team_id: team.id,
         product_number: nextProductNumber,
         product_title: projectTitle.trim(),
         innovation_domain: innovationDomain,
@@ -864,7 +902,7 @@ router.post('/submit-new-idea', async (req, res) => {
       if (prodInsErr) {
         const isUniqueConflict = String(prodInsErr.message || prodInsErr.details || '').includes('uq_team_product_number') || prodInsErr.code === '23505';
         if (isUniqueConflict && attempt < maxAttempts) {
-          console.warn(`[SubmitNewIdea] Concurrency conflict on product_number=${nextProductNumber} for team=${teamId}. Retrying attempt ${attempt + 1}...`);
+          console.warn(`[SubmitNewIdea] Concurrency conflict on product_number=${nextProductNumber} for team=${team.id}. Retrying attempt ${attempt + 1}...`);
           continue; // Retry loop
         }
         console.error('[SubmitNewIdea] Product insertion failed:', prodInsErr.message || prodInsErr);
