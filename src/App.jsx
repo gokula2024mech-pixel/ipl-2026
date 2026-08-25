@@ -5,7 +5,6 @@ import Navbar from './components/Navbar'
 import Hero from './components/Hero'
 import RegistrationModal from './components/RegistrationModal'
 import { supabase } from './supabaseClient'
-import PublicFloatingTimer from './components/PublicFloatingTimer'
 
 const About = lazy(() => import('./components/About'))
 const ProgramHighlights = lazy(() => import('./components/ProgramHighlights'))
@@ -14,7 +13,6 @@ const Domains = lazy(() => import('./components/Domains'))
 const WhatYouGain = lazy(() => import('./components/WhatYouGain'))
 const FeaturesBenefits = lazy(() => import('./components/FeaturesBenefits'))
 const Journey = lazy(() => import('./components/Journey'))
-const TimerSpotlight = lazy(() => import('./components/Journey').then(m => ({ default: m.TimerSpotlight })))
 const Judging = lazy(() => import('./components/Judging'))
 const Timeline = lazy(() => import('./components/Timeline'))
 const Leaderboard = lazy(() => import('./components/Leaderboard'))
@@ -301,7 +299,6 @@ export default function App() {
           <>
             <Hero onRegisterClick={handleOpenRegistration} />
             <Suspense fallback={<SectionFallback />}>
-              <TimerSpotlight />
               <About />
               <ProgramHighlights />
               <Eligibility />
@@ -341,9 +338,6 @@ export default function App() {
         </button>
       )}
 
-      {viewMode === "public" && (
-        <PublicFloatingTimer isAdminPublicView={profile?.role === 'admin'} />
-      )}
     </>
   )
 }

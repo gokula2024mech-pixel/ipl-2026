@@ -10,7 +10,6 @@ const NAV_LINKS = [
   { label: 'Journey', href: '#journey' },
   { label: 'Timeline', href: '#timeline' },
   { label: 'Leaderboard', href: '#leaderboard' },
-  { label: 'Register', href: '#registration' },
   { label: 'Contact', href: '#contact' },
 ]
 
