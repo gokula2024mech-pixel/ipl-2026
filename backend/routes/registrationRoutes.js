@@ -331,6 +331,47 @@ router.post('/registrations', (req, res) => {
         })
       }
 
+      // Fetch active departments from public.departments
+      const { data: activeDepts, error: deptsError } = await supabase
+        .from('departments')
+        .select('id, name')
+        .eq('is_active', true)
+
+      if (deptsError || !activeDepts) {
+        console.error('[Registration] Error fetching departments from Supabase:', deptsError)
+        return res.status(500).json({
+          success: false,
+          message: 'An internal error occurred while validating departments. Please try again.',
+        })
+      }
+
+      // Create a map of canonical name -> UUID, and set of canonical names
+      const deptMap = {}
+      const canonicalNames = new Set()
+      activeDepts.forEach(d => {
+        deptMap[d.name] = d.id
+        canonicalNames.add(d.name)
+      })
+
+      // Validate leader, member2, member3, and mentor departments against canonical names
+      const leaderDept = leader.department
+      const member2Dept = member2.department
+      const member3Dept = member3.department
+      const mentorDept = mentor.department
+
+      if (!canonicalNames.has(leaderDept)) {
+        return res.status(400).json({ success: false, message: `Team leader department "${leaderDept}" is invalid.` })
+      }
+      if (!canonicalNames.has(member2Dept)) {
+        return res.status(400).json({ success: false, message: `Member 2 department "${member2Dept}" is invalid.` })
+      }
+      if (!canonicalNames.has(member3Dept)) {
+        return res.status(400).json({ success: false, message: `Member 3 department "${member3Dept}" is invalid.` })
+      }
+      if (!canonicalNames.has(mentorDept)) {
+        return res.status(400).json({ success: false, message: `Faculty mentor department "${mentorDept}" is invalid.` })
+      }
+
       // Insert row into Supabase PostgreSQL (only actual existing database columns)
       const recordToInsert = {
         team_name: teamName,
@@ -358,57 +399,206 @@ router.post('/registrations', (req, res) => {
         declaration_accepted: declarationAccepted,
       }
 
-      let { data: insertedData, error: dbError } = await supabase
-        .from('registrations')
-        .insert([recordToInsert])
-        .select('registration_id')
-        .single()
+      // We will track created resources for application-level rollback
+      let regId = null
+      let createdTeamId = null
+      let wasTeamCreated = false
+      let createdProductId = null
+      let createdMemberIds = []
 
-      // Fallback if live Supabase table is pending ALTER TABLE migration
-      if (dbError && String(dbError.message || dbError.details || '').includes('sdg_goals')) {
-        console.warn('[Registration] Warning: sdg_goals/trl_level columns missing in live DB. Retrying fallback insert.')
-        const fallbackRecord = { ...recordToInsert }
-        delete fallbackRecord.sdg_goals
-        delete fallbackRecord.trl_level
-
-        const retryRes = await supabase
+      try {
+        let { data: insertedData, error: dbError } = await supabase
           .from('registrations')
-          .insert([fallbackRecord])
+          .insert([recordToInsert])
           .select('registration_id')
           .single()
 
-        insertedData = retryRes.data
-        dbError = retryRes.error
-      }
+        // Fallback retry if needed (preserving existing logic)
+        if (dbError && String(dbError.message || dbError.details || '').includes('sdg_goals')) {
+          console.warn('[Registration] Warning: sdg_goals/trl_level columns missing in live DB. Retrying fallback insert.')
+          const fallbackRecord = { ...recordToInsert }
+          delete fallbackRecord.sdg_goals
+          delete fallbackRecord.trl_level
 
-      if (dbError) {
-        console.error('[Registration] Database insert error:', dbError.message || dbError)
-        const errMsg = String(dbError.message || dbError.details || '')
+          const retryRes = await supabase
+            .from('registrations')
+            .insert([fallbackRecord])
+            .select('registration_id')
+            .single()
 
-        // Detect MEMBER_ALREADY_REGISTERED
-        if (errMsg.includes('MEMBER_ALREADY_REGISTERED')) {
-          const regIdMatch = errMsg.match(/(IPL26-\d{4})/i)
-          const registrationId = regIdMatch ? regIdMatch[1] : null
-          return res.status(409).json({
-            success: false,
-            code: 'MEMBER_ALREADY_REGISTERED',
-            message: 'This team member is already registered.',
-            registration_id: registrationId,
-            registrationId: registrationId,
-          })
+          insertedData = retryRes.data
+          dbError = retryRes.error
         }
 
-        // Detect TEAM_ALREADY_REGISTERED
-        if (errMsg.includes('TEAM_ALREADY_REGISTERED') || errMsg.includes('team_name')) {
-          const regIdMatch = errMsg.match(/(IPL26-\d{4})/i)
-          const registrationId = regIdMatch ? regIdMatch[1] : null
-          return res.status(409).json({
-            success: false,
-            code: 'TEAM_ALREADY_REGISTERED',
-            message: 'This team name is already registered.',
-            registration_id: registrationId,
-            registrationId: registrationId,
-          })
+        if (dbError) {
+          // Detect MEMBER_ALREADY_REGISTERED
+          const errMsg = String(dbError.message || dbError.details || '')
+          if (errMsg.includes('MEMBER_ALREADY_REGISTERED')) {
+            const regIdMatch = errMsg.match(/(IPL26-\d{4})/i)
+            const registrationId = regIdMatch ? regIdMatch[1] : null
+            return res.status(409).json({
+              success: false,
+              code: 'MEMBER_ALREADY_REGISTERED',
+              message: 'This team member is already registered.',
+              registrationId,
+              registration_id: registrationId,
+            })
+          }
+
+          // Detect TEAM_ALREADY_REGISTERED
+          if (errMsg.includes('TEAM_ALREADY_REGISTERED') || errMsg.includes('team_name')) {
+            const regIdMatch = errMsg.match(/(IPL26-\d{4})/i)
+            const registrationId = regIdMatch ? regIdMatch[1] : null
+            return res.status(409).json({
+              success: false,
+              code: 'TEAM_ALREADY_REGISTERED',
+              message: 'This team name is already registered.',
+              registrationId,
+              registration_id: registrationId,
+            })
+          }
+
+          throw dbError
+        }
+
+        regId = insertedData.registration_id
+        console.log('[Registration] Created registration ID:', regId)
+
+        // Find or create team (DO NOT insert normalized_team_name because it is generated)
+        const normalizedSearch = teamName.toLowerCase().trim()
+        const { data: existingTeam, error: teamSearchError } = await supabase
+          .from('teams')
+          .select('id')
+          .eq('normalized_team_name', normalizedSearch)
+          .maybeSingle()
+
+        if (teamSearchError) throw teamSearchError
+
+        let teamId
+        if (existingTeam) {
+          teamId = existingTeam.id
+          console.log(`[Registration] Found existing team ID: ${teamId}`)
+        } else {
+          // Insert ONLY team_name. Let PostgreSQL generate normalized_team_name.
+          const { data: newTeam, error: teamCreateError } = await supabase
+            .from('teams')
+            .insert([{ team_name: teamName.trim() }])
+            .select('id')
+            .single()
+
+          if (teamCreateError) throw teamCreateError
+          teamId = newTeam.id
+          createdTeamId = teamId
+          wasTeamCreated = true
+          console.log(`[Registration] Created new team ID: ${teamId}`)
+        }
+
+        // Create product
+        const productPayload = {
+          team_id: teamId,
+          product_number: 1,
+          product_title: projectTitle,
+          innovation_domain: innovationDomain,
+          problem_area: problemArea,
+          proposed_solution: proposedSolution,
+          expected_impact: expectedImpact,
+          sdg_goals: sdgGoals,
+          trl_level: trlLevel,
+          legacy_registration_id: regId,
+          status: 'active'
+        }
+
+        const { data: productData, error: productCreateError } = await supabase
+          .from('products')
+          .insert([productPayload])
+          .select('id')
+          .single()
+
+        if (productCreateError) throw productCreateError
+        createdProductId = productData.id
+        console.log(`[Registration] Created product ID: ${createdProductId}`)
+
+        // Create product members (exactly 3)
+        const membersPayload = [
+          {
+            product_id: createdProductId,
+            member_name: leader.name,
+            member_email: leader.email,
+            member_mobile: leader.mobile,
+            department_id: deptMap[leader.department],
+            role: 'Team Leader',
+            is_team_leader: true
+          },
+          {
+            product_id: createdProductId,
+            member_name: member2.name,
+            member_email: member2.email,
+            member_mobile: member2.mobile,
+            department_id: deptMap[member2.department],
+            role: 'Team Member',
+            is_team_leader: false
+          },
+          {
+            product_id: createdProductId,
+            member_name: member3.name,
+            member_email: member3.email,
+            member_mobile: member3.mobile,
+            department_id: deptMap[member3.department],
+            role: 'Team Member',
+            is_team_leader: false
+          }
+        ]
+
+        const { data: membersData, error: membersCreateError } = await supabase
+          .from('product_members')
+          .insert(membersPayload)
+          .select('id')
+
+        if (membersCreateError) throw membersCreateError
+        createdMemberIds = (membersData || []).map(m => m.id)
+        console.log(`[Registration] Created ${createdMemberIds.length} product members`)
+
+        // Return HTTP 201 Success Response
+        return res.status(201).json({
+          success: true,
+          message: 'Registration successful',
+          registrationId: regId,
+        })
+
+      } catch (transactionError) {
+        console.error('[Registration] Failed during normalized data setup. Executing application-level rollback/cleanup:', transactionError.message || transactionError)
+
+        // 1. Delete created members
+        if (createdMemberIds.length > 0) {
+          console.log(`[Rollback] Deleting product members: ${createdMemberIds}`)
+          await supabase.from('product_members').delete().in('id', createdMemberIds)
+        }
+
+        // 2. Delete created product
+        if (createdProductId) {
+          console.log(`[Rollback] Deleting product: ${createdProductId}`)
+          await supabase.from('products').delete().eq('id', createdProductId)
+        }
+
+        // 3. Delete created team (ONLY if it was created by this request and has no other products)
+        if (wasTeamCreated && createdTeamId) {
+          const { count, error: countError } = await supabase
+            .from('products')
+            .select('*', { count: 'exact', head: true })
+            .eq('team_id', createdTeamId)
+
+          if (!countError && count === 0) {
+            console.log(`[Rollback] Deleting team: ${createdTeamId}`)
+            await supabase.from('teams').delete().eq('id', createdTeamId)
+          } else {
+            console.log(`[Rollback] Skipping team deletion: referenced elsewhere (count=${count})`)
+          }
+        }
+
+        // 4. Delete created registration
+        if (regId) {
+          console.log(`[Rollback] Deleting registration: ${regId}`)
+          await supabase.from('registrations').delete().eq('registration_id', regId)
         }
 
         return res.status(500).json({
@@ -416,16 +606,6 @@ router.post('/registrations', (req, res) => {
           message: 'An error occurred while saving your registration. Please try again.',
         })
       }
-
-      console.log('[Registration] Database insert successful')
-      console.log('[Registration] Registration ID:', insertedData.registration_id)
-
-      // Return HTTP 201 Success Response
-      return res.status(201).json({
-        success: true,
-        message: 'Registration successful',
-        registrationId: insertedData.registration_id,
-      })
     } catch (error) {
       console.error('[Registration] Unexpected error:', error)
       return res.status(500).json({
@@ -436,4 +616,310 @@ router.post('/registrations', (req, res) => {
   })
 })
 
-module.exports = router
+// New endpoints for existing team submitting new ideas
+router.get('/check-team/:teamName', async (req, res) => {
+  try {
+    const rawTeamName = req.params.teamName;
+    const teamName = rawTeamName ? rawTeamName.trim() : '';
+
+    console.log(`[CHECK TEAM] Checking team: ${teamName}`);
+
+    if (!teamName) {
+      console.log(`[CHECK TEAM] Rejected empty team name`);
+      return res.status(400).json({ success: false, message: 'Team name is required.' });
+    }
+
+    const normalized = teamName.toLowerCase().trim();
+
+    // 1. Check if team exists in teams table
+    const { data: teamData, error: teamErr } = await supabase
+      .from('teams')
+      .select('id, team_name, normalized_team_name')
+      .eq('normalized_team_name', normalized)
+      .maybeSingle();
+
+    if (teamErr) {
+      console.error('[CheckTeam] Supabase team error:', teamErr.message);
+      return res.status(500).json({ success: false, message: 'Database error checking team existence.' });
+    }
+
+    if (!teamData) {
+      console.log(`[CHECK TEAM] Team not found: ${teamName}`);
+      return res.json({ exists: false });
+    }
+
+    console.log(`[CHECK TEAM] Team found: ${teamData.team_name}`);
+
+    // 2. Retrieve team's first product ordered by product_number ascending
+    const { data: productData, error: prodErr } = await supabase
+      .from('products')
+      .select('id, product_number, product_title, legacy_registration_id')
+      .eq('team_id', teamData.id)
+      .order('product_number', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (prodErr) {
+      console.error('[CheckTeam] Supabase product error:', prodErr.message);
+      return res.status(500).json({ success: false, message: 'Database error fetching team products.' });
+    }
+
+    let members = [];
+    let mentor = { name: '', department: '' };
+
+    if (productData) {
+      // A. Fetch members
+      const { data: membersData, error: memErr } = await supabase
+        .from('product_members')
+        .select(`
+          id,
+          member_name,
+          member_email,
+          member_mobile,
+          role,
+          is_team_leader,
+          department_id,
+          departments ( name )
+        `)
+        .eq('product_id', productData.id)
+        .order('is_team_leader', { ascending: false });
+
+      if (memErr) {
+        console.error('[CheckTeam] Supabase members error:', memErr.message);
+        return res.status(500).json({ success: false, message: 'Database error fetching team members.' });
+      }
+
+      members = (membersData || []).map(m => ({
+        id: m.id,
+        member_name: m.member_name,
+        member_email: m.member_email,
+        member_mobile: m.member_mobile,
+        department_id: m.department_id,
+        department_name: m.departments ? m.departments.name : null,
+        role: m.role,
+        is_team_leader: m.is_team_leader
+      }));
+
+      // B. Fetch mentor from original registration
+      if (productData.legacy_registration_id) {
+        const { data: regData, error: regErr } = await supabase
+          .from('registrations')
+          .select('mentor_name, mentor_department')
+          .eq('registration_id', productData.legacy_registration_id)
+          .maybeSingle();
+
+        if (!regErr && regData) {
+          mentor = {
+            name: regData.mentor_name || '',
+            department: regData.mentor_department || ''
+          };
+        }
+      }
+    }
+
+    return res.json({
+      exists: true,
+      team: {
+        id: teamData.id,
+        team_name: teamData.team_name,
+      },
+      product: productData ? {
+        id: productData.id,
+        product_number: productData.product_number,
+        product_title: productData.product_title
+      } : null,
+      members: members,
+      mentor: mentor
+    });
+
+  } catch (err) {
+    console.error('[CheckTeam] Unexpected error:', err);
+    return res.status(500).json({ success: false, message: 'Internal server error.' });
+  }
+});
+
+router.post('/submit-new-idea', async (req, res) => {
+  try {
+    const {
+      teamId,
+      projectTitle,
+      innovationDomain,
+      problemArea,
+      proposedSolution,
+      expectedImpact,
+      sdgGoals,
+      trlLevel,
+      declarationAccepted
+    } = req.body || {};
+
+    // Validation checks
+    if (!teamId) {
+      return res.status(400).json({ success: false, message: 'Team ID is required.' });
+    }
+    if (!projectTitle || !projectTitle.trim()) {
+      return res.status(400).json({ success: false, message: 'Project title is required.' });
+    }
+    if (!innovationDomain) {
+      return res.status(400).json({ success: false, message: 'Innovation domain is required.' });
+    }
+    if (!problemArea || !problemArea.trim()) {
+      return res.status(400).json({ success: false, message: 'Problem area is required.' });
+    }
+    if (!proposedSolution || !proposedSolution.trim()) {
+      return res.status(400).json({ success: false, message: 'Proposed solution is required.' });
+    }
+    if (!expectedImpact || !expectedImpact.trim()) {
+      return res.status(400).json({ success: false, message: 'Expected impact is required.' });
+    }
+    if (declarationAccepted !== undefined && !declarationAccepted) {
+      return res.status(400).json({ success: false, message: 'You must agree to the declaration before submitting.' });
+    }
+
+    // 1. Verify team exists
+    const { data: team, error: teamErr } = await supabase
+      .from('teams')
+      .select('id, team_name')
+      .eq('id', teamId)
+      .maybeSingle();
+
+    if (teamErr || !team) {
+      console.error('[SubmitNewIdea] Team lookup failed:', teamErr ? teamErr.message : 'Not found');
+      return res.status(404).json({ success: false, message: 'Existing team not found.' });
+    }
+
+    // 2. Verify and fetch the team's first product's members
+    const { data: productData, error: prodErr } = await supabase
+      .from('products')
+      .select('id')
+      .eq('team_id', teamId)
+      .order('product_number', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (prodErr || !productData) {
+      console.error('[SubmitNewIdea] Fetch first product error:', prodErr ? prodErr.message : 'No products exist');
+      return res.status(400).json({ success: false, message: 'Cannot submit a new idea because no original product is associated with this team.' });
+    }
+
+    const { data: members, error: memErr } = await supabase
+      .from('product_members')
+      .select('member_name, member_email, member_mobile, role, is_team_leader, department_id')
+      .eq('product_id', productData.id);
+
+    if (memErr) {
+      console.error('[SubmitNewIdea] Fetch members error:', memErr.message);
+      return res.status(500).json({ success: false, message: 'Failed to fetch existing team members.' });
+    }
+
+    if (!members || members.length !== 3) {
+      console.error(`[SubmitNewIdea] Invalid team member count: ${members ? members.length : 0}`);
+      return res.status(400).json({ success: false, message: 'This team must have exactly 3 members to reuse.' });
+    }
+
+    // 3. Concurrency-safe product insert loop
+    let nextProductNumber = 1;
+    let insertedProduct = null;
+    const maxAttempts = 3;
+    let attempt = 0;
+
+    while (attempt < maxAttempts) {
+      attempt++;
+      // Query current max product_number
+      const { data: maxProd, error: maxErr } = await supabase
+        .from('products')
+        .select('product_number')
+        .eq('team_id', teamId)
+        .order('product_number', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (maxErr) {
+        console.error(`[SubmitNewIdea] Fetch max product number error (attempt ${attempt}):`, maxErr.message);
+        return res.status(500).json({ success: false, message: 'Database error calculating product number.' });
+      }
+
+      nextProductNumber = maxProd ? (maxProd.product_number + 1) : 1;
+
+      // Try to insert product
+      const productPayload = {
+        team_id: teamId,
+        product_number: nextProductNumber,
+        product_title: projectTitle.trim(),
+        innovation_domain: innovationDomain,
+        problem_area: problemArea.trim(),
+        proposed_solution: proposedSolution.trim(),
+        expected_impact: expectedImpact.trim(),
+        sdg_goals: sdgGoals || null,
+        trl_level: trlLevel || null,
+        legacy_registration_id: null,
+        status: 'active'
+      };
+
+      const { data: prodIns, error: prodInsErr } = await supabase
+        .from('products')
+        .insert([productPayload])
+        .select('id')
+        .single();
+
+      if (prodInsErr) {
+        const isUniqueConflict = String(prodInsErr.message || prodInsErr.details || '').includes('uq_team_product_number') || prodInsErr.code === '23505';
+        if (isUniqueConflict && attempt < maxAttempts) {
+          console.warn(`[SubmitNewIdea] Concurrency conflict on product_number=${nextProductNumber} for team=${teamId}. Retrying attempt ${attempt + 1}...`);
+          continue; // Retry loop
+        }
+        console.error('[SubmitNewIdea] Product insertion failed:', prodInsErr.message || prodInsErr);
+        return res.status(500).json({ success: false, message: 'Failed to create product record.' });
+      }
+
+      insertedProduct = prodIns;
+      break; // Success!
+    }
+
+    if (!insertedProduct) {
+      return res.status(409).json({
+        success: false,
+        message: 'Could not assign a unique product number due to concurrent updates. Please try again.'
+      });
+    }
+
+    // 4. Insert members for this new product
+    const membersPayload = members.map(m => ({
+      product_id: insertedProduct.id,
+      member_name: m.member_name,
+      member_email: m.member_email,
+      member_mobile: m.member_mobile,
+      department_id: m.department_id,
+      role: m.role,
+      is_team_leader: m.is_team_leader
+    }));
+
+    const { error: membersErr } = await supabase
+      .from('product_members')
+      .insert(membersPayload);
+
+    if (membersErr) {
+      console.error('[SubmitNewIdea] Member insertion failed. Initiating rollback...', membersErr.message);
+
+      // Rollback: delete the created product
+      await supabase.from('products').delete().eq('id', insertedProduct.id);
+
+      return res.status(500).json({ success: false, message: 'Failed to populate new product members.' });
+    }
+
+    console.log(`[SubmitNewIdea] Successfully registered new idea for team "${team.team_name}" as product #${nextProductNumber}`);
+
+    return res.status(201).json({
+      success: true,
+      message: 'New idea submitted successfully',
+      teamName: team.team_name,
+      productNumber: nextProductNumber,
+      productId: insertedProduct.id
+    });
+
+  } catch (err) {
+    console.error('[SubmitNewIdea] Unexpected error:', err);
+    return res.status(500).json({ success: false, message: 'Internal server error.' });
+  }
+});
+
+module.exports = router;

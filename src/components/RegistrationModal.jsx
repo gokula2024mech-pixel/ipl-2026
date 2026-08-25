@@ -17,6 +17,7 @@ import {
   Globe,
   Rocket,
 } from 'lucide-react'
+import { supabase } from '../supabaseClient'
 
 const OFFICIAL_DOMAINS = [
   'Smart Manufacturing & Industry 4.0',
@@ -111,6 +112,134 @@ export default function RegistrationModal({ isOpen, onClose }) {
   const [activePopup, setActivePopup] = useState(null)
   const [successData, setSuccessData] = useState(null)
   const [copied, setCopied] = useState(false)
+
+  const [departments, setDepartments] = useState([])
+
+  const OFFICIAL_DEPARTMENTS = [
+    'Artificial Intelligence and Data Science',
+    'Artificial Intelligence and Machine Learning',
+    'Computer and Communication Engineering',
+    'Computer Science and Business System',
+    'Computer Science and Engineering',
+    'Cyber Security',
+    'Electrical and Electronics Engineering',
+    'Electronics and Communication Engineering',
+    'Information Technology',
+    'Mechanical Engineering'
+  ]
+
+  useEffect(() => {
+    if (!isOpen) return
+    const fetchDepartments = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('departments')
+          .select('id, name')
+          .eq('is_active', true)
+          .order('name')
+        if (error) throw error
+        if (data) {
+          setDepartments(data.map(d => d.name))
+        }
+      } catch (err) {
+        console.error('Error loading departments from Supabase:', err)
+      }
+    }
+    fetchDepartments()
+  }, [isOpen])
+
+  const [existingTeamData, setExistingTeamData] = useState(null)
+  const [isNewIdeaMode, setIsNewIdeaMode] = useState(false)
+  const [isCheckingTeam, setIsCheckingTeam] = useState(false)
+
+  const handleTeamNameBlur = async () => {
+    const teamName = formData.teamName.trim()
+    if (!teamName || isNewIdeaMode) return
+
+    setIsCheckingTeam(true)
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/check-team/${encodeURIComponent(teamName)}`)
+      const data = await response.json()
+      if (data.exists) {
+        setExistingTeamData(data)
+      } else {
+        setExistingTeamData(null)
+      }
+    } catch (err) {
+      console.error('Error checking team existence:', err)
+      setExistingTeamData(null)
+    } finally {
+      setIsCheckingTeam(false)
+    }
+  }
+
+  const handleStartNewIdeaMode = () => {
+    if (!existingTeamData) return
+    setIsNewIdeaMode(true)
+
+    // Pre-populate members & departments in form data from existingTeamData
+    const leader = existingTeamData.members.find(m => m.is_team_leader)
+    const members = existingTeamData.members.filter(m => !m.is_team_leader)
+    const m2 = members[0] || {}
+    const m3 = members[1] || {}
+    const mentor = existingTeamData.mentor || {}
+
+    setFormData(prev => ({
+      ...prev,
+      teamLeaderName: leader?.member_name || '',
+      teamLeaderEmail: leader?.member_email || '',
+      teamLeaderMobile: leader?.member_mobile || '',
+      teamLeaderDepartment: leader?.department_name || '',
+      member2Name: m2.member_name || '',
+      member2Email: m2.member_email || '',
+      member2Mobile: m2.member_mobile || '',
+      member2Department: m2.department_name || '',
+      member3Name: m3.member_name || '',
+      member3Email: m3.member_email || '',
+      member3Mobile: m3.member_mobile || '',
+      member3Department: m3.department_name || '',
+      facultyMentorName: mentor.name || '',
+      facultyMentorDepartment: mentor.department || '',
+      // Clear idea-specific fields to let user enter the new idea
+      innovationDomain: '',
+      sdgGoals: [],
+      trlLevel: '',
+      projectTitle: '',
+      problemArea: '',
+      proposedSolution: '',
+      expectedImpact: '',
+      declarationAccepted: false
+    }))
+  }
+
+  const handleCancelNewIdeaMode = () => {
+    setIsNewIdeaMode(false)
+    setExistingTeamData(null)
+    setFormData(prev => ({
+      ...prev,
+      teamName: '',
+      teamLeaderName: '',
+      teamLeaderEmail: '',
+      teamLeaderMobile: '',
+      teamLeaderDepartment: '',
+      member2Name: '',
+      member2Email: '',
+      member2Mobile: '',
+      member2Department: '',
+      member3Name: '',
+      member3Email: '',
+      member3Mobile: '',
+      member3Department: '',
+      innovationDomain: '',
+      sdgGoals: [],
+      trlLevel: '',
+      projectTitle: '',
+      problemArea: '',
+      proposedSolution: '',
+      expectedImpact: '',
+      declarationAccepted: false
+    }))
+  }
 
   // Prevent background scroll when modal is open
   useEffect(() => {
@@ -380,10 +509,33 @@ export default function RegistrationModal({ isOpen, onClose }) {
 
       console.log('[Registration] Sending registration request')
 
-      const response = await fetch(`${API_BASE_URL}/api/registrations`, {
-        method: 'POST',
-        body: dataPayload,
-      })
+      console.log('[Registration] Sending request, mode isNewIdeaMode =', isNewIdeaMode)
+
+      let response
+      if (isNewIdeaMode) {
+        const payload = {
+          teamId: existingTeamData.team.id,
+          projectTitle: formData.projectTitle,
+          innovationDomain: formData.innovationDomain,
+          problemArea: formData.problemArea,
+          proposedSolution: formData.proposedSolution,
+          expectedImpact: formData.expectedImpact,
+          sdgGoals: formData.sdgGoals,
+          trlLevel: formData.trlLevel ? Number(formData.trlLevel) : null,
+          declarationAccepted: formData.declarationAccepted
+        }
+
+        response = await fetch(`${API_BASE_URL}/api/submit-new-idea`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+      } else {
+        response = await fetch(`${API_BASE_URL}/api/registrations`, {
+          method: 'POST',
+          body: dataPayload,
+        })
+      }
 
       const data = await response.json()
 
@@ -426,20 +578,29 @@ export default function RegistrationModal({ isOpen, onClose }) {
         setActivePopup({
           type: 'error',
           title: 'Unable to Complete Registration',
-          message: 'Something went wrong while submitting your registration. Please try again.',
+          message: data.message || 'Something went wrong while submitting your registration. Please try again.',
         })
         return
       }
 
       console.log('[Registration] Submission success:', data)
-      const regId = data.registrationId || data.registration_id
       setSuccessData(data)
-      setActivePopup({
-        type: 'success',
-        title: 'Registration Successful',
-        message: 'Your team has been registered successfully.',
-        registrationId: regId,
-      })
+      if (isNewIdeaMode) {
+        setActivePopup({
+          type: 'success',
+          title: 'Idea Submitted Successfully',
+          message: `New idea registered successfully for team ${data.teamName}.`,
+          registrationId: `Product #${data.productNumber}`,
+        })
+      } else {
+        const regId = data.registrationId || data.registration_id
+        setActivePopup({
+          type: 'success',
+          title: 'Registration Successful',
+          message: 'Your team has been registered successfully.',
+          registrationId: regId,
+        })
+      }
     } catch (err) {
       console.error('[Registration] Submission error:', err)
       setActivePopup({
@@ -464,6 +625,38 @@ export default function RegistrationModal({ isOpen, onClose }) {
     setSuccessData(null)
     setSubmitError('')
     setActivePopup(null)
+    setExistingTeamData(null)
+    setIsNewIdeaMode(false)
+    setFormData({
+      email: '',
+      teamName: '',
+      teamLeaderName: '',
+      teamLeaderEmail: '',
+      teamLeaderMobile: '',
+      teamLeaderDepartment: '',
+      member2Name: '',
+      member2Email: '',
+      member2Mobile: '',
+      member2Department: '',
+      member3Name: '',
+      member3Email: '',
+      member3Mobile: '',
+      member3Department: '',
+      member4Name: '',
+      member4Email: '',
+      member4Mobile: '',
+      member4Department: '',
+      facultyMentorName: '',
+      facultyMentorDepartment: '',
+      innovationDomain: '',
+      sdgGoals: [],
+      trlLevel: '',
+      projectTitle: '',
+      problemArea: '',
+      proposedSolution: '',
+      expectedImpact: '',
+      declarationAccepted: false,
+    })
     onClose()
   }
 
@@ -563,20 +756,31 @@ export default function RegistrationModal({ isOpen, onClose }) {
         <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5 md:px-8">
           <div>
             <span className="text-xs font-bold uppercase tracking-wider text-accent">
-              IPL 2026 Registration
+              {isNewIdeaMode ? 'Existing Team Submission' : 'IPL 2026 Registration'}
             </span>
             <h2 className="font-heading text-xl font-bold text-slate-900 md:text-2xl">
-              Team Registration Form
+              {isNewIdeaMode ? 'Submit New Idea' : 'Team Registration Form'}
             </h2>
           </div>
-          <button
-            type="button"
-            onClick={handleClose}
-            className="rounded-full p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
-            aria-label="Close modal"
-          >
-            <X size={24} />
-          </button>
+          <div className="flex items-center gap-3">
+            {isNewIdeaMode && (
+              <button
+                type="button"
+                onClick={handleCancelNewIdeaMode}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg transition-all focus:outline-none"
+              >
+                Back
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleClose}
+              className="rounded-full p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
+              aria-label="Close modal"
+            >
+              <X size={24} />
+            </button>
+          </div>
         </div>
 
         {/* Content Body */}
@@ -610,15 +814,55 @@ export default function RegistrationModal({ isOpen, onClose }) {
                     name="teamName"
                     value={formData.teamName}
                     onChange={handleChange}
+                    onBlur={handleTeamNameBlur}
+                    readOnly={isNewIdeaMode}
+                    disabled={isNewIdeaMode}
                     placeholder="e.g. Innovators 2026"
-                    className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
-                      errors.teamName
-                        ? 'border-red-400 focus:ring-red-200'
-                        : 'border-slate-300 focus:border-accent focus:ring-amber-100'
+                    className={`mt-1 w-full rounded-xl border px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
+                      isNewIdeaMode
+                        ? 'bg-slate-100 border-slate-200 cursor-not-allowed text-slate-500'
+                        : errors.teamName
+                          ? 'bg-white border-red-400 focus:ring-red-200'
+                          : 'bg-white border-slate-300 focus:border-accent focus:ring-amber-100'
                     }`}
                   />
                   {errors.teamName && (
                     <p className="mt-1 text-xs text-red-600">{errors.teamName}</p>
+                  )}
+                  {isCheckingTeam && (
+                    <p className="mt-1 text-xs text-slate-500">Checking team existence...</p>
+                  )}
+                  {existingTeamData && !isNewIdeaMode && (
+                    <div className="mt-4 p-4 border border-amber-200 bg-amber-50 rounded-xl space-y-3">
+                      <div className="flex items-start gap-2 text-amber-800">
+                        <AlertCircle className="shrink-0 mt-0.5" size={18} />
+                        <div>
+                          <p className="font-semibold text-sm">Team already exists</p>
+                          <p className="text-xs text-amber-700 mt-1">
+                            Team <strong>{existingTeamData.team.team_name}</strong> is already registered.
+                          </p>
+                          <div className="mt-2 text-xs space-y-1">
+                            <span className="font-semibold text-amber-800">Existing Members:</span>
+                            <ul className="list-disc list-inside text-amber-700 space-y-0.5">
+                              {existingTeamData.members.map((m, idx) => (
+                                <li key={idx}>
+                                  {m.member_name} ({m.role === 'Team Leader' ? 'Leader' : 'Member'} - {m.department_name})
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={handleStartNewIdeaMode}
+                          className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold rounded-lg transition-all focus:outline-none"
+                        >
+                          Submit New Idea
+                        </button>
+                      </div>
+                    </div>
                   )}
                 </div>
               </div>
@@ -638,11 +882,15 @@ export default function RegistrationModal({ isOpen, onClose }) {
                       name="teamLeaderName"
                       value={formData.teamLeaderName}
                       onChange={handleChange}
+                      readOnly={isNewIdeaMode}
+                      disabled={isNewIdeaMode}
                       placeholder="Full Name"
-                      className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
-                        errors.teamLeaderName
-                          ? 'border-red-400 focus:ring-red-200'
-                          : 'border-slate-300 focus:border-accent focus:ring-amber-100'
+                      className={`mt-1 w-full rounded-xl border px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
+                        isNewIdeaMode
+                          ? 'bg-slate-100 border-slate-200 cursor-not-allowed text-slate-500'
+                          : errors.teamLeaderName
+                            ? 'bg-white border-red-400 focus:ring-red-200'
+                            : 'bg-white border-slate-300 focus:border-accent focus:ring-amber-100'
                       }`}
                     />
                     {errors.teamLeaderName && (
@@ -661,11 +909,15 @@ export default function RegistrationModal({ isOpen, onClose }) {
                       name="teamLeaderEmail"
                       value={formData.teamLeaderEmail}
                       onChange={handleChange}
+                      readOnly={isNewIdeaMode}
+                      disabled={isNewIdeaMode}
                       placeholder="name@sece.ac.in"
-                      className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
-                        errors.teamLeaderEmail
-                          ? 'border-red-400 focus:ring-red-200'
-                          : 'border-slate-300 focus:border-accent focus:ring-amber-100'
+                      className={`mt-1 w-full rounded-xl border px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
+                        isNewIdeaMode
+                          ? 'bg-slate-100 border-slate-200 cursor-not-allowed text-slate-500'
+                          : errors.teamLeaderEmail
+                            ? 'bg-white border-red-400 focus:ring-red-200'
+                            : 'bg-white border-slate-300 focus:border-accent focus:ring-amber-100'
                       }`}
                     />
                     {errors.teamLeaderEmail && (
@@ -686,11 +938,15 @@ export default function RegistrationModal({ isOpen, onClose }) {
                       name="teamLeaderMobile"
                       value={formData.teamLeaderMobile}
                       onChange={handleChange}
+                      readOnly={isNewIdeaMode}
+                      disabled={isNewIdeaMode}
                       placeholder="10-digit Indian Mobile No"
-                      className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
-                        errors.teamLeaderMobile
-                          ? 'border-red-400 focus:ring-red-200'
-                          : 'border-slate-300 focus:border-accent focus:ring-amber-100'
+                      className={`mt-1 w-full rounded-xl border px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
+                        isNewIdeaMode
+                          ? 'bg-slate-100 border-slate-200 cursor-not-allowed text-slate-500'
+                          : errors.teamLeaderMobile
+                            ? 'bg-white border-red-400 focus:ring-red-200'
+                            : 'bg-white border-slate-300 focus:border-accent focus:ring-amber-100'
                       }`}
                     />
                     {errors.teamLeaderMobile && (
@@ -704,18 +960,26 @@ export default function RegistrationModal({ isOpen, onClose }) {
                     <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
                       Leader Department *
                     </label>
-                    <input
-                      type="text"
+                    <select
                       name="teamLeaderDepartment"
                       value={formData.teamLeaderDepartment}
                       onChange={handleChange}
-                      placeholder="eg : Mechanical Department"
-                      className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
-                        errors.teamLeaderDepartment
-                          ? 'border-red-400 focus:ring-red-200'
-                          : 'border-slate-300 focus:border-accent focus:ring-amber-100'
+                      disabled={isNewIdeaMode}
+                      className={`mt-1 w-full rounded-xl border px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
+                        isNewIdeaMode
+                          ? 'bg-slate-100 border-slate-200 cursor-not-allowed text-slate-500'
+                          : errors.teamLeaderDepartment
+                            ? 'bg-white border-red-400 focus:ring-red-200'
+                            : 'bg-white border-slate-300 focus:border-accent focus:ring-amber-100'
                       }`}
-                    />
+                    >
+                      <option value="">Select Department</option>
+                      {(departments.length > 0 ? departments : OFFICIAL_DEPARTMENTS).map((dept) => (
+                        <option key={dept} value={dept}>
+                          {dept}
+                        </option>
+                      ))}
+                    </select>
                     {errors.teamLeaderDepartment && (
                       <p className="mt-1 text-xs text-red-600">
                         {errors.teamLeaderDepartment}
@@ -748,11 +1012,15 @@ export default function RegistrationModal({ isOpen, onClose }) {
                       name="member2Name"
                       value={formData.member2Name}
                       onChange={handleChange}
+                      readOnly={isNewIdeaMode}
+                      disabled={isNewIdeaMode}
                       placeholder="Full Name"
-                      className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
-                        errors.member2Name
-                          ? 'border-red-400 focus:ring-red-200'
-                          : 'border-slate-300 focus:border-accent focus:ring-amber-100'
+                      className={`mt-1 w-full rounded-xl border px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
+                        isNewIdeaMode
+                          ? 'bg-slate-100 border-slate-200 cursor-not-allowed text-slate-500'
+                          : errors.member2Name
+                            ? 'bg-white border-red-400 focus:ring-red-200'
+                            : 'bg-white border-slate-300 focus:border-accent focus:ring-amber-100'
                       }`}
                     />
                     {errors.member2Name && (
@@ -771,11 +1039,15 @@ export default function RegistrationModal({ isOpen, onClose }) {
                       name="member2Email"
                       value={formData.member2Email}
                       onChange={handleChange}
+                      readOnly={isNewIdeaMode}
+                      disabled={isNewIdeaMode}
                       placeholder="name@sece.ac.in"
-                      className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
-                        errors.member2Email
-                          ? 'border-red-400 focus:ring-red-200'
-                          : 'border-slate-300 focus:border-accent focus:ring-amber-100'
+                      className={`mt-1 w-full rounded-xl border px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
+                        isNewIdeaMode
+                          ? 'bg-slate-100 border-slate-200 cursor-not-allowed text-slate-500'
+                          : errors.member2Email
+                            ? 'bg-white border-red-400 focus:ring-red-200'
+                            : 'bg-white border-slate-300 focus:border-accent focus:ring-amber-100'
                       }`}
                     />
                     {errors.member2Email && (
@@ -796,11 +1068,15 @@ export default function RegistrationModal({ isOpen, onClose }) {
                       name="member2Mobile"
                       value={formData.member2Mobile}
                       onChange={handleChange}
+                      readOnly={isNewIdeaMode}
+                      disabled={isNewIdeaMode}
                       placeholder="10-digit Indian Mobile No"
-                      className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
-                        errors.member2Mobile
-                          ? 'border-red-400 focus:ring-red-200'
-                          : 'border-slate-300 focus:border-accent focus:ring-amber-100'
+                      className={`mt-1 w-full rounded-xl border px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
+                        isNewIdeaMode
+                          ? 'bg-slate-100 border-slate-200 cursor-not-allowed text-slate-500'
+                          : errors.member2Mobile
+                            ? 'bg-white border-red-400 focus:ring-red-200'
+                            : 'bg-white border-slate-300 focus:border-accent focus:ring-amber-100'
                       }`}
                     />
                     {errors.member2Mobile && (
@@ -814,18 +1090,26 @@ export default function RegistrationModal({ isOpen, onClose }) {
                     <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
                       Department *
                     </label>
-                    <input
-                      type="text"
+                    <select
                       name="member2Department"
                       value={formData.member2Department}
                       onChange={handleChange}
-                      placeholder="eg : Mechanical Department"
-                      className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
-                        errors.member2Department
-                          ? 'border-red-400 focus:ring-red-200'
-                          : 'border-slate-300 focus:border-accent focus:ring-amber-100'
+                      disabled={isNewIdeaMode}
+                      className={`mt-1 w-full rounded-xl border px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
+                        isNewIdeaMode
+                          ? 'bg-slate-100 border-slate-200 cursor-not-allowed text-slate-500'
+                          : errors.member2Department
+                            ? 'bg-white border-red-400 focus:ring-red-200'
+                            : 'bg-white border-slate-300 focus:border-accent focus:ring-amber-100'
                       }`}
-                    />
+                    >
+                      <option value="">Select Department</option>
+                      {(departments.length > 0 ? departments : OFFICIAL_DEPARTMENTS).map((dept) => (
+                        <option key={dept} value={dept}>
+                          {dept}
+                        </option>
+                      ))}
+                    </select>
                     {errors.member2Department && (
                       <p className="mt-1 text-xs text-red-600">
                         {errors.member2Department}
@@ -850,11 +1134,15 @@ export default function RegistrationModal({ isOpen, onClose }) {
                       name="member3Name"
                       value={formData.member3Name}
                       onChange={handleChange}
+                      readOnly={isNewIdeaMode}
+                      disabled={isNewIdeaMode}
                       placeholder="Full Name"
-                      className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
-                        errors.member3Name
-                          ? 'border-red-400 focus:ring-red-200'
-                          : 'border-slate-300 focus:border-accent focus:ring-amber-100'
+                      className={`mt-1 w-full rounded-xl border px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
+                        isNewIdeaMode
+                          ? 'bg-slate-100 border-slate-200 cursor-not-allowed text-slate-500'
+                          : errors.member3Name
+                            ? 'bg-white border-red-400 focus:ring-red-200'
+                            : 'bg-white border-slate-300 focus:border-accent focus:ring-amber-100'
                       }`}
                     />
                     {errors.member3Name && (
@@ -873,11 +1161,15 @@ export default function RegistrationModal({ isOpen, onClose }) {
                       name="member3Email"
                       value={formData.member3Email}
                       onChange={handleChange}
+                      readOnly={isNewIdeaMode}
+                      disabled={isNewIdeaMode}
                       placeholder="name@sece.ac.in"
-                      className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
-                        errors.member3Email
-                          ? 'border-red-400 focus:ring-red-200'
-                          : 'border-slate-300 focus:border-accent focus:ring-amber-100'
+                      className={`mt-1 w-full rounded-xl border px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
+                        isNewIdeaMode
+                          ? 'bg-slate-100 border-slate-200 cursor-not-allowed text-slate-500'
+                          : errors.member3Email
+                            ? 'bg-white border-red-400 focus:ring-red-200'
+                            : 'bg-white border-slate-300 focus:border-accent focus:ring-amber-100'
                       }`}
                     />
                     {errors.member3Email && (
@@ -898,11 +1190,15 @@ export default function RegistrationModal({ isOpen, onClose }) {
                       name="member3Mobile"
                       value={formData.member3Mobile}
                       onChange={handleChange}
+                      readOnly={isNewIdeaMode}
+                      disabled={isNewIdeaMode}
                       placeholder="10-digit Indian Mobile No"
-                      className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
-                        errors.member3Mobile
-                          ? 'border-red-400 focus:ring-red-200'
-                          : 'border-slate-300 focus:border-accent focus:ring-amber-100'
+                      className={`mt-1 w-full rounded-xl border px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
+                        isNewIdeaMode
+                          ? 'bg-slate-100 border-slate-200 cursor-not-allowed text-slate-500'
+                          : errors.member3Mobile
+                            ? 'bg-white border-red-400 focus:ring-red-200'
+                            : 'bg-white border-slate-300 focus:border-accent focus:ring-amber-100'
                       }`}
                     />
                     {errors.member3Mobile && (
@@ -916,18 +1212,26 @@ export default function RegistrationModal({ isOpen, onClose }) {
                     <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
                       Department *
                     </label>
-                    <input
-                      type="text"
+                    <select
                       name="member3Department"
                       value={formData.member3Department}
                       onChange={handleChange}
-                      placeholder="eg : Mechanical Department"
-                      className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
-                        errors.member3Department
-                          ? 'border-red-400 focus:ring-red-200'
-                          : 'border-slate-300 focus:border-accent focus:ring-amber-100'
+                      disabled={isNewIdeaMode}
+                      className={`mt-1 w-full rounded-xl border px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
+                        isNewIdeaMode
+                          ? 'bg-slate-100 border-slate-200 cursor-not-allowed text-slate-500'
+                          : errors.member3Department
+                            ? 'bg-white border-red-400 focus:ring-red-200'
+                            : 'bg-white border-slate-300 focus:border-accent focus:ring-amber-100'
                       }`}
-                    />
+                    >
+                      <option value="">Select Department</option>
+                      {(departments.length > 0 ? departments : OFFICIAL_DEPARTMENTS).map((dept) => (
+                        <option key={dept} value={dept}>
+                          {dept}
+                        </option>
+                      ))}
+                    </select>
                     {errors.member3Department && (
                       <p className="mt-1 text-xs text-red-600">
                         {errors.member3Department}
@@ -957,11 +1261,15 @@ export default function RegistrationModal({ isOpen, onClose }) {
                     name="facultyMentorName"
                     value={formData.facultyMentorName}
                     onChange={handleChange}
+                    readOnly={isNewIdeaMode}
+                    disabled={isNewIdeaMode}
                     placeholder="Dr. / Prof. Full Name"
-                    className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
-                      errors.facultyMentorName
-                        ? 'border-red-400 focus:ring-red-200'
-                        : 'border-slate-300 focus:border-accent focus:ring-amber-100'
+                    className={`mt-1 w-full rounded-xl border px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
+                      isNewIdeaMode
+                        ? 'bg-slate-100 border-slate-200 cursor-not-allowed text-slate-500'
+                        : errors.facultyMentorName
+                          ? 'bg-white border-red-400 focus:ring-red-200'
+                          : 'bg-white border-slate-300 focus:border-accent focus:ring-amber-100'
                     }`}
                   />
                   {errors.facultyMentorName && (
@@ -975,18 +1283,26 @@ export default function RegistrationModal({ isOpen, onClose }) {
                   <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
                     Faculty Mentor Department *
                   </label>
-                  <input
-                    type="text"
+                  <select
                     name="facultyMentorDepartment"
                     value={formData.facultyMentorDepartment}
                     onChange={handleChange}
-                    placeholder="eg : Mechanical Department"
-                    className={`mt-1 w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
-                      errors.facultyMentorDepartment
-                        ? 'border-red-400 focus:ring-red-200'
-                        : 'border-slate-300 focus:border-accent focus:ring-amber-100'
+                    disabled={isNewIdeaMode}
+                    className={`mt-1 w-full rounded-xl border px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
+                      isNewIdeaMode
+                        ? 'bg-slate-100 border-slate-200 cursor-not-allowed text-slate-500'
+                        : errors.facultyMentorDepartment
+                          ? 'bg-white border-red-400 focus:ring-red-200'
+                          : 'bg-white border-slate-300 focus:border-accent focus:ring-amber-100'
                     }`}
-                  />
+                  >
+                    <option value="">Select Department</option>
+                    {(departments.length > 0 ? departments : OFFICIAL_DEPARTMENTS).map((dept) => (
+                      <option key={dept} value={dept}>
+                        {dept}
+                      </option>
+                    ))}
+                  </select>
                   {errors.facultyMentorDepartment && (
                     <p className="mt-1 text-xs text-red-600">
                       {errors.facultyMentorDepartment}
@@ -1287,6 +1603,8 @@ export default function RegistrationModal({ isOpen, onClose }) {
                     <Loader2 size={18} className="animate-spin" />
                     Submitting...
                   </>
+                ) : isNewIdeaMode ? (
+                  'Submit New Idea'
                 ) : (
                   'Submit Registration'
                 )}
