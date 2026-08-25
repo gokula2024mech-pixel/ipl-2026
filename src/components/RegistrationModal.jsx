@@ -157,8 +157,21 @@ export default function RegistrationModal({ isOpen, onClose }) {
     if (!teamName || isNewIdeaMode) return
 
     setIsCheckingTeam(true)
+    setErrors(prev => ({ ...prev, teamName: '' }))
     try {
       const response = await fetch(`${API_BASE_URL}/api/check-team/${encodeURIComponent(teamName)}`)
+      const contentType = response.headers.get('content-type')
+
+      if (!response.ok || !contentType || !contentType.includes('application/json')) {
+        console.error(`API check-team failed with status ${response.status}`)
+        setErrors(prev => ({
+          ...prev,
+          teamName: `Unable to verify team name (Server responded with status ${response.status}).`
+        }))
+        setExistingTeamData(null)
+        return
+      }
+
       const data = await response.json()
       if (data.exists) {
         setExistingTeamData(data)
@@ -167,6 +180,10 @@ export default function RegistrationModal({ isOpen, onClose }) {
       }
     } catch (err) {
       console.error('Error checking team existence:', err)
+      setErrors(prev => ({
+        ...prev,
+        teamName: 'Network error verifying team name. Please check your connection.'
+      }))
       setExistingTeamData(null)
     } finally {
       setIsCheckingTeam(false)
@@ -535,6 +552,17 @@ export default function RegistrationModal({ isOpen, onClose }) {
           method: 'POST',
           body: dataPayload,
         })
+      }
+
+      const contentType = response.headers.get('content-type')
+      if (!contentType || !contentType.includes('application/json')) {
+        console.error(`Submission failed. Status: ${response.status}`)
+        setActivePopup({
+          type: 'error',
+          title: 'Server Error',
+          message: `The server returned an unexpected response (Status ${response.status}). Please check your connection and try again.`,
+        })
+        return
       }
 
       const data = await response.json()
