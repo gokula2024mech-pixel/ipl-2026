@@ -4,6 +4,7 @@ import AdminDashboard from './components/AdminDashboard'
 import Navbar from './components/Navbar'
 import Hero from './components/Hero'
 import RegistrationModal from './components/RegistrationModal'
+import MySubmissionsModal from './components/MySubmissionsModal'
 import { supabase } from './supabaseClient'
 
 const About = lazy(() => import('./components/About'))
@@ -35,6 +36,7 @@ export default function App() {
   const [loading, setLoading] = useState(true)
   const [loginError, setLoginError] = useState('')
   const [isRegistrationOpen, setIsRegistrationOpen] = useState(false)
+  const [isMySubmissionsOpen, setIsMySubmissionsOpen] = useState(false)
   const [viewMode, setViewMode] = useState("public")
   const [currentHash, setCurrentHash] = useState(window.location.hash)
 
@@ -285,6 +287,13 @@ export default function App() {
         onRegisterClick={handleOpenRegistration}
         user={session.user}
         profile={profile}
+        onProfileUpdate={async () => {
+          if (session?.user) {
+            const userProfile = await loadProfile(session.user)
+            setProfile(userProfile)
+          }
+        }}
+        onMySubmissionsClick={() => setIsMySubmissionsOpen(true)}
       />
       <main>
         {isLeaderboardPage ? (
@@ -326,6 +335,11 @@ export default function App() {
       <RegistrationModal
         isOpen={isRegistrationOpen}
         onClose={handleCloseRegistration}
+      />
+
+      <MySubmissionsModal
+        isOpen={isMySubmissionsOpen}
+        onClose={() => setIsMySubmissionsOpen(false)}
       />
 
       {profile?.role === 'admin' && viewMode === 'public' && (

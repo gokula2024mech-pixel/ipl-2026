@@ -431,22 +431,27 @@ router.post('/registrations', (req, res) => {
         }
 
         if (dbError) {
-          // Detect MEMBER_ALREADY_REGISTERED
           const errMsg = String(dbError.message || dbError.details || '')
-          if (errMsg.includes('MEMBER_ALREADY_REGISTERED')) {
+
+          // Detect DUPLICATE_MEMBER_IN_TEAM / MEMBER_ALREADY_REGISTERED
+          if (errMsg.includes('DUPLICATE_MEMBER_IN_TEAM') || errMsg.includes('MEMBER_ALREADY_REGISTERED')) {
             const regIdMatch = errMsg.match(/(IPL26-\d{4})/i)
             const registrationId = regIdMatch ? regIdMatch[1] : null
             return res.status(409).json({
               success: false,
-              code: 'MEMBER_ALREADY_REGISTERED',
-              message: 'This team member is already registered.',
+              code: 'DUPLICATE_MEMBER_IN_TEAM',
+              message: 'Each team member must be unique.',
               registrationId,
               registration_id: registrationId,
             })
           }
 
-          // Detect TEAM_ALREADY_REGISTERED
-          if (errMsg.includes('TEAM_ALREADY_REGISTERED') || errMsg.includes('team_name')) {
+          // Detect TEAM_NAME_ALREADY_EXISTS / TEAM_ALREADY_REGISTERED
+          if (
+            errMsg.includes('TEAM_ALREADY_REGISTERED') ||
+            errMsg.includes('TEAM_NAME_ALREADY_EXISTS') ||
+            errMsg.includes('team_name')
+          ) {
             const regIdMatch = errMsg.match(/(IPL26-\d{4})/i)
             const registrationId = regIdMatch ? regIdMatch[1] : null
             return res.status(409).json({
@@ -956,6 +961,104 @@ router.post('/submit-new-idea', async (req, res) => {
 
   } catch (err) {
     console.error('[SubmitNewIdea] Unexpected error:', err);
+    return res.status(500).json({ success: false, message: 'Internal server error.' });
+  }
+});
+
+// -------------------------------------------------------------
+// GET /api/my-submissions
+// Retrieves all team registrations and associated products/ideas for the authenticated user
+// -------------------------------------------------------------
+router.get('/my-submissions', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, message: 'Authentication required. Authorization header is missing.' });
+    }
+    const token = authHeader.split(' ')[1];
+    const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
+    if (authErr || !user) {
+      return res.status(401).json({ success: false, message: 'Invalid or expired authentication session.' });
+    }
+    const userEmail = (user.email || '').trim().toLowerCase();
+    if (!userEmail) {
+      return res.status(400).json({ success: false, message: 'User email not found in session.' });
+    }
+
+    const { data: regs, error: regsErr } = await supabase
+      .from('registrations')
+      .select('*')
+      .or(`leader_email.ilike."${userEmail}",member2_email.ilike."${userEmail}",member3_email.ilike."${userEmail}"`);
+
+    if (regsErr) {
+      console.error('[MySubmissions] Fetch registrations error:', regsErr.message);
+      return res.status(500).json({ success: false, message: 'Failed to retrieve team registrations.' });
+    }
+
+    if (!regs || regs.length === 0) {
+      return res.status(200).json({ success: true, submissions: [] });
+    }
+
+    const submissions = [];
+
+    for (const reg of regs) {
+      const normTeamName = (reg.team_name || '').trim().toLowerCase();
+
+      const { data: team, error: teamErr } = await supabase
+        .from('teams')
+        .select('*')
+        .eq('normalized_team_name', normTeamName)
+        .maybeSingle();
+
+      if (teamErr) {
+        console.error(`[MySubmissions] Error fetching team for "${reg.team_name}":`, teamErr.message);
+        continue;
+      }
+
+      let userRole = 'Member';
+      if ((reg.leader_email || '').trim().toLowerCase() === userEmail) {
+        userRole = 'Team Leader';
+      }
+
+      const teamInfo = {
+        teamId: team ? team.id : null,
+        teamName: reg.team_name,
+        registrationId: reg.registration_id,
+        createdAt: reg.created_at,
+        userRole,
+        mentor: {
+          name: reg.mentor_name,
+          department: reg.mentor_department
+        },
+        members: {
+          leader: { name: reg.leader_name, email: reg.leader_email, department: reg.leader_department },
+          member2: { name: reg.member2_name, email: reg.member2_email, department: reg.member2_department },
+          member3: { name: reg.member3_name, email: reg.member3_email, department: reg.member3_department }
+        }
+      };
+
+      if (team) {
+        const { data: products, error: prodErr } = await supabase
+          .from('products')
+          .select('*')
+          .eq('team_id', team.id)
+          .order('product_number', { ascending: true });
+
+        if (prodErr) {
+          console.error(`[MySubmissions] Error fetching products for team ${team.id}:`, prodErr.message);
+        }
+
+        teamInfo.ideas = products || [];
+      } else {
+        teamInfo.ideas = [];
+      }
+
+      submissions.push(teamInfo);
+    }
+
+    return res.status(200).json({ success: true, submissions });
+  } catch (err) {
+    console.error('[MySubmissions] Unexpected error:', err.message || err);
     return res.status(500).json({ success: false, message: 'Internal server error.' });
   }
 });

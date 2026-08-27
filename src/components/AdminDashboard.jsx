@@ -289,12 +289,13 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
 
       // Update statistics
       setStats({
-        totalTeams: normalizedRecords.length,
+        totalTeams: teamsData?.length || 0,
         totalStudents: students.length,
         totalEvaluators: evals.length,
         activePhaseName: activePhase ? `Phase ${activePhase.phase_number}: ${activePhase.name}` : "None",
         totalEvaluations: evaluationsData?.length || 0
       });
+      window.dispatchEvent(new CustomEvent('refresh-leaderboard'));
 
     } catch (err) {
       console.error("Error loading dashboard data:", err);
@@ -1476,41 +1477,49 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 font-body pt-16">
+    <div className="min-h-screen bg-slate-50 font-body pt-20">
       {/* Fixed Compact Header - Redesigned to match White Public Navbar Style */}
-      <header className="fixed top-0 left-0 right-0 z-40 flex h-16 items-center justify-between border-b border-slate-200/80 bg-white/95 shadow-lg backdrop-blur-md px-4 md:px-8">
-        <div className="flex items-center gap-3">
-          {/* Mobile menu toggle */}
-          <button
-            type="button"
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="rounded-lg p-2 text-slate-800 transition-colors hover:bg-slate-100 md:hidden cursor-pointer"
-            aria-label="Toggle menu"
-          >
-            <Menu size={20} />
-          </button>
+      <header className="fixed top-0 left-0 right-0 z-40 border-b border-slate-200/80 bg-white/95 shadow-lg backdrop-blur-md">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-4 md:px-6 lg:px-8 w-full">
+          <div className="flex items-center gap-3">
+            {/* Mobile menu toggle */}
+            <button
+              type="button"
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              className="rounded-lg p-2 text-slate-800 transition-colors hover:bg-slate-100 md:hidden cursor-pointer"
+              aria-label="Toggle menu"
+            >
+              <Menu size={20} />
+            </button>
 
-          <img
-            src="/logo.png"
-            alt="IPL Logo"
-            className="h-10 w-auto object-contain md:h-12"
-          />
-        </div>
-
-        <div className="flex items-center gap-4 text-xs md:text-sm">
-          <div className="hidden text-right md:block">
-            <p className="text-sm font-bold text-slate-800 uppercase tracking-wider leading-tight">
-              {profile?.name || "Administrator"}
-            </p>
-            <p className="text-xs text-slate-500 font-medium leading-tight mt-0.5" title={user?.email}>{user?.email}</p>
+            <button
+              type="button"
+              onClick={() => setActiveTab("overview")}
+              className="flex shrink-0 items-center border-none bg-transparent p-0 cursor-pointer focus:outline-none"
+              aria-label="Admin home"
+            >
+              <img
+                src="/logo.png"
+                alt="IPL Logo"
+                className="h-10 w-auto object-contain md:h-12"
+              />
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={handleLogout}
-            className="rounded-full border border-slate-300 bg-white px-4 py-2 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-50 transition-colors cursor-pointer"
-          >
-            Logout
-          </button>
+
+          <div className="flex items-center gap-4 text-xs md:text-sm">
+            <div className="hidden text-right md:block">
+              <p className="text-sm font-bold text-slate-800 uppercase tracking-wider leading-tight">
+                ADMIN
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="rounded-full border border-slate-300 bg-white px-4 py-2 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-50 transition-colors cursor-pointer"
+            >
+              Logout
+            </button>
+          </div>
         </div>
       </header>
 
@@ -1524,7 +1533,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
 
       {/* Left Sidebar Layout */}
       <aside
-        className={`fixed bottom-0 top-16 left-0 z-30 w-64 border-r border-slate-200 bg-white transition-transform md:translate-x-0 ${
+        className={`fixed bottom-0 top-20 left-0 z-30 w-64 border-r border-slate-200 bg-white transition-transform md:translate-x-0 ${
           sidebarOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
@@ -1650,7 +1659,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
                       </span>
                     </div>
                     <p className="mt-4 text-3xl font-bold text-slate-900">{stats.totalTeams}</p>
-                    <p className="mt-2 text-xs text-slate-500">Registered in public.registrations</p>
+                    <p className="mt-2 text-xs text-slate-500">Registered in public.teams</p>
                   </div>
 
                   {/* Total Students Card */}
