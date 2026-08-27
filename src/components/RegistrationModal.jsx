@@ -360,6 +360,38 @@ export default function RegistrationModal({ isOpen, onClose }) {
   const validateForm = () => {
     const newErrors = {}
 
+    // Check for duplicate emails within the same registration
+    const emails = [
+      (formData.teamLeaderEmail || '').trim().toLowerCase(),
+      (formData.member2Email || '').trim().toLowerCase(),
+      (formData.member3Email || '').trim().toLowerCase()
+    ].filter(Boolean)
+    if (formData.member4Email && formData.member4Email.trim()) {
+      emails.push(formData.member4Email.trim().toLowerCase())
+    }
+    const uniqueEmails = new Set(emails)
+    if (uniqueEmails.size < emails.length) {
+      newErrors.teamLeaderEmail = 'Each team member must be unique. Duplicate emails are not allowed.'
+      newErrors.member2Email = 'Each team member must be unique. Duplicate emails are not allowed.'
+      newErrors.member3Email = 'Each team member must be unique. Duplicate emails are not allowed.'
+    }
+
+    // Check for duplicate mobile numbers within the same registration
+    const mobiles = [
+      (formData.teamLeaderMobile || '').trim(),
+      (formData.member2Mobile || '').trim(),
+      (formData.member3Mobile || '').trim()
+    ].filter(Boolean)
+    if (formData.member4Mobile && formData.member4Mobile.trim()) {
+      mobiles.push(formData.member4Mobile.trim())
+    }
+    const uniqueMobiles = new Set(mobiles)
+    if (uniqueMobiles.size < mobiles.length) {
+      newErrors.teamLeaderMobile = 'Each team member must be unique. Duplicate mobile numbers are not allowed.'
+      newErrors.member2Mobile = 'Each team member must be unique. Duplicate mobile numbers are not allowed.'
+      newErrors.member3Mobile = 'Each team member must be unique. Duplicate mobile numbers are not allowed.'
+    }
+
     // General & Team Leader
     const effectiveEmail = (formData.email || formData.teamLeaderEmail || '').trim()
     if (!effectiveEmail) {
@@ -598,12 +630,14 @@ export default function RegistrationModal({ isOpen, onClose }) {
 
         if (
           data.code === 'MEMBER_ALREADY_REGISTERED' ||
-          rawMsg.includes('MEMBER_ALREADY_REGISTERED')
+          rawMsg.includes('MEMBER_ALREADY_REGISTERED') ||
+          data.code === 'DUPLICATE_MEMBER_IN_TEAM' ||
+          rawMsg.includes('DUPLICATE_MEMBER_IN_TEAM')
         ) {
           setActivePopup({
             type: 'duplicate_member',
             title: 'Registration Already Exists',
-            message: 'This team member is already registered with us.',
+            message: 'Each team member must be unique.',
             registrationId: extractedId,
           })
           return
@@ -612,6 +646,8 @@ export default function RegistrationModal({ isOpen, onClose }) {
         if (
           data.code === 'TEAM_ALREADY_REGISTERED' ||
           rawMsg.includes('TEAM_ALREADY_REGISTERED') ||
+          data.code === 'TEAM_NAME_ALREADY_EXISTS' ||
+          rawMsg.includes('TEAM_NAME_ALREADY_EXISTS') ||
           rawMsg.includes('team_name')
         ) {
           setActivePopup({
@@ -634,6 +670,7 @@ export default function RegistrationModal({ isOpen, onClose }) {
 
       console.log('[Registration] Submission success:', data)
       setSuccessData(data)
+      window.dispatchEvent(new CustomEvent('refresh-leaderboard'));
       if (isNewIdeaMode) {
         setActivePopup({
           type: 'success',

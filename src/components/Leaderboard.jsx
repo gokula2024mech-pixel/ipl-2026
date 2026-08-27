@@ -168,6 +168,15 @@ export default function Leaderboard() {
 
   useEffect(() => {
     fetchRankings()
+
+    const handleRefresh = () => {
+      console.log('[Leaderboard] Refreshing data via custom event');
+      fetchRankings();
+    }
+    window.addEventListener('refresh-leaderboard', handleRefresh);
+    return () => {
+      window.removeEventListener('refresh-leaderboard', handleRefresh);
+    }
   }, [])
 
   // Overall Render View
