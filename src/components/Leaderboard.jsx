@@ -184,6 +184,7 @@ export default function Leaderboard() {
     const maxTeamsInDist = Math.max(...overallStats.ideaDistribution.map(d => d.teams), 1)
     const paginatedTeams = overallStats.allTeams.slice((teamsPage - 1) * teamsPerPage, teamsPage * teamsPerPage)
     const totalTeamsPages = Math.ceil(overallStats.allTeams.length / teamsPerPage)
+    const hasTrlData = overallStats.allTeams.length > 0 && overallStats.allTeams.some(t => t.highestTrl !== undefined && t.highestTrl !== null)
 
     return (
       <div className="space-y-8 mt-8">
@@ -255,10 +256,26 @@ export default function Leaderboard() {
                   <div className="grow min-w-0">
                     <h4 className="font-bold text-sm text-slate-900 truncate">{t.teamName}</h4>
                     <p className="text-[10px] text-slate-400 font-semibold uppercase truncate">{t.department}</p>
+                    {t.leadingProductTitle && (
+                      <p className="text-[11px] text-slate-500 italic truncate mt-0.5" title={t.leadingProductTitle}>
+                        {t.leadingProductTitle}
+                      </p>
+                    )}
                   </div>
-                  <div className="text-right">
-                    <span className="text-base font-extrabold text-slate-900">{t.ideas}</span>
-                    <p className="text-[9px] text-slate-400 font-medium">Ideas</p>
+                  <div className="text-right shrink-0">
+                    {t.highestTrl !== undefined && t.highestTrl !== null ? (
+                      <>
+                        <span className="inline-flex items-center justify-center bg-primary text-white font-mono font-bold text-xs px-2.5 py-0.5 rounded">
+                          TRL {t.highestTrl}
+                        </span>
+                        <p className="text-[9px] text-slate-400 font-medium mt-0.5">Ranked</p>
+                      </>
+                    ) : (
+                      <>
+                        <span className="text-base font-extrabold text-slate-900">{t.ideas}</span>
+                        <p className="text-[9px] text-slate-400 font-medium">Ideas</p>
+                      </>
+                    )}
                   </div>
                 </div>
               ))}
@@ -275,9 +292,9 @@ export default function Leaderboard() {
                 <thead className="bg-slate-50 text-[10px] font-bold text-slate-700 uppercase border-b border-slate-200">
                   <tr>
                     <th className="px-4 py-3 w-16">Rank</th>
-                    <th className="px-4 py-3">Team</th>
+                    <th className="px-4 py-3">{hasTrlData ? 'Team & Leading Product' : 'Team'}</th>
                     <th className="px-4 py-3">Department</th>
-                    <th className="px-4 py-3 text-right w-20">Ideas</th>
+                    <th className={`px-4 py-3 text-right ${hasTrlData ? 'w-28' : 'w-20'}`}>{hasTrlData ? 'Highest TRL' : 'Ideas'}</th>
                     <th className="px-4 py-3 text-right w-48">Submission</th>
                   </tr>
                 </thead>
@@ -296,9 +313,24 @@ export default function Leaderboard() {
                             {globalRank}
                           </span>
                         </td>
-                        <td className="px-4 py-3 font-bold text-slate-900 truncate max-w-[200px]">{row.teamName}</td>
+                        <td className="px-4 py-3 max-w-[200px]">
+                          <div className="font-bold text-slate-900 truncate">{row.teamName}</div>
+                          {row.leadingProductTitle && (
+                            <div className="text-[11px] text-slate-400 italic truncate" title={row.leadingProductTitle}>
+                              {row.leadingProductTitle}
+                            </div>
+                          )}
+                        </td>
                         <td className="px-4 py-3 text-xs font-semibold text-slate-500 truncate max-w-[180px]">{row.department}</td>
-                        <td className="px-4 py-3 text-right font-extrabold text-slate-900">{row.ideas}</td>
+                        <td className="px-4 py-3 text-right font-semibold">
+                          {row.highestTrl !== undefined && row.highestTrl !== null ? (
+                            <span className="inline-flex items-center justify-center bg-primary/10 text-primary font-mono font-extrabold text-xs px-2.5 py-0.5 rounded border border-primary/20">
+                              TRL {row.highestTrl}
+                            </span>
+                          ) : (
+                            <span className="font-extrabold text-slate-900">{row.ideas}</span>
+                          )}
+                        </td>
                         <td className="px-4 py-3 text-right text-xs font-medium text-slate-600 whitespace-nowrap">{formatTimestamp(row.earliestTime)}</td>
                       </tr>
                     )
