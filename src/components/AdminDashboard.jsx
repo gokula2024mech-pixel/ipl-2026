@@ -53,7 +53,13 @@ const splitIsoDateTime = (isoString) => {
 };
 
 export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
-  const [activeTab, setActiveTab] = useState("overview");
+  const [activeTab, setActiveTab] = useState(() => {
+    try {
+      return localStorage.getItem('admin_active_tab') || 'overview';
+    } catch (e) {
+      return 'overview';
+    }
+  });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
@@ -94,15 +100,131 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
   const [extSeconds, setExtSeconds] = useState(0);
 
   // Teams search filter & Pagination
-  const [teamsSearch, setTeamsSearch] = useState("");
-  const [currentPage, setCurrentPage] = useState(1);
+  const [teamsSearch, setTeamsSearch] = useState(() => {
+    try {
+      return localStorage.getItem('admin_teams_search') || '';
+    } catch (e) {
+      return '';
+    }
+  });
+  const [currentPage, setCurrentPage] = useState(() => {
+    try {
+      return Number(localStorage.getItem('admin_current_page')) || 1;
+    } catch (e) {
+      return 1;
+    }
+  });
 
   // Filter States
-  const [filterDepartment, setFilterDepartment] = useState("");
-  const [filterDomain, setFilterDomain] = useState("");
-  const [filterTrl, setFilterTrl] = useState("");
-  const [filterStatus, setFilterStatus] = useState("");
-  const [filterProductNumber, setFilterProductNumber] = useState("");
+  const [filterDepartment, setFilterDepartment] = useState(() => {
+    try {
+      return localStorage.getItem('admin_filter_dept') || '';
+    } catch (e) {
+      return '';
+    }
+  });
+  const [filterDomain, setFilterDomain] = useState(() => {
+    try {
+      return localStorage.getItem('admin_filter_domain') || '';
+    } catch (e) {
+      return '';
+    }
+  });
+  const [filterTrl, setFilterTrl] = useState(() => {
+    try {
+      return localStorage.getItem('admin_filter_trl') || '';
+    } catch (e) {
+      return '';
+    }
+  });
+  const [filterStatus, setFilterStatus] = useState(() => {
+    try {
+      return localStorage.getItem('admin_filter_status') || '';
+    } catch (e) {
+      return '';
+    }
+  });
+  const [filterProductNumber, setFilterProductNumber] = useState(() => {
+    try {
+      return localStorage.getItem('admin_filter_prod_num') || '';
+    } catch (e) {
+      return '';
+    }
+  });
+
+  // Persist State Changes
+  useEffect(() => {
+    try {
+      localStorage.setItem('admin_active_tab', activeTab);
+    } catch (e) {}
+  }, [activeTab]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('admin_teams_search', teamsSearch);
+    } catch (e) {}
+  }, [teamsSearch]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('admin_current_page', currentPage);
+    } catch (e) {}
+  }, [currentPage]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('admin_filter_dept', filterDepartment);
+    } catch (e) {}
+  }, [filterDepartment]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('admin_filter_domain', filterDomain);
+    } catch (e) {}
+  }, [filterDomain]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('admin_filter_trl', filterTrl);
+    } catch (e) {}
+  }, [filterTrl]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('admin_filter_status', filterStatus);
+    } catch (e) {}
+  }, [filterStatus]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('admin_filter_prod_num', filterProductNumber);
+    } catch (e) {}
+  }, [filterProductNumber]);
+
+  // Persist Scroll Position
+  useEffect(() => {
+    try {
+      const savedScroll = localStorage.getItem('admin_scroll_position');
+      if (savedScroll) {
+        setTimeout(() => {
+          window.scrollTo({
+            top: Number(savedScroll),
+            behavior: 'auto'
+          });
+        }, 150);
+      }
+    } catch (e) {}
+
+    const handleScroll = () => {
+      try {
+        localStorage.setItem('admin_scroll_position', window.scrollY);
+      } catch (e) {}
+    };
+
+    window.addEventListener('scroll', handleScroll);
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, [activeTab]);
+
   const [departmentsList, setDepartmentsList] = useState([]);
 
   // Statistics State

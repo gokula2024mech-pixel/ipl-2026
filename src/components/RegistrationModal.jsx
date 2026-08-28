@@ -105,6 +105,36 @@ export default function RegistrationModal({ isOpen, onClose }) {
     declarationAccepted: false,
   })
 
+  // Load draft from localStorage on mount
+  useEffect(() => {
+    try {
+      const draft = localStorage.getItem('registration_form_draft')
+      if (draft) {
+        const parsed = JSON.parse(draft)
+        setFormData((prev) => ({ ...prev, ...parsed }))
+      }
+    } catch (e) {
+      console.error('[RegistrationModal] Failed to load draft:', e)
+    }
+  }, [])
+
+  // Save draft to localStorage on change
+  useEffect(() => {
+    const isEmpty = Object.values(formData).every((val) => {
+      if (Array.isArray(val)) return val.length === 0
+      return val === '' || val === false
+    })
+    try {
+      if (isEmpty) {
+        localStorage.removeItem('registration_form_draft')
+      } else {
+        localStorage.setItem('registration_form_draft', JSON.stringify(formData))
+      }
+    } catch (e) {
+      console.error('[RegistrationModal] Failed to save draft:', e)
+    }
+  }, [formData])
+
   const [selectedFile, setSelectedFile] = useState(null)
   const [errors, setErrors] = useState({})
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -860,7 +890,7 @@ export default function RegistrationModal({ isOpen, onClose }) {
             )}
             <button
               type="button"
-              onClick={handleClose}
+              onClick={onClose}
               className="rounded-full p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
               aria-label="Close modal"
             >

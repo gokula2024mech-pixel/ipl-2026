@@ -24,10 +24,10 @@ const formatDateRange = (startStr, endStr) => {
 }
 
 // Embedded Floating Timer Component
-function HeroTimer() {
+function HeroTimer({ timeLeft: propTimeLeft }) {
   const [dbPhases, setDbPhases] = useState([])
   const [regTimer, setRegTimer] = useState(null)
-  const [timeLeft, setTimeLeft] = useState({
+  const [localTimeLeft, setLocalTimeLeft] = useState({
     days: 0,
     hours: 0,
     minutes: 0,
@@ -36,6 +36,8 @@ function HeroTimer() {
     dates: '',
     status: 'upcoming'
   })
+
+  const timeLeft = propTimeLeft || localTimeLeft
 
   // Dragging State
   const [dragPosition, setDragPosition] = useState(null)
@@ -264,7 +266,7 @@ function HeroTimer() {
       const hours = Math.floor((diff / (1000 * 60 * 60)) % 24)
       const days = Math.floor(diff / (1000 * 60 * 60 * 24))
 
-      setTimeLeft({
+      setLocalTimeLeft({
         days,
         hours,
         minutes,
@@ -363,7 +365,7 @@ function HeroTimer() {
   )
 }
 
-export default function Hero({ onRegisterClick }) {
+export default function Hero({ onRegisterClick, timeLeft }) {
   const handleRegister = (e) => {
     if (onRegisterClick) {
       e.preventDefault()
@@ -459,7 +461,7 @@ export default function Hero({ onRegisterClick }) {
       </div>
 
       {/* Floating Draggable Timer Card */}
-      <HeroTimer />
+      <HeroTimer timeLeft={timeLeft} />
     </section>
   )
 }
