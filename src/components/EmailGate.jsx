@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { supabase } from '../supabaseClient'
 
-export default function EmailGate({ loginError }) {
+export default function EmailGate({ loginError, onBack }) {
   const [error, setError] = useState('')
   const [isLoggingIn, setIsLoggingIn] = useState(false)
 
@@ -75,6 +75,16 @@ export default function EmailGate({ loginError }) {
               <p className="font-bold">Access Denied</p>
               <p className="mt-0.5">{activeError}</p>
             </div>
+          )}
+
+          {onBack && (
+            <button
+              type="button"
+              onClick={onBack}
+              className="w-full text-center text-xs font-semibold text-slate-500 hover:text-slate-700 transition-colors cursor-pointer pt-2 block"
+            >
+              ← Back to Countdown
+            </button>
           )}
         </div>
       </motion.div>

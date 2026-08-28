@@ -5,6 +5,7 @@ import Navbar from './components/Navbar'
 import Hero from './components/Hero'
 import RegistrationModal from './components/RegistrationModal'
 import MySubmissionsModal from './components/MySubmissionsModal'
+import EntryCountdown from './components/EntryCountdown'
 import { supabase } from './supabaseClient'
 
 const About = lazy(() => import('./components/About'))
@@ -39,6 +40,173 @@ export default function App() {
   const [isMySubmissionsOpen, setIsMySubmissionsOpen] = useState(false)
   const [viewMode, setViewMode] = useState("public")
   const [currentHash, setCurrentHash] = useState(window.location.hash)
+
+  // Authoritative Countdown States
+  const [regTimer, setRegTimer] = useState(null)
+  const [dbPhases, setDbPhases] = useState([])
+  const [serverOffset, setServerOffset] = useState(0)
+  const [timeLeft, setTimeLeft] = useState({
+    days: 0,
+    hours: 0,
+    minutes: 0,
+    seconds: 0,
+    label: 'Loading...',
+    status: 'loading'
+  })
+  const [showAuth, setShowAuth] = useState(false)
+
+  // Fetch timer config from Supabase
+  const fetchTimerData = async () => {
+    try {
+      const { data: regData, error: regError } = await supabase
+        .from('registration_timer')
+        .select('*')
+        .maybeSingle()
+
+      const { data: phasesData, error: phasesError } = await supabase
+        .from('phases')
+        .select('*')
+        .order('phase_number', { ascending: true })
+
+      if (!regError && regData) setRegTimer(regData)
+      if (!phasesError && phasesData) setDbPhases(phasesData)
+    } catch (err) {
+      console.error('Error fetching global timer config:', err)
+    }
+  }
+
+  // Fetch server time offset on mount
+  useEffect(() => {
+    const fetchServerTime = async () => {
+      try {
+        const rawApiUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000').trim().replace(/\/+$/, '')
+        const API_BASE_URL = rawApiUrl.endsWith('/api') ? rawApiUrl.slice(0, -4) : rawApiUrl
+        const res = await fetch(`${API_BASE_URL}/api/server-time`)
+        const data = await res.json()
+        if (data.success && data.serverTime) {
+          const serverTimeMs = new Date(data.serverTime).getTime()
+          const offset = serverTimeMs - Date.now()
+          setServerOffset(offset)
+        }
+      } catch (err) {
+        console.error('Error fetching server time offset:', err)
+      }
+    }
+    fetchServerTime()
+    fetchTimerData()
+
+    // Subscriptions
+    const phasesChannel = supabase
+      .channel('app-global-phases')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'phases' }, () => {
+        fetchTimerData()
+      })
+      .subscribe()
+
+    const regChannel = supabase
+      .channel('app-global-registration')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'registration_timer' }, () => {
+        fetchTimerData()
+      })
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(phasesChannel)
+      supabase.removeChannel(regChannel)
+    }
+  }, [])
+
+  // Authoritative global countdown timer interval
+  useEffect(() => {
+    const getActiveConfig = () => {
+      if (!regTimer) return null
+
+      if (regTimer.timer_status === 'running' || regTimer.timer_status === 'paused') {
+        return {
+          label: 'Registration Open',
+          status: regTimer.timer_status,
+          paused: regTimer.is_timer_paused,
+          remaining_seconds: regTimer.remaining_seconds,
+          scheduled_start_at: regTimer.scheduled_start_at,
+          scheduled_end_at: regTimer.scheduled_end_at
+        }
+      }
+
+      const activePhase = dbPhases.find(p => p.timer_status === 'running' || p.timer_status === 'paused')
+      if (activePhase) {
+        return {
+          label: activePhase.name,
+          status: activePhase.timer_status,
+          paused: activePhase.is_timer_paused,
+          remaining_seconds: activePhase.remaining_seconds,
+          scheduled_start_at: activePhase.scheduled_start_at,
+          scheduled_end_at: activePhase.scheduled_end_at
+        }
+      }
+
+      if (regTimer.timer_status === 'upcoming') {
+        return {
+          label: 'Registration',
+          status: regTimer.timer_status,
+          paused: false,
+          remaining_seconds: null,
+          scheduled_start_at: regTimer.scheduled_start_at,
+          scheduled_end_at: regTimer.scheduled_end_at
+        }
+      }
+
+      return null
+    }
+
+    const timer = setInterval(() => {
+      const config = getActiveConfig()
+      if (!config) {
+        setTimeLeft(prev => ({ ...prev, status: 'closed', label: 'Registration Closed' }))
+        return
+      }
+
+      let diff = 0
+      const currentServerTime = Date.now() + serverOffset
+
+      if (config.status === 'running') {
+        const end = new Date(config.scheduled_end_at).getTime()
+        diff = end - currentServerTime
+        if (config.paused && config.remaining_seconds) {
+          diff = Number(config.remaining_seconds) * 1000
+        }
+        if (diff <= 0) {
+          diff = 0
+          fetchTimerData()
+        }
+      } else if (config.status === 'upcoming') {
+        const start = new Date(config.scheduled_start_at).getTime()
+        diff = start - currentServerTime
+        if (diff <= 0) {
+          diff = 0
+          fetchTimerData()
+        }
+      } else if (config.status === 'paused') {
+        diff = Number(config.remaining_seconds || 0) * 1000
+      }
+
+      const seconds = Math.max(0, Math.floor((diff / 1000) % 60))
+      const minutes = Math.max(0, Math.floor((diff / 1000 / 60) % 60))
+      const hours = Math.max(0, Math.floor((diff / (1000 * 60 * 60)) % 24))
+      const days = Math.max(0, Math.floor(diff / (1000 * 60 * 60 * 24)))
+
+      setTimeLeft({
+        days,
+        hours,
+        minutes,
+        seconds,
+        label: config.label,
+        status: config.status,
+        paused: config.paused
+      })
+    }, 1000)
+
+    return () => clearInterval(timer)
+  }, [dbPhases, regTimer, serverOffset])
 
   useEffect(() => {
     const handleHashChange = () => {
@@ -266,7 +434,20 @@ export default function App() {
   }
 
   if (!session) {
-    return <EmailGate loginError={loginError} />
+    if (showAuth) {
+      return (
+        <EmailGate
+          loginError={loginError}
+          onBack={() => setShowAuth(false)}
+        />
+      )
+    }
+    return (
+      <EntryCountdown
+        onEnter={() => setShowAuth(true)}
+        serverOffset={serverOffset}
+      />
+    )
   }
 
   if (profile?.role === 'admin' && viewMode === 'admin') {
@@ -294,6 +475,7 @@ export default function App() {
           }
         }}
         onMySubmissionsClick={() => setIsMySubmissionsOpen(true)}
+        timeLeft={timeLeft}
       />
       <main>
         {isLeaderboardPage ? (
@@ -306,7 +488,7 @@ export default function App() {
           </Suspense>
         ) : (
           <>
-            <Hero onRegisterClick={handleOpenRegistration} />
+            <Hero onRegisterClick={handleOpenRegistration} timeLeft={timeLeft} />
             <Suspense fallback={<SectionFallback />}>
               <About />
               <ProgramHighlights />

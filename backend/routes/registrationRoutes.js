@@ -30,6 +30,12 @@ function isValidEmail(email) {
   return SECE_EMAIL_REGEX.test(email.trim())
 }
 
+// GET /api/server-time
+// Public endpoint to retrieve the authoritative server time
+router.get('/server-time', (req, res) => {
+  return res.status(200).json({ success: true, serverTime: new Date().toISOString() })
+})
+
 // 10-digit Indian mobile number starting with 6, 7, 8 or 9
 function isValidIndianMobile(mobile) {
   if (!mobile || typeof mobile !== 'string') return false
