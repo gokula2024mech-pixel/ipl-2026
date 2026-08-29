@@ -52,6 +52,78 @@ const splitIsoDateTime = (isoString) => {
   return { date, time };
 };
 
+const EXPORT_COLUMN_GROUPS = [
+  {
+    name: "REGISTRATION",
+    columns: [
+      { key: "registration_id", label: "Registration ID", isCenter: true, width: 100 },
+      { key: "created_at", label: "Registration Date", isCenter: true, width: 200 },
+      { key: "status", label: "Status", isCenter: true, width: 100 },
+      { key: "product_number", label: "Product Number", isCenter: true, width: 110 }
+    ]
+  },
+  {
+    name: "TEAM",
+    columns: [
+      { key: "team_name", label: "Team Name", isCenter: false, width: 180 },
+      { key: "leader_department", label: "Department", isCenter: false, width: 180 },
+      { key: "innovation_domain", label: "Innovation Domain", isCenter: false, width: 220 },
+      { key: "trl_level", label: "TRL Level", isCenter: true, width: 90 }
+    ]
+  },
+  {
+    name: "PROJECT / IDEA",
+    columns: [
+      { key: "project_title", label: "Project Title", isCenter: false, width: 250, wrap: true },
+      { key: "problem_area", label: "Problem Statement", isCenter: false, width: 280, wrap: true, alignTop: true },
+      { key: "proposed_solution", label: "Proposed Solution", isCenter: false, width: 280, wrap: true, alignTop: true },
+      { key: "expected_impact", label: "Expected Impact", isCenter: false, width: 280, wrap: true, alignTop: true },
+      { key: "sdg_goals", label: "SDG Goals", isCenter: false, width: 200 }
+    ]
+  },
+  {
+    name: "TEAM LEADER",
+    columns: [
+      { key: "leader_name", label: "Leader Name", isCenter: false, width: 180 },
+      { key: "leader_email", label: "Leader Email", isCenter: false, width: 220 },
+      { key: "leader_mobile", label: "Leader Mobile", isCenter: true, width: 130 },
+      { key: "leader_department", label: "Leader Department", isCenter: false, width: 180 }
+    ]
+  },
+  {
+    name: "MEMBER 2",
+    columns: [
+      { key: "member2_name", label: "Member 2 Name", isCenter: false, width: 180 },
+      { key: "member2_email", label: "Member 2 Email", isCenter: false, width: 220 },
+      { key: "member2_mobile", label: "Member 2 Mobile", isCenter: true, width: 130 },
+      { key: "member2_department", label: "Member 2 Department", isCenter: false, width: 180 }
+    ]
+  },
+  {
+    name: "MEMBER 3",
+    columns: [
+      { key: "member3_name", label: "Member 3 Name", isCenter: false, width: 180 },
+      { key: "member3_email", label: "Member 3 Email", isCenter: false, width: 220 },
+      { key: "member3_mobile", label: "Member 3 Mobile", isCenter: true, width: 130 },
+      { key: "member3_department", label: "Member 3 Department", isCenter: false, width: 180 }
+    ]
+  },
+  {
+    name: "MENTOR",
+    columns: [
+      { key: "mentor_name", label: "Mentor Name", isCenter: false, width: 180 },
+      { key: "mentor_department", label: "Mentor Department", isCenter: false, width: 180 }
+    ]
+  },
+  {
+    name: "EVALUATION / PROGRESS",
+    columns: [
+      { key: "evaluation_score", label: "Evaluation Score", isCenter: true, width: 120 },
+      { key: "evaluation_comments", label: "Evaluation Comments", isCenter: false, width: 280, wrap: true, alignTop: true }
+    ]
+  }
+];
+
 export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
   const [activeTab, setActiveTab] = useState(() => {
     try {
@@ -72,6 +144,10 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
   const [assignments, setAssignments] = useState([]);
   const [registrations, setRegistrations] = useState([]);
   const [evaluations, setEvaluations] = useState([]);
+
+  // Column Selection Export States
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [selectedColumns, setSelectedColumns] = useState(new Set());
 
   // Form & Interaction States
   const [newEvaluatorEmail, setNewEvaluatorEmail] = useState("");
@@ -269,12 +345,19 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
       const evals = profilesData?.filter(p => p.role === "evaluator") || [];
       setEvaluators(evals);
 
-      // 3. Fetch registrations, teams, products, product_members, departments
+      // 3. Fetch registrations, teams, products, product_members, departments, and evaluations
       const { data: registrationsData, error: registrationsError } = await supabase
         .from("registrations")
         .select("*")
         .order("created_at", { ascending: false });
       if (registrationsError) throw registrationsError;
+
+      const { data: evaluationsData, error: evaluationsError } = await supabase
+        .from("evaluations")
+        .select("*")
+        .order("submitted_at", { ascending: false });
+      if (evaluationsError) throw evaluationsError;
+      setEvaluations(evaluationsData || []);
 
       const { data: teamsData, error: teamsError } = await supabase
         .from("teams")
@@ -348,6 +431,12 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
         const m3DeptName = deptsMap[m3.department_id] || m3.department_id || '';
         const m4DeptName = deptsMap[m4.department_id] || m4.department_id || '';
 
+        const prodEvals = (evaluationsData || []).filter(ev => ev.registration_id === displayRegId);
+        const avgScore = prodEvals.length > 0
+          ? Number((prodEvals.reduce((sum, ev) => sum + Number(ev.score), 0) / prodEvals.length).toFixed(2))
+          : null;
+        const evalComments = prodEvals.map(ev => ev.comments).filter(Boolean).join('; ');
+
         return {
           id: prod.id,
           registration_id: displayRegId,
@@ -385,6 +474,9 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
           mentor_name: mentorName,
           mentor_department: mentorDept,
 
+          evaluation_score: avgScore,
+          evaluation_comments: evalComments,
+
           created_at: regDate
         };
       });
@@ -400,14 +492,6 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
         .select("*");
       if (assignmentsError) throw assignmentsError;
       setAssignments(assignmentsData || []);
-
-      // 5. Fetch evaluations
-      const { data: evaluationsData, error: evaluationsError } = await supabase
-        .from("evaluations")
-        .select("*")
-        .order("submitted_at", { ascending: false });
-      if (evaluationsError) throw evaluationsError;
-      setEvaluations(evaluationsData || []);
 
       // Update statistics
       setStats({
@@ -1327,21 +1411,103 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
     }
   };
 
-  // CSV Export Utility (Excel Compatible)
-  const downloadCSV = (headers, rows, filename) => {
-    const escapeCell = (val) => {
-      if (val === null || val === undefined) return '';
-      const str = String(val);
-      // Double quotes are escaped by doubling them, and the cell is wrapped in quotes
-      return '"' + str.replace(/"/g, '""') + '"';
-    };
+  // Styled Excel Export Utility
+  const downloadExcel = (headers, rows, filename, selectedCols) => {
+    // 1. Column configuration: width mapping based on header name
+    const colTags = headers.map((header, idx) => {
+      let width = 140; // default
+      if (selectedCols && selectedCols[idx]) {
+        width = selectedCols[idx].width;
+      } else {
+        if (["Registration ID", "TRL Level", "Product Number", "Score", "Phase Number"].includes(header)) width = 90;
+        else if (["Team Name", "Leader Name", "Member 2 Name", "Member 3 Name", "Mentor Name", "Evaluator Name", "Department", "Leader Department", "Member 2 Department", "Member 3 Department", "Mentor Department", "Phase Name"].includes(header)) width = 180;
+        else if (["Project Title", "Innovation Domain", "SDG Goals", "Leader Email", "Member 2 Email", "Member 3 Email", "Evaluator Email", "Registration Date", "Submitted Date", "Comments"].includes(header)) width = 280;
+      }
+      return `<col width="${width}" />`;
+    }).join('\n');
 
-    const headerLine = headers.map(escapeCell).join(',');
-    const rowLines = rows.map(row => row.map(escapeCell).join(','));
+    // 2. Header cells
+    const headerCells = headers.map(h =>
+      `<th style="background-color: #0b1e36; color: #ffffff; font-family: Calibri, sans-serif; font-size: 11pt; font-weight: bold; border: 1px solid #cbd5e1; height: 35px; text-align: center; vertical-align: middle; white-space: normal;">${h}</th>`
+    ).join('');
 
-    // Add UTF-8 BOM so Excel opens it with proper formatting
-    const csvContent = '\uFEFF' + [headerLine, ...rowLines].join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    // 3. Row mapping
+    const rowLines = rows.map((row, rIdx) => {
+      // Alternating row background shading
+      const bg = rIdx % 2 === 0 ? '#ffffff' : '#f8fafc';
+      const cells = row.map((val, cIdx) => {
+        let isCenter = false;
+        let wrapText = true;
+        let alignTop = false;
+
+        const header = headers[cIdx];
+
+        if (selectedCols && selectedCols[cIdx]) {
+          isCenter = selectedCols[cIdx].isCenter;
+          wrapText = selectedCols[cIdx].wrap !== false;
+          alignTop = selectedCols[cIdx].alignTop === true;
+        } else {
+          isCenter = ["Registration ID", "TRL Level", "Product Number", "Score", "Phase Number", "Registration Date", "Submitted Date", "Leader Mobile", "Member 2 Mobile", "Member 3 Mobile"].includes(header);
+        }
+
+        const alignment = isCenter ? 'center' : 'left';
+        const valign = alignTop ? 'top' : 'middle';
+        const whiteSpace = wrapText ? 'normal' : 'nowrap';
+
+        // Escape HTML special characters
+        const escapedVal = String(val === null || val === undefined ? '' : val)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#039;');
+
+        return `<td style="background-color: ${bg}; color: #334155; font-family: Calibri, sans-serif; font-size: 10pt; border: 1px solid #e2e8f0; padding: 8px; text-align: ${alignment}; vertical-align: ${valign}; white-space: ${whiteSpace};">${escapedVal}</td>`;
+      }).join('');
+      return `<tr style="height: 26px;">${cells}</tr>`;
+    }).join('\n');
+
+    const xmlContent = `
+<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+<head>
+  <meta http-equiv="content-type" content="text/html; charset=utf-8" />
+  <!--[if gte mso 9]>
+  <xml>
+    <x:ExcelWorkbook>
+      <x:ExcelWorksheets>
+        <x:ExcelWorksheet>
+          <x:Name>Sheet 1</x:Name>
+          <x:WorksheetOptions>
+            <x:Selected/>
+            <x:FreezePanes/>
+            <x:FrozenNoSplit/>
+            <x:SplitHorizontal>1</x:SplitHorizontal>
+            <x:TopRowBottomPane>1</x:TopRowBottomPane>
+            <x:ActivePane>2</x:ActivePane>
+          </x:WorksheetOptions>
+        </x:ExcelWorksheet>
+      </x:ExcelWorksheets>
+    </x:ExcelWorkbook>
+  </xml>
+  <![endif]-->
+</head>
+<body>
+  <table border="1" style="border-collapse: collapse; border: 1px solid #cbd5e1;">
+    ${colTags}
+    <thead>
+      <tr style="height: 35px;">
+        ${headerCells}
+      </tr>
+    </thead>
+    <tbody>
+      ${rowLines}
+    </tbody>
+  </table>
+</body>
+</html>
+    `.trim();
+
+    const blob = new Blob([xmlContent], { type: 'application/vnd.ms-excel;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
@@ -1352,65 +1518,84 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
     document.body.removeChild(link);
   };
 
+  const allColumnKeys = EXPORT_COLUMN_GROUPS.flatMap(group => group.columns.map(col => col.key));
+  const isAllColumnsSelected = allColumnKeys.every(key => selectedColumns.has(key));
+
+  const handleToggleColumn = (key) => {
+    setSelectedColumns(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
+
+  const handleSelectAll = () => {
+    setSelectedColumns(new Set(allColumnKeys));
+  };
+
+  const handleClearAll = () => {
+    setSelectedColumns(new Set());
+  };
+
+  const handleToggleAllColumnsCheckbox = (checked) => {
+    if (checked) {
+      handleSelectAll();
+    } else {
+      handleClearAll();
+    }
+  };
+
   const handleExportTeams = () => {
-    const headers = [
-      "Registration ID",
-      "Team Name",
-      "Project Title",
-      "Innovation Domain",
-      "TRL Level",
-      "SDG Goals",
-      "Leader Name",
-      "Leader Email",
-      "Leader Mobile",
-      "Leader Department",
-      "Member 2 Name",
-      "Member 2 Email",
-      "Member 2 Mobile",
-      "Member 2 Department",
-      "Member 3 Name",
-      "Member 3 Email",
-      "Member 3 Mobile",
-      "Member 3 Department",
-      "Member 4 Name",
-      "Member 4 Email",
-      "Member 4 Mobile",
-      "Member 4 Department",
-      "Mentor Name",
-      "Mentor Department",
-      "Registration Date"
-    ];
+    // Select all columns by default
+    const allKeys = EXPORT_COLUMN_GROUPS.flatMap(group => group.columns.map(col => col.key));
+    setSelectedColumns(new Set(allKeys));
+    setIsExportModalOpen(true);
+  };
 
-    const rows = filteredRegistrations.map(t => [
-      t.registration_id,
-      t.team_name,
-      t.project_title,
-      t.innovation_domain,
-      t.trl_level !== null && t.trl_level !== undefined ? t.trl_level : 'N/A',
-      t.sdg_goals ? t.sdg_goals.join('; ') : 'N/A',
-      t.leader_name,
-      t.leader_email,
-      t.leader_mobile,
-      t.leader_department,
-      t.member2_name || '',
-      t.member2_email || '',
-      t.member2_mobile || '',
-      t.member2_department || '',
-      t.member3_name || '',
-      t.member3_email || '',
-      t.member3_mobile || '',
-      t.member3_department || '',
-      t.member4_name || '',
-      t.member4_email || '',
-      t.member4_mobile || '',
-      t.member4_department || '',
-      t.mentor_name,
-      t.mentor_department,
-      formatDate(t.created_at)
-    ]);
+  const handleDownloadExport = () => {
+    // 1. Gather all selected column objects in the correct order
+    const selectedCols = [];
+    EXPORT_COLUMN_GROUPS.forEach(group => {
+      group.columns.forEach(col => {
+        if (selectedColumns.has(col.key)) {
+          selectedCols.push(col);
+        }
+      });
+    });
 
-    downloadCSV(headers, rows, "IPL_2026_Teams.csv");
-    setSuccess("Teams list exported successfully to IPL_2026_Teams.csv");
+    if (selectedCols.length === 0) return;
+
+    // 2. Build headers list
+    const headers = selectedCols.map(col => col.label);
+
+    // 3. Build data rows matching the column order
+    const rows = filteredRegistrations.map(t => {
+      return selectedCols.map(col => {
+        const val = t[col.key];
+
+        // Custom formatting for specific columns
+        if (col.key === 'trl_level') {
+          return val !== null && val !== undefined ? val : 'N/A';
+        }
+        if (col.key === 'sdg_goals') {
+          return val && Array.isArray(val) ? val.join('; ') : 'N/A';
+        }
+        if (col.key === 'created_at') {
+          return formatDate(val);
+        }
+
+        // Return empty string for null/undefined/blank values
+        return val === null || val === undefined ? '' : val;
+      });
+    });
+
+    // 4. Download XLSX
+    downloadExcel(headers, rows, "IPL_2026_Team_Registrations.xlsx", selectedCols);
+    setIsExportModalOpen(false);
   };
 
   const handleExportEvaluations = () => {
@@ -1446,8 +1631,8 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
       ];
     });
 
-    downloadCSV(headers, rows, "IPL_2026_Evaluations.csv");
-    setSuccess("Evaluations history exported successfully to IPL_2026_Evaluations.csv");
+    downloadExcel(headers, rows, "IPL_2026_Evaluations.xlsx");
+    setSuccess("Evaluations history exported successfully to IPL_2026_Evaluations.xlsx");
   };
 
   // Helper formatting dates
@@ -2788,6 +2973,145 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
           )}
         </div>
       </main>
+
+      {/* Export Registration Data Modal */}
+      {isExportModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in" role="dialog" aria-modal="true">
+          {/* Backdrop */}
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIsExportModalOpen(false)}></div>
+
+          {/* Card */}
+          <div className="relative w-full max-w-2xl rounded-2xl bg-white shadow-2xl ring-1 ring-slate-200 flex flex-col max-h-[90vh]">
+            {/* Header */}
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <h3 className="font-heading text-lg font-bold text-slate-900">
+                  EXPORT REGISTRATION DATA
+                </h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  Select the information groups and columns you want to download.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsExportModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Selection Area (Scrollable) */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+              {/* Download All Columns Option */}
+              <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl border border-slate-100">
+                <input
+                  type="checkbox"
+                  id="col-all-cols"
+                  checked={isAllColumnsSelected}
+                  onChange={(e) => handleToggleAllColumnsCheckbox(e.target.checked)}
+                  className="h-4.5 w-4.5 rounded border-slate-300 text-primary focus:ring-primary cursor-pointer"
+                />
+                <label htmlFor="col-all-cols" className="text-sm font-bold text-slate-800 cursor-pointer select-none">
+                  DOWNLOAD ALL COLUMNS
+                </label>
+              </div>
+
+              {/* Select All / Clear All Links */}
+              <div className="flex items-center gap-4 text-xs font-semibold">
+                <button
+                  type="button"
+                  onClick={handleSelectAll}
+                  className="text-primary hover:underline cursor-pointer"
+                >
+                  SELECT ALL
+                </button>
+                <span className="text-slate-300">|</span>
+                <button
+                  type="button"
+                  onClick={handleClearAll}
+                  className="text-slate-500 hover:underline cursor-pointer"
+                >
+                  CLEAR ALL
+                </button>
+              </div>
+
+              {/* Grouped Grid checkboxes */}
+              <div className="space-y-6">
+                {EXPORT_COLUMN_GROUPS.map(group => (
+                  <div key={group.name} className="space-y-2.5">
+                    <h4 className="text-xs font-extrabold text-slate-400 tracking-wider uppercase border-b border-slate-100 pb-1.5">
+                      {group.name}
+                    </h4>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      {group.columns.map(col => {
+                        const isChecked = selectedColumns.has(col.key);
+                        return (
+                          <div key={col.key} className="flex items-start gap-2.5">
+                            <input
+                              type="checkbox"
+                              id={`col-${col.key}`}
+                              checked={isChecked}
+                              onChange={() => handleToggleColumn(col.key)}
+                              className="h-4.5 w-4.5 rounded border-slate-300 text-primary focus:ring-primary cursor-pointer mt-0.5"
+                            />
+                            <label htmlFor={`col-${col.key}`} className="text-xs font-medium text-slate-700 cursor-pointer select-none leading-normal">
+                              {col.label}
+                            </label>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Footer Summary & Actions */}
+            <div className="p-6 border-t border-slate-100 bg-slate-50 rounded-b-2xl flex flex-col sm:flex-row items-center justify-between gap-4">
+              <div className="text-center sm:text-left">
+                <span className="text-xs font-extrabold text-slate-700 block">
+                  {selectedColumns.size} {selectedColumns.size === 1 ? 'column' : 'columns'} selected
+                </span>
+                <span className="text-[11px] font-medium text-slate-500 block mt-0.5">
+                  {filteredRegistrations.length} {filteredRegistrations.length === 1 ? 'registration' : 'registrations'} to download
+                </span>
+              </div>
+
+              <div className="flex gap-3 w-full sm:w-auto">
+                <button
+                  type="button"
+                  onClick={() => setIsExportModalOpen(false)}
+                  className="flex-1 sm:flex-none rounded-xl border border-slate-300 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={selectedColumns.size === 0}
+                  onClick={handleDownloadExport}
+                  className={`flex-1 sm:flex-none rounded-xl px-6 py-2.5 text-sm font-semibold text-white shadow-md transition-all ${
+                    selectedColumns.size === 0
+                      ? 'bg-slate-300 cursor-not-allowed shadow-none'
+                      : 'bg-primary hover:bg-blue-900 cursor-pointer'
+                  }`}
+                >
+                  Download XLSX
+                </button>
+              </div>
+            </div>
+            {selectedColumns.size === 0 && (
+              <div className="px-6 pb-4 bg-slate-50 rounded-b-2xl text-center">
+                <span className="text-xs text-rose-500 font-bold">
+                  Please select at least one column.
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Confirmation Modal for Phase Activation */}
       {confirmActivatePhase && (

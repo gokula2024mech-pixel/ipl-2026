@@ -890,7 +890,7 @@ export default function RegistrationModal({ isOpen, onClose }) {
             )}
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleClose}
               className="rounded-full p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
               aria-label="Close modal"
             >
@@ -934,6 +934,7 @@ export default function RegistrationModal({ isOpen, onClose }) {
                     readOnly={isNewIdeaMode}
                     disabled={isNewIdeaMode}
                     placeholder="e.g. Innovators 2026"
+                    autoComplete="organization"
                     className={`mt-1 w-full rounded-xl border px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
                       isNewIdeaMode
                         ? 'bg-slate-100 border-slate-200 cursor-not-allowed text-slate-500'
@@ -1001,6 +1002,7 @@ export default function RegistrationModal({ isOpen, onClose }) {
                       readOnly={isNewIdeaMode}
                       disabled={isNewIdeaMode}
                       placeholder="Full Name"
+                      autoComplete="name"
                       className={`mt-1 w-full rounded-xl border px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
                         isNewIdeaMode
                           ? 'bg-slate-100 border-slate-200 cursor-not-allowed text-slate-500'
@@ -1028,6 +1030,7 @@ export default function RegistrationModal({ isOpen, onClose }) {
                       readOnly={isNewIdeaMode}
                       disabled={isNewIdeaMode}
                       placeholder="name@sece.ac.in"
+                      autoComplete="email"
                       className={`mt-1 w-full rounded-xl border px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
                         isNewIdeaMode
                           ? 'bg-slate-100 border-slate-200 cursor-not-allowed text-slate-500'
@@ -1057,6 +1060,7 @@ export default function RegistrationModal({ isOpen, onClose }) {
                       readOnly={isNewIdeaMode}
                       disabled={isNewIdeaMode}
                       placeholder="10-digit Indian Mobile No"
+                      autoComplete="tel"
                       className={`mt-1 w-full rounded-xl border px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
                         isNewIdeaMode
                           ? 'bg-slate-100 border-slate-200 cursor-not-allowed text-slate-500'
@@ -1131,6 +1135,7 @@ export default function RegistrationModal({ isOpen, onClose }) {
                       readOnly={isNewIdeaMode}
                       disabled={isNewIdeaMode}
                       placeholder="Full Name"
+                      autoComplete="name"
                       className={`mt-1 w-full rounded-xl border px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
                         isNewIdeaMode
                           ? 'bg-slate-100 border-slate-200 cursor-not-allowed text-slate-500'
@@ -1158,6 +1163,7 @@ export default function RegistrationModal({ isOpen, onClose }) {
                       readOnly={isNewIdeaMode}
                       disabled={isNewIdeaMode}
                       placeholder="name@sece.ac.in"
+                      autoComplete="email"
                       className={`mt-1 w-full rounded-xl border px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
                         isNewIdeaMode
                           ? 'bg-slate-100 border-slate-200 cursor-not-allowed text-slate-500'
@@ -1187,6 +1193,7 @@ export default function RegistrationModal({ isOpen, onClose }) {
                       readOnly={isNewIdeaMode}
                       disabled={isNewIdeaMode}
                       placeholder="10-digit Indian Mobile No"
+                      autoComplete="tel"
                       className={`mt-1 w-full rounded-xl border px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
                         isNewIdeaMode
                           ? 'bg-slate-100 border-slate-200 cursor-not-allowed text-slate-500'
@@ -1253,6 +1260,7 @@ export default function RegistrationModal({ isOpen, onClose }) {
                       readOnly={isNewIdeaMode}
                       disabled={isNewIdeaMode}
                       placeholder="Full Name"
+                      autoComplete="name"
                       className={`mt-1 w-full rounded-xl border px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
                         isNewIdeaMode
                           ? 'bg-slate-100 border-slate-200 cursor-not-allowed text-slate-500'
@@ -1280,6 +1288,7 @@ export default function RegistrationModal({ isOpen, onClose }) {
                       readOnly={isNewIdeaMode}
                       disabled={isNewIdeaMode}
                       placeholder="name@sece.ac.in"
+                      autoComplete="email"
                       className={`mt-1 w-full rounded-xl border px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
                         isNewIdeaMode
                           ? 'bg-slate-100 border-slate-200 cursor-not-allowed text-slate-500'
@@ -1309,6 +1318,7 @@ export default function RegistrationModal({ isOpen, onClose }) {
                       readOnly={isNewIdeaMode}
                       disabled={isNewIdeaMode}
                       placeholder="10-digit Indian Mobile No"
+                      autoComplete="tel"
                       className={`mt-1 w-full rounded-xl border px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
                         isNewIdeaMode
                           ? 'bg-slate-100 border-slate-200 cursor-not-allowed text-slate-500'
@@ -1380,6 +1390,7 @@ export default function RegistrationModal({ isOpen, onClose }) {
                     readOnly={isNewIdeaMode}
                     disabled={isNewIdeaMode}
                     placeholder="Dr. / Prof. Full Name"
+                    autoComplete="name"
                     className={`mt-1 w-full rounded-xl border px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
                       isNewIdeaMode
                         ? 'bg-slate-100 border-slate-200 cursor-not-allowed text-slate-500'
