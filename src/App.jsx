@@ -121,6 +121,7 @@ export default function App() {
     const getActiveConfig = () => {
       if (!regTimer) return null
 
+      // 1. If Registration is running or paused
       if (regTimer.timer_status === 'running' || regTimer.timer_status === 'paused') {
         return {
           label: 'Registration Open',
@@ -132,6 +133,7 @@ export default function App() {
         }
       }
 
+      // 2. Find a running or paused phase
       const activePhase = dbPhases.find(p => p.timer_status === 'running' || p.timer_status === 'paused')
       if (activePhase) {
         return {
@@ -144,6 +146,7 @@ export default function App() {
         }
       }
 
+      // 3. Find next upcoming phase or registration
       if (regTimer.timer_status === 'upcoming') {
         return {
           label: 'Registration',
@@ -155,15 +158,55 @@ export default function App() {
         }
       }
 
-      return null
+      const upcomingPhase = dbPhases.find(p => p.timer_status === 'upcoming')
+      if (upcomingPhase) {
+        return {
+          label: upcomingPhase.name,
+          status: upcomingPhase.timer_status,
+          paused: false,
+          remaining_seconds: null,
+          scheduled_start_at: upcomingPhase.scheduled_start_at,
+          scheduled_end_at: upcomingPhase.scheduled_end_at
+        }
+      }
+
+      // 4. Closed/completed - fallback to the registration timer dates, or the last phase's dates
+      if (regTimer.scheduled_start_at && regTimer.scheduled_end_at) {
+        return {
+          label: 'Registration Closed',
+          status: 'closed',
+          paused: false,
+          remaining_seconds: 0,
+          scheduled_start_at: regTimer.scheduled_start_at,
+          scheduled_end_at: regTimer.scheduled_end_at
+        }
+      }
+
+      const lastPhase = dbPhases[dbPhases.length - 1]
+      if (lastPhase) {
+        return {
+          label: 'Registration Closed',
+          status: 'closed',
+          paused: false,
+          remaining_seconds: 0,
+          scheduled_start_at: lastPhase.scheduled_start_at,
+          scheduled_end_at: lastPhase.scheduled_end_at
+        }
+      }
+
+      return {
+        label: 'Registration Closed',
+        status: 'closed',
+        paused: false,
+        remaining_seconds: 0,
+        scheduled_start_at: null,
+        scheduled_end_at: null
+      }
     }
 
     const timer = setInterval(() => {
       const config = getActiveConfig()
-      if (!config) {
-        setTimeLeft(prev => ({ ...prev, status: 'closed', label: 'Registration Closed' }))
-        return
-      }
+      if (!config) return
 
       let diff = 0
       const currentServerTime = Date.now() + serverOffset
@@ -201,7 +244,9 @@ export default function App() {
         seconds,
         label: config.label,
         status: config.status,
-        paused: config.paused
+        paused: config.paused,
+        scheduled_start_at: config.scheduled_start_at,
+        scheduled_end_at: config.scheduled_end_at
       })
     }, 1000)
 

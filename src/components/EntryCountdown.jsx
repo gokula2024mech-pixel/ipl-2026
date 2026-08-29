@@ -97,12 +97,31 @@ function OdometerBlock({ value, label }) {
         <OdometerDigit value={d1} />
         <OdometerDigit value={d2} />
       </div>
-      <span className="text-[9px] md:text-xs font-mono font-bold text-slate-400 tracking-wider uppercase mt-1 md:mt-2">
+      <span className="text-[9px] md:text-xs font-sans font-bold text-slate-400 tracking-wider uppercase mt-1 md:mt-2">
         {label}
       </span>
     </div>
   );
 }
+
+const formatDateTime = (dateStr) => {
+  if (!dateStr) return "";
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return "";
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const pad = (n) => String(n).padStart(2, "0");
+
+  const day = d.getDate();
+  const month = months[d.getMonth()];
+  const year = d.getFullYear();
+  let hours = d.getHours();
+  const minutes = pad(d.getMinutes());
+  const ampm = hours >= 12 ? "PM" : "AM";
+  hours = hours % 12;
+  hours = hours ? hours : 12;
+
+  return `${day} ${month} ${year}, ${hours}:${minutes} ${ampm}`;
+};
 
 export default function EntryCountdown({ onEnter, serverOffset }) {
   const [regTimer, setRegTimer] = useState(null);
@@ -223,12 +242,49 @@ export default function EntryCountdown({ onEnter, serverOffset }) {
         };
       }
 
-      // 4. Default: fallback/closed
+      const upcomingPhase = dbPhases.find((p) => p.timer_status === "upcoming");
+      if (upcomingPhase) {
+        return {
+          label: upcomingPhase.name,
+          status: upcomingPhase.timer_status,
+          paused: false,
+          remaining_seconds: null,
+          scheduled_start_at: upcomingPhase.scheduled_start_at,
+          scheduled_end_at: upcomingPhase.scheduled_end_at,
+        };
+      }
+
+      // 4. Closed/completed - fallback to the registration timer dates, or the last phase's dates
+      if (regTimer.scheduled_start_at && regTimer.scheduled_end_at) {
+        return {
+          label: "REGISTRATION CLOSED",
+          status: "closed",
+          paused: false,
+          remaining_seconds: 0,
+          scheduled_start_at: regTimer.scheduled_start_at,
+          scheduled_end_at: regTimer.scheduled_end_at,
+        };
+      }
+
+      const lastPhase = dbPhases[dbPhases.length - 1];
+      if (lastPhase) {
+        return {
+          label: "REGISTRATION CLOSED",
+          status: "closed",
+          paused: false,
+          remaining_seconds: 0,
+          scheduled_start_at: lastPhase.scheduled_start_at,
+          scheduled_end_at: lastPhase.scheduled_end_at,
+        };
+      }
+
       return {
         label: "REGISTRATION CLOSED",
         status: "closed",
         paused: false,
         remaining_seconds: 0,
+        scheduled_start_at: null,
+        scheduled_end_at: null,
       };
     };
 
@@ -273,6 +329,8 @@ export default function EntryCountdown({ onEnter, serverOffset }) {
         label: config.label,
         status: config.status,
         paused: config.paused,
+        scheduled_start_at: config.scheduled_start_at,
+        scheduled_end_at: config.scheduled_end_at,
       });
     }, 1000);
 
@@ -346,7 +404,7 @@ export default function EntryCountdown({ onEnter, serverOffset }) {
           <h1 className="font-heading text-4xl md:text-5xl font-black tracking-widest text-white leading-none uppercase">
             IPL <span className="text-[#F59E0B]">2026</span>
           </h1>
-          <p className="text-[10px] md:text-xs font-mono font-bold tracking-[0.3em] text-slate-400 uppercase mt-2">
+          <p className="text-[10px] md:text-xs font-sans font-bold tracking-[0.3em] text-slate-400 uppercase mt-2">
             Innovative Product League
           </p>
         </div>
@@ -507,7 +565,7 @@ export default function EntryCountdown({ onEnter, serverOffset }) {
                 x="250"
                 y="45"
                 textAnchor="middle"
-                className="fill-slate-400 font-mono text-[9px] font-bold"
+                className="fill-slate-400 font-sans text-[9px] font-bold"
               >
                 0° (NORTH)
               </text>
@@ -515,7 +573,7 @@ export default function EntryCountdown({ onEnter, serverOffset }) {
                 x="460"
                 y="254"
                 textAnchor="start"
-                className="fill-slate-400 font-mono text-[9px] font-bold"
+                className="fill-slate-400 font-sans text-[9px] font-bold"
               >
                 90°
               </text>
@@ -523,7 +581,7 @@ export default function EntryCountdown({ onEnter, serverOffset }) {
                 x="250"
                 y="465"
                 textAnchor="middle"
-                className="fill-slate-400 font-mono text-[9px] font-bold"
+                className="fill-slate-400 font-sans text-[9px] font-bold"
               >
                 180°
               </text>
@@ -531,7 +589,7 @@ export default function EntryCountdown({ onEnter, serverOffset }) {
                 x="40"
                 y="254"
                 textAnchor="end"
-                className="fill-slate-400 font-mono text-[9px] font-bold"
+                className="fill-slate-400 font-sans text-[9px] font-bold"
               >
                 270°
               </text>
@@ -540,28 +598,28 @@ export default function EntryCountdown({ onEnter, serverOffset }) {
               <text
                 x="280"
                 y="112"
-                className="fill-slate-400/50 font-mono text-[8px] font-medium"
+                className="fill-slate-400/50 font-sans text-[8px] font-medium"
               >
                 R = 140
               </text>
               <text
                 x="120"
                 y="288"
-                className="fill-slate-400/50 font-mono text-[8px] font-medium"
+                className="fill-slate-400/50 font-sans text-[8px] font-medium"
               >
                 θ = 45°
               </text>
               <text
                 x="280"
                 y="288"
-                className="fill-slate-400/50 font-mono text-[8px] font-medium"
+                className="fill-slate-400/50 font-sans text-[8px] font-medium"
               >
                 DRWG: IPL-V1
               </text>
               <text
                 x="120"
                 y="112"
-                className="fill-slate-400/50 font-mono text-[8px] font-medium"
+                className="fill-slate-400/50 font-sans text-[8px] font-medium"
               >
                 SYS: ONLINE
               </text>
@@ -623,21 +681,48 @@ export default function EntryCountdown({ onEnter, serverOffset }) {
         <div className="flex flex-col items-center gap-4 z-10 select-none">
           {/* STATE INDICATOR CHASSIS */}
           {timeLeft.status !== "loading" && (
-            <div className="inline-flex items-center gap-2 border border-white/10 bg-[#0f1b2a]/60 px-4 py-1.5 rounded text-[10px] font-mono font-bold tracking-widest text-slate-300 uppercase mb-1">
+            <div className="inline-flex items-center gap-2 border border-white/10 bg-[#0f1b2a]/60 px-4 py-1.5 rounded text-[10px] font-sans font-bold tracking-widest text-slate-300 uppercase mb-1">
               <span
                 className={`w-2 h-2 rounded-full ${
                   timeLeft.status === "paused"
                     ? "bg-[#F59E0B]"
                     : timeLeft.status === "closed"
                       ? "bg-red-600"
-                      : "bg-green-500 animate-pulse"
+                      : timeLeft.status === "upcoming"
+                        ? "bg-[#F59E0B]"
+                        : "bg-green-500 animate-pulse"
                 }`}
               />
               {timeLeft.status === "paused"
                 ? "● REGISTRATION PAUSED"
                 : timeLeft.status === "closed"
                   ? "● REGISTRATION CLOSED"
-                  : "● REGISTRATION OPEN"}
+                  : timeLeft.status === "upcoming"
+                    ? "● REGISTRATION UPCOMING"
+                    : "● REGISTRATION OPEN"}
+            </div>
+          )}
+
+          {/* DATES PANEL */}
+          {timeLeft.status !== "loading" && timeLeft.scheduled_start_at && timeLeft.scheduled_end_at && (
+            <div className="text-center font-sans mt-1 mb-2">
+              {timeLeft.status === 'upcoming' ? (
+                <div className="flex flex-col items-center gap-1">
+                  <span className="text-[9px] font-extrabold tracking-widest text-[#F59E0B] uppercase">STARTS</span>
+                  <span className="text-sm font-bold text-slate-200">{formatDateTime(timeLeft.scheduled_start_at)}</span>
+                  <span className="text-[9px] font-extrabold tracking-widest text-[#F59E0B] uppercase mt-1">ENDS</span>
+                  <span className="text-sm font-bold text-slate-200">{formatDateTime(timeLeft.scheduled_end_at)}</span>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center gap-1">
+                  <span className="text-[9px] font-extrabold tracking-widest text-slate-400 uppercase">TIMELINE</span>
+                  <div className="flex items-center gap-2 text-xs md:text-sm font-bold text-slate-200">
+                    <span>{formatDateTime(timeLeft.scheduled_start_at)}</span>
+                    <span className="text-[#F59E0B]">→</span>
+                    <span>{formatDateTime(timeLeft.scheduled_end_at)}</span>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -645,7 +730,7 @@ export default function EntryCountdown({ onEnter, serverOffset }) {
           <button
             type="button"
             onClick={onEnter}
-            className="w-full max-w-sm flex items-center justify-center gap-2 rounded border-2 border-[#F59E0B] bg-[#0b1e36]/80 text-[#F59E0B] hover:bg-[#F59E0B] hover:text-[#0b1e36] px-8 py-3.5 text-xs font-bold font-mono tracking-[0.2em] uppercase cursor-pointer select-none relative shadow-md transition-all duration-200 transform hover:-translate-y-0.5 active:translate-y-0 active:scale-98"
+            className="w-full max-w-sm flex items-center justify-center gap-2 rounded border-2 border-[#F59E0B] bg-[#0b1e36]/80 text-[#F59E0B] hover:bg-[#F59E0B] hover:text-[#0b1e36] px-8 py-3.5 text-xs font-bold font-sans tracking-[0.2em] uppercase cursor-pointer select-none relative shadow-md transition-all duration-200 transform hover:-translate-y-0.5 active:translate-y-0 active:scale-98"
           >
             {/* Rivets on corners */}
             <div className="absolute top-1 left-1.5 w-1.5 h-1.5 rounded-full bg-slate-400 shadow-sm" />
@@ -659,7 +744,7 @@ export default function EntryCountdown({ onEnter, serverOffset }) {
           <button
             type="button"
             onClick={handleScrollDown}
-            className="flex flex-col items-center gap-1.5 text-[9px] md:text-[10px] font-mono tracking-[0.25em] text-slate-400 hover:text-white transition-colors cursor-pointer mt-4"
+            className="flex flex-col items-center gap-1.5 text-[9px] md:text-[10px] font-sans tracking-[0.25em] text-slate-400 hover:text-white transition-colors cursor-pointer mt-4"
           >
             <span>SCROLL TO EXPLORE</span>
             <span className="animate-bounce mt-1 text-[#F59E0B]">↓</span>
@@ -673,7 +758,7 @@ export default function EntryCountdown({ onEnter, serverOffset }) {
         className="relative min-h-screen flex flex-col justify-center py-20 px-6 md:px-12 max-w-5xl mx-auto border-t border-white/5 z-10"
       >
         <div className="text-left w-full mt-10">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded bg-[#0f1b2a]/65 border border-white/10 text-slate-200 text-[10px] font-mono font-bold tracking-widest uppercase mb-4">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded bg-[#0f1b2a]/65 border border-white/10 text-slate-200 text-[10px] font-sans font-bold tracking-widest uppercase mb-4">
             ⚙ OVERVIEW
           </div>
           <h2 className="font-heading text-3xl md:text-4xl font-extrabold text-white tracking-wider uppercase">
@@ -731,7 +816,7 @@ export default function EntryCountdown({ onEnter, serverOffset }) {
               <div className="absolute bottom-1.5 right-1.5 w-1 h-1 rounded-full bg-slate-500/50" />
 
               <div>
-                <span className="block font-mono text-3xl font-black text-[#F59E0B] mb-4">
+                <span className="block font-heading text-3xl font-black text-[#F59E0B] mb-4">
                   {card.num}
                 </span>
                 <h3 className="font-heading text-sm font-bold text-white uppercase tracking-wider mb-2">

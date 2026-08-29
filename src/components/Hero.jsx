@@ -11,16 +11,60 @@ const STATS = [
   '10+ Innovation Domains',
 ]
 
-const formatDateRange = (startStr, endStr) => {
-  if (!startStr || !endStr) return ''
-  const start = new Date(startStr)
-  const end = new Date(endStr)
-  if (isNaN(start.getTime()) || isNaN(end.getTime())) return ''
-
+const formatDateTime = (dateStr) => {
+  if (!dateStr) return ''
+  const d = new Date(dateStr)
+  if (isNaN(d.getTime())) return ''
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-  const format = (d) => `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`
+  const pad = (n) => String(n).padStart(2, '0')
 
-  return `${format(start)} → ${format(end)}`
+  const day = d.getDate()
+  const month = months[d.getMonth()]
+  const year = d.getFullYear()
+  let hours = d.getHours()
+  const minutes = pad(d.getMinutes())
+  const ampm = hours >= 12 ? 'PM' : 'AM'
+  hours = hours % 12
+  hours = hours ? hours : 12
+
+  return `${day} ${month} ${year}, ${hours}:${minutes} ${ampm}`
+}
+
+const renderHeroDates = (timeLeft) => {
+  const startStr = timeLeft.scheduled_start_at
+  const endStr = timeLeft.scheduled_end_at
+  if (!startStr || !endStr) return 'No configured dates'
+
+  const startFormatted = formatDateTime(startStr)
+  const endFormatted = formatDateTime(endStr)
+  if (!startFormatted || !endFormatted) return 'No configured dates'
+
+  if (timeLeft.status === 'upcoming') {
+    return (
+      <div className="flex flex-col gap-1 w-full text-slate-500 font-sans">
+        <div className="flex justify-between items-center text-[10px]">
+          <span className="text-[9px] tracking-wider text-amber-500 font-black uppercase">STARTS</span>
+          <span className="font-bold">{startFormatted}</span>
+        </div>
+        <div className="flex justify-between items-center text-[10px]">
+          <span className="text-[9px] tracking-wider text-amber-500 font-black uppercase">ENDS</span>
+          <span className="font-bold">{endFormatted}</span>
+        </div>
+      </div>
+    )
+  }
+
+  // Active / Paused / Closed
+  return (
+    <div className="flex flex-col gap-0.5 w-full text-slate-500 font-sans">
+      <div className="text-[9px] tracking-wider text-slate-400 font-black uppercase">TIMELINE</div>
+      <div className="flex items-center gap-1.5 text-[11px] font-bold">
+        <span>{startFormatted}</span>
+        <span className="text-amber-500">→</span>
+        <span>{endFormatted}</span>
+      </div>
+    </div>
+  )
 }
 
 // Embedded Floating Timer Component
@@ -33,8 +77,9 @@ function HeroTimer({ timeLeft: propTimeLeft }) {
     minutes: 0,
     seconds: 0,
     label: 'Registration',
-    dates: '',
-    status: 'upcoming'
+    status: 'upcoming',
+    scheduled_start_at: null,
+    scheduled_end_at: null
   })
 
   const timeLeft = propTimeLeft || localTimeLeft
@@ -171,8 +216,7 @@ function HeroTimer({ timeLeft: propTimeLeft }) {
           paused: regTimer.is_timer_paused,
           remaining_seconds: regTimer.remaining_seconds,
           scheduled_start_at: regTimer.scheduled_start_at,
-          scheduled_end_at: regTimer.scheduled_end_at,
-          dates: formatDateRange(regTimer.scheduled_start_at, regTimer.scheduled_end_at)
+          scheduled_end_at: regTimer.scheduled_end_at
         }
       }
 
@@ -185,8 +229,7 @@ function HeroTimer({ timeLeft: propTimeLeft }) {
           paused: activePhase.is_timer_paused,
           remaining_seconds: activePhase.remaining_seconds,
           scheduled_start_at: activePhase.scheduled_start_at,
-          scheduled_end_at: activePhase.scheduled_end_at,
-          dates: formatDateRange(activePhase.scheduled_start_at, activePhase.scheduled_end_at)
+          scheduled_end_at: activePhase.scheduled_end_at
         }
       }
 
@@ -198,8 +241,7 @@ function HeroTimer({ timeLeft: propTimeLeft }) {
           paused: false,
           remaining_seconds: null,
           scheduled_start_at: regTimer.scheduled_start_at,
-          scheduled_end_at: regTimer.scheduled_end_at,
-          dates: formatDateRange(regTimer.scheduled_start_at, regTimer.scheduled_end_at)
+          scheduled_end_at: regTimer.scheduled_end_at
         }
       }
 
@@ -211,26 +253,42 @@ function HeroTimer({ timeLeft: propTimeLeft }) {
           paused: false,
           remaining_seconds: null,
           scheduled_start_at: upcomingPhase.scheduled_start_at,
-          scheduled_end_at: upcomingPhase.scheduled_end_at,
-          dates: formatDateRange(upcomingPhase.scheduled_start_at, upcomingPhase.scheduled_end_at)
+          scheduled_end_at: upcomingPhase.scheduled_end_at
         }
       }
 
-      // 4. Fallback: show last phase details
+      // 4. Closed/completed - fallback to the registration timer dates, or the last phase's dates
+      if (regTimer.scheduled_start_at && regTimer.scheduled_end_at) {
+        return {
+          label: 'Registration Closed',
+          status: 'closed',
+          paused: false,
+          remaining_seconds: 0,
+          scheduled_start_at: regTimer.scheduled_start_at,
+          scheduled_end_at: regTimer.scheduled_end_at
+        }
+      }
+
       const lastPhase = dbPhases[dbPhases.length - 1]
       if (lastPhase) {
         return {
-          label: lastPhase.name,
-          status: lastPhase.timer_status,
+          label: 'Registration Closed',
+          status: 'closed',
           paused: false,
           remaining_seconds: 0,
           scheduled_start_at: lastPhase.scheduled_start_at,
-          scheduled_end_at: lastPhase.scheduled_end_at,
-          dates: formatDateRange(lastPhase.scheduled_start_at, lastPhase.scheduled_end_at)
+          scheduled_end_at: lastPhase.scheduled_end_at
         }
       }
 
-      return null
+      return {
+        label: 'Registration Closed',
+        status: 'closed',
+        paused: false,
+        remaining_seconds: 0,
+        scheduled_start_at: null,
+        scheduled_end_at: null
+      }
     }
 
     const timer = setInterval(() => {
@@ -272,8 +330,9 @@ function HeroTimer({ timeLeft: propTimeLeft }) {
         minutes,
         seconds,
         label: config.label,
-        dates: config.dates,
-        status: config.status
+        status: config.status,
+        scheduled_start_at: config.scheduled_start_at,
+        scheduled_end_at: config.scheduled_end_at
       })
 
       if (needsRefresh) {
@@ -330,8 +389,8 @@ function HeroTimer({ timeLeft: propTimeLeft }) {
       </div>
 
       {/* Date Range */}
-      <div className="text-[11px] font-bold text-slate-400 leading-none pointer-events-none">
-        {timeLeft.dates || 'No configured dates'}
+      <div className="text-[11px] font-bold text-slate-400 leading-normal pointer-events-none w-full">
+        {renderHeroDates(timeLeft)}
       </div>
 
       {/* Countdown Grid (Integer Blocks) */}

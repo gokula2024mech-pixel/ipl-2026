@@ -213,20 +213,6 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
       return '';
     }
   });
-  const [filterStatus, setFilterStatus] = useState(() => {
-    try {
-      return localStorage.getItem('admin_filter_status') || '';
-    } catch (e) {
-      return '';
-    }
-  });
-  const [filterProductNumber, setFilterProductNumber] = useState(() => {
-    try {
-      return localStorage.getItem('admin_filter_prod_num') || '';
-    } catch (e) {
-      return '';
-    }
-  });
 
   // Persist State Changes
   useEffect(() => {
@@ -264,18 +250,6 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
       localStorage.setItem('admin_filter_trl', filterTrl);
     } catch (e) {}
   }, [filterTrl]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('admin_filter_status', filterStatus);
-    } catch (e) {}
-  }, [filterStatus]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('admin_filter_prod_num', filterProductNumber);
-    } catch (e) {}
-  }, [filterProductNumber]);
 
   // Persist Scroll Position
   useEffect(() => {
@@ -1744,16 +1718,6 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
       return false;
     }
 
-    // 5. Status Filter
-    if (filterStatus && r.status !== filterStatus) {
-      return false;
-    }
-
-    // 6. Product Number Filter
-    if (filterProductNumber && String(r.product_number) !== String(filterProductNumber)) {
-      return false;
-    }
-
     return true;
   });
 
@@ -2641,35 +2605,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
                         </select>
                       </div>
 
-                      <div className="flex flex-col grow min-w-[90px] max-w-[150px]">
-                        <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Product No</label>
-                        <select
-                          value={filterProductNumber}
-                          onChange={(e) => { setFilterProductNumber(e.target.value); setCurrentPage(1); }}
-                          className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs outline-none focus:border-primary text-slate-700 font-medium"
-                        >
-                          <option value="">All Prods</option>
-                          {Array.from(new Set(registrations.map(r => r.product_number).filter(n => n !== undefined))).sort((a,b)=>a-b).map(num => (
-                            <option key={num} value={String(num)}>Product {num}</option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div className="flex flex-col grow min-w-[90px] max-w-[150px]">
-                        <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Status</label>
-                        <select
-                          value={filterStatus}
-                          onChange={(e) => { setFilterStatus(e.target.value); setCurrentPage(1); }}
-                          className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs outline-none focus:border-primary text-slate-700 font-medium"
-                        >
-                          <option value="">All Statuses</option>
-                          {Array.from(new Set(registrations.map(r => r.status).filter(Boolean))).sort().map(status => (
-                            <option key={status} value={status}>{status}</option>
-                          ))}
-                        </select>
-                      </div>
-
-                      {(filterDepartment || filterDomain || filterTrl || filterProductNumber || filterStatus || teamsSearch) && (
+                      {(filterDepartment || filterDomain || filterTrl || teamsSearch) && (
                         <div className="flex items-end col-span-2 sm:col-span-1">
                           <button
                             type="button"
@@ -2677,8 +2613,6 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
                               setFilterDepartment("");
                               setFilterDomain("");
                               setFilterTrl("");
-                              setFilterProductNumber("");
-                              setFilterStatus("");
                               setTeamsSearch("");
                               setCurrentPage(1);
                             }}
