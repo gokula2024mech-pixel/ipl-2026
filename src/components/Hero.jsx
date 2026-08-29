@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
-import { ArrowRight, Sparkles } from 'lucide-react'
+import { ArrowRight, Sparkles, X } from 'lucide-react'
 import { TAGLINE, SUB_TAGLINE, REGISTRATION_FORM_URL } from '../data/content'
 import { supabase } from '../supabaseClient'
 
@@ -69,6 +69,7 @@ const renderHeroDates = (timeLeft) => {
 
 // Embedded Floating Timer Component
 function HeroTimer({ timeLeft: propTimeLeft }) {
+  const [isTimerVisible, setIsTimerVisible] = useState(true)
   const [dbPhases, setDbPhases] = useState([])
   const [regTimer, setRegTimer] = useState(null)
   const [localTimeLeft, setLocalTimeLeft] = useState({
@@ -153,8 +154,8 @@ function HeroTimer({ timeLeft: propTimeLeft }) {
     let newTop = e.clientY - cursorOffsetRef.current.y
 
     // Constrain position to completely keep card within the viewport bounds
-    newLeft = Math.max(0, Math.min(newLeft, viewportWidth - rect.width))
-    newTop = Math.max(0, Math.min(newTop, viewportHeight - rect.height))
+    newLeft = Math.max(0, Math.min(newLeft, Math.max(0, viewportWidth - rect.width)))
+    newTop = Math.max(0, Math.min(newTop, Math.max(0, viewportHeight - rect.height)))
 
     setDragPosition({
       left: newLeft,
@@ -171,10 +172,20 @@ function HeroTimer({ timeLeft: propTimeLeft }) {
     }
   }
 
-  // Reset custom position on resize so card snaps back to default layout position
+  // Clamp position on resize so card stays within the visible viewport bounds
   useEffect(() => {
     const handleResize = () => {
-      setDragPosition(null)
+      setDragPosition((prev) => {
+        if (!prev) return null
+        const card = dragRef.current
+        if (!card) return prev
+        const rect = card.getBoundingClientRect()
+        const viewportWidth = window.innerWidth
+        const viewportHeight = window.innerHeight
+        const newLeft = Math.max(0, Math.min(prev.left, Math.max(0, viewportWidth - rect.width)))
+        const newTop = Math.max(0, Math.min(prev.top, Math.max(0, viewportHeight - rect.height)))
+        return { left: newLeft, top: newTop }
+      })
     }
     window.addEventListener('resize', handleResize)
     return () => window.removeEventListener('resize', handleResize)
@@ -359,6 +370,8 @@ function HeroTimer({ timeLeft: propTimeLeft }) {
         transform: 'rotate(-2deg)'
       }
 
+  if (!isTimerVisible) return null
+
   return (
     <div
       ref={dragRef}
@@ -366,16 +379,25 @@ function HeroTimer({ timeLeft: propTimeLeft }) {
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       style={dragStyle}
-      className={`w-full max-w-[320px] bg-white rounded-2xl border border-slate-200/80 border-t-4 border-t-accent p-5 shadow-xl flex flex-col gap-4 text-left select-none shrink-0 ${
+      className={`w-[calc(100%-24px)] max-w-[320px] bg-white rounded-2xl border border-slate-200/80 border-t-4 border-t-accent p-4 sm:p-5 shadow-xl flex flex-col gap-4 text-left select-none shrink-0 ${
         isDragging ? 'cursor-grabbing' : 'cursor-grab'
       } ${
         !dragPosition
-          ? 'absolute bottom-6 left-1/2 -translate-x-1/2 top-auto right-auto lg:top-28 lg:right-16 lg:bottom-auto lg:left-auto lg:translate-x-0 z-30'
-          : ''
+          ? 'fixed bottom-6 left-1/2 -translate-x-1/2 md:top-28 md:right-16 md:bottom-auto md:left-auto md:translate-x-0 z-50'
+          : 'fixed z-50'
       }`}
     >
+      <button
+        type="button"
+        onClick={() => setIsTimerVisible(false)}
+        aria-label="Close timer"
+        className="absolute top-2 right-2 flex h-8 w-8 items-center justify-center rounded-full bg-slate-50 border border-slate-200/60 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-all focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-1 z-50 cursor-pointer"
+      >
+        <X size={14} />
+      </button>
+
       {/* Status Indicators & Title */}
-      <div className="flex items-center justify-between pointer-events-none">
+      <div className="flex items-center justify-between pointer-events-none pr-8">
         <div className="flex items-center gap-1.5 min-w-0">
           <span className={`h-2.5 w-2.5 rounded-full shrink-0 ${
             timeLeft.status === 'running' ? 'bg-green-500 animate-pulse' :
@@ -394,30 +416,30 @@ function HeroTimer({ timeLeft: propTimeLeft }) {
       </div>
 
       {/* Countdown Grid (Integer Blocks) */}
-      <div className="grid grid-cols-4 gap-2 text-center pointer-events-none">
-        <div className="bg-slate-50 rounded-lg p-2 border border-slate-100/80">
-          <span className="font-mono text-xl font-black text-slate-900 leading-none">
+      <div className="grid grid-cols-4 gap-2 text-center pointer-events-none w-full">
+        <div className="bg-slate-50 rounded-lg p-2 border border-slate-100/80 min-w-0">
+          <span className="font-mono text-lg sm:text-xl font-black text-slate-900 leading-none break-words block">
             {String(timeLeft.days).padStart(2, '0')}
           </span>
-          <span className="block text-[8px] font-extrabold text-slate-400 tracking-wider mt-1">DAYS</span>
+          <span className="block text-[8px] font-extrabold text-slate-400 tracking-wider mt-1 truncate">DAYS</span>
         </div>
-        <div className="bg-slate-50 rounded-lg p-2 border border-slate-100/80">
-          <span className="font-mono text-xl font-black text-slate-900 leading-none">
+        <div className="bg-slate-50 rounded-lg p-2 border border-slate-100/80 min-w-0">
+          <span className="font-mono text-lg sm:text-xl font-black text-slate-900 leading-none break-words block">
             {String(timeLeft.hours).padStart(2, '0')}
           </span>
-          <span className="block text-[8px] font-extrabold text-slate-400 tracking-wider mt-1">HOURS</span>
+          <span className="block text-[8px] font-extrabold text-slate-400 tracking-wider mt-1 truncate">HOURS</span>
         </div>
-        <div className="bg-slate-50 rounded-lg p-2 border border-slate-100/80">
-          <span className="font-mono text-xl font-black text-slate-900 leading-none">
+        <div className="bg-slate-50 rounded-lg p-2 border border-slate-100/80 min-w-0">
+          <span className="font-mono text-lg sm:text-xl font-black text-slate-900 leading-none break-words block">
             {String(timeLeft.minutes).padStart(2, '0')}
           </span>
-          <span className="block text-[8px] font-extrabold text-slate-400 tracking-wider mt-1">MINS</span>
+          <span className="block text-[8px] font-extrabold text-slate-400 tracking-wider mt-1 truncate">MINS</span>
         </div>
-        <div className="bg-slate-50 rounded-lg p-2 border border-slate-100/80">
-          <span className="font-mono text-xl font-black text-slate-900 leading-none">
+        <div className="bg-slate-50 rounded-lg p-2 border border-slate-100/80 min-w-0">
+          <span className="font-mono text-lg sm:text-xl font-black text-slate-900 leading-none break-words block">
             {String(timeLeft.seconds).padStart(2, '0')}
           </span>
-          <span className="block text-[8px] font-extrabold text-slate-400 tracking-wider mt-1">SECS</span>
+          <span className="block text-[8px] font-extrabold text-slate-400 tracking-wider mt-1 truncate">SECS</span>
         </div>
       </div>
     </div>
@@ -472,46 +494,58 @@ export default function Hero({ onRegisterClick, timeLeft }) {
           initial={{ opacity: 0, y: 40 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
-          className="flex flex-col items-center"
+          className="flex flex-col items-center w-full"
         >
+          {/* Mobile IPL Logo */}
+          <img
+            src="/logo.png"
+            alt="IPL Logo"
+            className="h-16 w-auto mb-6 block md:hidden object-contain max-w-full"
+          />
+
           <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-4 py-1.5 text-sm text-blue-100 backdrop-blur-sm">
             <Sparkles size={16} className="text-accent" aria-hidden="true" />
             <span>Innovation Program 2026</span>
           </div>
 
-          <h1 className="font-heading text-4xl font-bold leading-tight tracking-tight text-white md:text-5xl lg:text-6xl">
-            IPL 2026 — Innovative Product League
+          <h1 className="font-heading text-4xl font-bold leading-tight tracking-tight text-white md:text-5xl lg:text-6xl w-full max-w-full break-words px-2">
+            <span className="block text-3xl sm:text-4xl md:text-5xl lg:text-6xl">IPL 2026</span>
+            <span className="block text-2xl sm:text-3xl md:text-4xl lg:text-5xl text-blue-100 mt-2">Innovative Product League</span>
           </h1>
 
-          <p className="mt-6 text-lg font-medium text-amber-300 md:text-xl">{TAGLINE}</p>
-          <p className="mt-2 text-base text-blue-100 md:text-lg">{SUB_TAGLINE}</p>
+          <p className="mt-6 text-base sm:text-lg font-medium text-amber-300 md:text-xl px-2 max-w-full break-words leading-relaxed">
+            {TAGLINE}
+          </p>
+          <p className="mt-2 text-sm sm:text-base text-blue-100 md:text-lg px-2 max-w-full break-words leading-relaxed">
+            {SUB_TAGLINE}
+          </p>
 
-          <div className="mt-8 flex flex-wrap justify-center gap-3">
+          <div className="mt-8 flex flex-wrap justify-center gap-3 w-full px-2">
             {STATS.map((stat, i) => (
               <motion.span
                 key={stat}
                 initial={{ opacity: 0, scale: 0.9 }}
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ delay: 0.3 + i * 0.08 }}
-                className="rounded-full border border-white/20 bg-white/10 px-4 py-2 text-sm font-medium text-white backdrop-blur-sm"
+                className="rounded-full border border-white/20 bg-white/10 px-4 py-2 text-xs sm:text-sm font-medium text-white backdrop-blur-sm whitespace-normal text-center"
               >
                 {stat}
               </motion.span>
             ))}
           </div>
 
-          <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row w-full">
+          <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row w-full px-4">
             <a
               href={REGISTRATION_FORM_URL}
               onClick={handleRegister}
-              className="inline-flex items-center gap-2 rounded-full bg-accent px-8 py-3.5 text-base font-semibold text-white shadow-lg transition-all hover:-translate-y-0.5 hover:bg-amber-600 hover:shadow-xl shrink-0 cursor-pointer"
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-full bg-accent px-8 py-3.5 text-base font-semibold text-white shadow-lg transition-all hover:-translate-y-0.5 hover:bg-amber-600 hover:shadow-xl cursor-pointer"
             >
               Register Now
               <ArrowRight size={18} aria-hidden="true" />
             </a>
             <a
               href="#about"
-              className="inline-flex items-center gap-2 rounded-full border-2 border-white/30 bg-white/10 px-8 py-3.5 text-base font-semibold text-white backdrop-blur-sm transition-all hover:-translate-y-0.5 hover:border-white/50 hover:bg-white/20 shrink-0"
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-full border-2 border-white/30 bg-white/10 px-8 py-3.5 text-base font-semibold text-white backdrop-blur-sm transition-all hover:-translate-y-0.5 hover:border-white/50 hover:bg-white/20 shrink-0"
             >
               Explore the Program
             </a>

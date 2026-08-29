@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { ArrowRight } from "lucide-react";
 import { supabase } from "../supabaseClient";
 
 // Clean, modern 12-tooth mechanical gear component
@@ -56,7 +57,7 @@ function OdometerDigit({ value, animate = true }) {
   }, []);
 
   return (
-    <div className="relative h-14 w-9 md:h-20 md:w-12 bg-gradient-to-b from-[#182638] via-[#0b121c] to-[#182638] border border-white/5 rounded text-white font-mono text-3xl md:text-5xl font-extrabold shadow-inner overflow-hidden flex items-center justify-center">
+    <div className="relative h-10 w-5 xs:h-12 xs:w-7 sm:h-14 sm:w-9 md:h-20 md:w-12 bg-gradient-to-b from-[#182638] via-[#0b121c] to-[#182638] border border-white/5 rounded text-white font-mono text-xl xs:text-2xl sm:text-3xl md:text-5xl font-extrabold shadow-inner overflow-hidden flex items-center justify-center">
       <div
         className={`absolute left-0 top-0 w-full ${reducedMotion || !animate ? "" : "transition-transform duration-800 ease-out"}`}
         style={{ transform: `translateY(-${digit * 10}%)` }}
@@ -64,15 +65,15 @@ function OdometerDigit({ value, animate = true }) {
         {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => (
           <div
             key={n}
-            className="h-14 md:h-20 flex items-center justify-center select-none"
+            className="h-10 xs:h-12 sm:h-14 md:h-20 flex items-center justify-center select-none"
           >
             {n}
           </div>
         ))}
       </div>
       {/* 3D cylindrical drum shadow overlay */}
-      <div className="absolute inset-x-0 top-0 h-2 md:h-4 bg-gradient-to-b from-black/95 to-transparent pointer-events-none" />
-      <div className="absolute inset-x-0 bottom-0 h-2 md:h-4 bg-gradient-to-t from-black/95 to-transparent pointer-events-none" />
+      <div className="absolute inset-x-0 top-0 h-1.5 xs:h-2 md:h-4 bg-gradient-to-b from-black/95 to-transparent pointer-events-none" />
+      <div className="absolute inset-x-0 bottom-0 h-1.5 xs:h-2 md:h-4 bg-gradient-to-t from-black/95 to-transparent pointer-events-none" />
       {/* Center divider split */}
       <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-[1px] bg-white/5 pointer-events-none" />
     </div>
@@ -86,18 +87,18 @@ function OdometerBlock({ value, label }) {
   const d2 = paddedVal[1];
 
   return (
-    <div className="flex flex-col items-center gap-1.5 bg-[#0f1d30]/90 border border-white/10 rounded-xl p-2.5 md:p-3.5 relative shadow-2xl">
+    <div className="flex flex-col items-center gap-1 sm:gap-1.5 bg-[#0f1d30]/90 border border-white/10 rounded-xl p-1.5 xs:p-2.5 md:p-3.5 relative shadow-2xl">
       {/* Modern steel corner screws */}
-      <div className="absolute top-1 left-1.5 w-1 h-1 rounded-full bg-slate-400 shadow-sm" />
-      <div className="absolute top-1 right-1.5 w-1 h-1 rounded-full bg-slate-400 shadow-sm" />
-      <div className="absolute bottom-1 left-1.5 w-1 h-1 rounded-full bg-slate-400 shadow-sm" />
-      <div className="absolute bottom-1 right-1.5 w-1 h-1 rounded-full bg-slate-400 shadow-sm" />
+      <div className="absolute top-0.5 left-1 w-0.5 h-0.5 sm:w-1 sm:h-1 rounded-full bg-slate-400 shadow-sm" />
+      <div className="absolute top-0.5 right-1 w-0.5 h-0.5 sm:w-1 sm:h-1 rounded-full bg-slate-400 shadow-sm" />
+      <div className="absolute bottom-0.5 left-1 w-0.5 h-0.5 sm:w-1 sm:h-1 rounded-full bg-slate-400 shadow-sm" />
+      <div className="absolute bottom-0.5 right-1 w-0.5 h-0.5 sm:w-1 sm:h-1 rounded-full bg-slate-400 shadow-sm" />
 
-      <div className="flex gap-1 md:gap-1.5">
+      <div className="flex gap-0.5 sm:gap-1 md:gap-1.5">
         <OdometerDigit value={d1} />
         <OdometerDigit value={d2} />
       </div>
-      <span className="text-[9px] md:text-xs font-sans font-bold text-slate-400 tracking-wider uppercase mt-1 md:mt-2">
+      <span className="text-[7px] xs:text-[9px] md:text-xs font-sans font-bold text-slate-400 tracking-wider uppercase mt-1 md:mt-2">
         {label}
       </span>
     </div>
@@ -337,12 +338,7 @@ export default function EntryCountdown({ onEnter, serverOffset }) {
     return () => clearInterval(interval);
   }, [regTimer, dbPhases, serverOffset]);
 
-  const handleScrollDown = () => {
-    const element = document.getElementById("intro-section");
-    if (element) {
-      element.scrollIntoView({ behavior: "smooth" });
-    }
-  };
+
 
   // Pre-calculate circular dial markings
   const angles = Array.from({ length: 24 }, (_, i) => i * 15);
@@ -393,7 +389,7 @@ export default function EntryCountdown({ onEnter, serverOffset }) {
       />
 
       {/* FIRST SCREEN CONTAINER */}
-      <div className="relative min-h-screen flex flex-col justify-between p-6 md:p-8 z-10 border border-white/5 m-3 md:m-5">
+      <div className="relative min-h-screen flex flex-col justify-between p-4 xs:p-6 md:p-8 z-10 border border-white/5 m-2 xs:m-3 md:m-5">
         {/* BRANDING HEADER */}
         <div className="text-center mt-3 flex flex-col items-center">
           <img
@@ -659,17 +655,17 @@ export default function EntryCountdown({ onEnter, serverOffset }) {
             </svg>
 
             {/* ODOMETER TIMER REELS GRID */}
-            <div className="relative z-10 flex items-center gap-1 md:gap-2">
+            <div className="relative z-10 flex items-center gap-0.5 xs:gap-1 sm:gap-2 w-full max-w-[calc(100vw-24px)] justify-center px-1">
               <OdometerBlock value={timeLeft.days} label="DAYS" />
-              <span className="text-[#F59E0B] font-mono text-xl md:text-3xl font-black -mt-6 select-none animate-pulse">
+              <span className="text-[#F59E0B] font-mono text-base xs:text-xl md:text-3xl font-black -mt-3 sm:-mt-6 select-none animate-pulse">
                 :
               </span>
               <OdometerBlock value={timeLeft.hours} label="HOURS" />
-              <span className="text-[#F59E0B] font-mono text-xl md:text-3xl font-black -mt-6 select-none animate-pulse">
+              <span className="text-[#F59E0B] font-mono text-base xs:text-xl md:text-3xl font-black -mt-3 sm:-mt-6 select-none animate-pulse">
                 :
               </span>
               <OdometerBlock value={timeLeft.minutes} label="MINUTES" />
-              <span className="text-[#F59E0B] font-mono text-xl md:text-3xl font-black -mt-6 select-none animate-pulse">
+              <span className="text-[#F59E0B] font-mono text-base xs:text-xl md:text-3xl font-black -mt-3 sm:-mt-6 select-none animate-pulse">
                 :
               </span>
               <OdometerBlock value={timeLeft.seconds} label="SECONDS" />
@@ -726,108 +722,18 @@ export default function EntryCountdown({ onEnter, serverOffset }) {
             </div>
           )}
 
-          {/* BRASS INDUSTRIAL CONTROL BUTTON */}
+          {/* MODERN CTA BUTTON */}
           <button
             type="button"
             onClick={onEnter}
-            className="w-full max-w-sm flex items-center justify-center gap-2 rounded border-2 border-[#F59E0B] bg-[#0b1e36]/80 text-[#F59E0B] hover:bg-[#F59E0B] hover:text-[#0b1e36] px-8 py-3.5 text-xs font-bold font-sans tracking-[0.2em] uppercase cursor-pointer select-none relative shadow-md transition-all duration-200 transform hover:-translate-y-0.5 active:translate-y-0 active:scale-98"
+            aria-label="Continue to IPL 2026 website"
+            className="group w-[calc(100%-32px)] max-w-[320px] h-[54px] flex items-center justify-between gap-4 rounded-full bg-accent hover:bg-amber-500 active:bg-amber-600 text-white font-sans font-bold text-sm tracking-[0.05em] px-6 transition-all duration-300 shadow-lg hover:shadow-xl hover:-translate-y-0.5 active:translate-y-0 active:scale-95 cursor-pointer relative select-none"
           >
-            {/* Rivets on corners */}
-            <div className="absolute top-1 left-1.5 w-1.5 h-1.5 rounded-full bg-slate-400 shadow-sm" />
-            <div className="absolute top-1 right-1.5 w-1.5 h-1.5 rounded-full bg-slate-400 shadow-sm" />
-            <div className="absolute bottom-1 left-1.5 w-1.5 h-1.5 rounded-full bg-slate-400 shadow-sm" />
-            <div className="absolute bottom-1 right-1.5 w-1.5 h-1.5 rounded-full bg-slate-400 shadow-sm" />
-            CONTINUE TO IPL 2026 →
-          </button>
-
-          {/* SCROLL ANCHOR */}
-          <button
-            type="button"
-            onClick={handleScrollDown}
-            className="flex flex-col items-center gap-1.5 text-[9px] md:text-[10px] font-sans tracking-[0.25em] text-slate-400 hover:text-white transition-colors cursor-pointer mt-4"
-          >
-            <span>SCROLL TO EXPLORE</span>
-            <span className="animate-bounce mt-1 text-[#F59E0B]">↓</span>
-          </button>
-        </div>
-      </div>
-
-      {/* INTRODUCTION SECTION */}
-      <div
-        id="intro-section"
-        className="relative min-h-screen flex flex-col justify-center py-20 px-6 md:px-12 max-w-5xl mx-auto border-t border-white/5 z-10"
-      >
-        <div className="text-left w-full mt-10">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded bg-[#0f1b2a]/65 border border-white/10 text-slate-200 text-[10px] font-sans font-bold tracking-widest uppercase mb-4">
-            ⚙ OVERVIEW
-          </div>
-          <h2 className="font-heading text-3xl md:text-4xl font-extrabold text-white tracking-wider uppercase">
-            Innovative Product League
-          </h2>
-          {/* Engineering blueprint double line */}
-          <div className="my-6 flex items-center gap-1">
-            <div className="h-[2px] bg-[#F59E0B] w-8" />
-            <div className="h-[1px] bg-white/10 flex-1" />
-          </div>
-          <p className="text-sm md:text-base text-slate-300 font-medium max-w-2xl leading-relaxed">
-            The Innovative Product League is a technical design and product
-            competition. Students transform engineering insights and real-world
-            challenges into functional hardware and software products.
-          </p>
-        </div>
-
-        {/* 4 DRAFTING CARDS */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mt-12 w-full">
-          {[
-            {
-              num: "01",
-              title: "Ideate",
-              desc: "Turning real-world problems into innovative concepts.",
-            },
-            {
-              num: "02",
-              title: "Innovate",
-              desc: "Designing and developing working solutions.",
-            },
-            {
-              num: "03",
-              title: "Design",
-              desc: "Building practical engineering products.",
-            },
-            {
-              num: "04",
-              title: "Develop",
-              desc: "Presenting innovation and impact.",
-            },
-            {
-              num: "05",
-              title: "Commercialize",
-              desc: "Bringing innovations to market.",
-            },
-          ].map((card) => (
-            <div
-              key={card.num}
-              className="bg-[#0f1e36]/90 border border-white/10 rounded-xl p-6 flex flex-col justify-between relative overflow-hidden shadow-sm hover:shadow-md transition-shadow duration-200"
-            >
-              {/* Corner Screws */}
-              <div className="absolute top-1.5 left-1.5 w-1 h-1 rounded-full bg-slate-500/50" />
-              <div className="absolute top-1.5 right-1.5 w-1 h-1 rounded-full bg-slate-500/50" />
-              <div className="absolute bottom-1.5 left-1.5 w-1 h-1 rounded-full bg-slate-500/50" />
-              <div className="absolute bottom-1.5 right-1.5 w-1 h-1 rounded-full bg-slate-500/50" />
-
-              <div>
-                <span className="block font-heading text-3xl font-black text-[#F59E0B] mb-4">
-                  {card.num}
-                </span>
-                <h3 className="font-heading text-sm font-bold text-white uppercase tracking-wider mb-2">
-                  {card.title}
-                </h3>
-                <p className="text-xs text-slate-300 font-medium leading-relaxed">
-                  {card.desc}
-                </p>
-              </div>
+            <span className="whitespace-nowrap select-none">Continue to IPL 2026</span>
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#0b1e36] text-[#F59E0B] group-hover:scale-110 transition-transform">
+              <ArrowRight size={16} className="group-hover:translate-x-0.5 transition-transform" />
             </div>
-          ))}
+          </button>
         </div>
       </div>
     </div>
