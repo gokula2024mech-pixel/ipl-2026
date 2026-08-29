@@ -52,6 +52,110 @@ const splitIsoDateTime = (isoString) => {
   return { date, time };
 };
 
+function normalizeMentorDepartment(val) {
+  if (!val) return '';
+  const s = val.trim().toLowerCase().replace(/\s+/g, ' ');
+
+  // 1. Check AIML
+  if (
+    s.includes('aiml') ||
+    s.includes('machine learning') ||
+    s.includes('machine language') ||
+    s.includes('ai&ml') ||
+    s.includes('ai & ml') ||
+    s.includes('ai/ml') ||
+    s.includes('ai and ml')
+  ) {
+    return 'Artificial Intelligence and Machine Learning';
+  }
+
+  // 2. Check AIDS
+  if (
+    s.includes('aids') ||
+    s.includes('data science') ||
+    s.includes('ai&ds') ||
+    s.includes('ai & ds') ||
+    s.includes('ai/ds') ||
+    s.includes('ai and ds')
+  ) {
+    return 'Artificial Intelligence and Data Science';
+  }
+
+  // 3. Check CSBS
+  if (
+    s.includes('csbs') ||
+    s.includes('business system')
+  ) {
+    return 'Computer Science and Business System';
+  }
+
+  // 4. Check Cyber Security
+  if (
+    s.includes('cyber security') ||
+    s.includes('cybersecurity')
+  ) {
+    return 'Cyber Security';
+  }
+
+  // 5. Check CCE
+  if (
+    s.includes('cce') ||
+    s.includes('computer and communication') ||
+    s.includes('computer & communication')
+  ) {
+    return 'Computer and Communication Engineering';
+  }
+
+  // 6. Check ECE
+  if (
+    s.includes('ece') ||
+    s.includes('electronics and communication') ||
+    s.includes('electronics & communication') ||
+    s.includes('electrical and communication')
+  ) {
+    return 'Electronics and Communication Engineering';
+  }
+
+  // 7. Check EEE
+  if (
+    s.includes('eee') ||
+    s.includes('electrical and electronics') ||
+    s.includes('electrical and electronic') ||
+    s.includes('electrical & electronics') ||
+    s.includes('electrical & electronic')
+  ) {
+    return 'Electrical and Electronics Engineering';
+  }
+
+  // 8. Check CSE
+  if (
+    s.includes('cse') ||
+    s.includes('computer science') ||
+    s.includes('computer scinece') ||
+    s.includes('computer and science')
+  ) {
+    return 'Computer Science and Engineering';
+  }
+
+  // 9. Check IT
+  if (
+    s.includes('information technology') ||
+    /\bit\b/.test(s)
+  ) {
+    return 'Information Technology';
+  }
+
+  // 10. Check Mechanical
+  if (
+    s.includes('mech') ||
+    s.includes('mechanical')
+  ) {
+    return 'Mechanical Engineering';
+  }
+
+  return val;
+}
+
 const EXPORT_COLUMN_GROUPS = [
   {
     name: "REGISTRATION",
@@ -446,7 +550,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
           member4_department: m4DeptName,
 
           mentor_name: mentorName,
-          mentor_department: mentorDept,
+          mentor_department: normalizeMentorDepartment(mentorDept),
 
           evaluation_score: avgScore,
           evaluation_comments: evalComments,
@@ -2697,7 +2801,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
                               <td className="px-5 py-4">
                                 <div className="space-y-0.5">
                                   <p className="font-bold text-slate-900">{team.mentor_name}</p>
-                                  <p className="text-[11px] text-slate-500">{team.mentor_department} Dept</p>
+                                  <p className="text-[11px] text-slate-500">{team.mentor_department}</p>
                                 </div>
                               </td>
                               <td className="px-5 py-4 whitespace-nowrap text-slate-500">

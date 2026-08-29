@@ -6,6 +6,110 @@ import { supabase } from '../supabaseClient'
 const rawApiUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000').trim().replace(/\/+$/, '')
 const API_BASE_URL = rawApiUrl.endsWith('/api') ? rawApiUrl.slice(0, -4) : rawApiUrl
 
+function normalizeMentorDepartment(val) {
+  if (!val) return '';
+  const s = val.trim().toLowerCase().replace(/\s+/g, ' ');
+
+  // 1. Check AIML
+  if (
+    s.includes('aiml') ||
+    s.includes('machine learning') ||
+    s.includes('machine language') ||
+    s.includes('ai&ml') ||
+    s.includes('ai & ml') ||
+    s.includes('ai/ml') ||
+    s.includes('ai and ml')
+  ) {
+    return 'Artificial Intelligence and Machine Learning';
+  }
+
+  // 2. Check AIDS
+  if (
+    s.includes('aids') ||
+    s.includes('data science') ||
+    s.includes('ai&ds') ||
+    s.includes('ai & ds') ||
+    s.includes('ai/ds') ||
+    s.includes('ai and ds')
+  ) {
+    return 'Artificial Intelligence and Data Science';
+  }
+
+  // 3. Check CSBS
+  if (
+    s.includes('csbs') ||
+    s.includes('business system')
+  ) {
+    return 'Computer Science and Business System';
+  }
+
+  // 4. Check Cyber Security
+  if (
+    s.includes('cyber security') ||
+    s.includes('cybersecurity')
+  ) {
+    return 'Cyber Security';
+  }
+
+  // 5. Check CCE
+  if (
+    s.includes('cce') ||
+    s.includes('computer and communication') ||
+    s.includes('computer & communication')
+  ) {
+    return 'Computer and Communication Engineering';
+  }
+
+  // 6. Check ECE
+  if (
+    s.includes('ece') ||
+    s.includes('electronics and communication') ||
+    s.includes('electronics & communication') ||
+    s.includes('electrical and communication')
+  ) {
+    return 'Electronics and Communication Engineering';
+  }
+
+  // 7. Check EEE
+  if (
+    s.includes('eee') ||
+    s.includes('electrical and electronics') ||
+    s.includes('electrical and electronic') ||
+    s.includes('electrical & electronics') ||
+    s.includes('electrical & electronic')
+  ) {
+    return 'Electrical and Electronics Engineering';
+  }
+
+  // 8. Check CSE
+  if (
+    s.includes('cse') ||
+    s.includes('computer science') ||
+    s.includes('computer scinece') ||
+    s.includes('computer and science')
+  ) {
+    return 'Computer Science and Engineering';
+  }
+
+  // 9. Check IT
+  if (
+    s.includes('information technology') ||
+    /\bit\b/.test(s)
+  ) {
+    return 'Information Technology';
+  }
+
+  // 10. Check Mechanical
+  if (
+    s.includes('mech') ||
+    s.includes('mechanical')
+  ) {
+    return 'Mechanical Engineering';
+  }
+
+  return val;
+}
+
 export default function MySubmissionsModal({ isOpen, onClose }) {
   const [submissions, setSubmissions] = useState([])
   const [loading, setLoading] = useState(false)
@@ -136,7 +240,7 @@ export default function MySubmissionsModal({ isOpen, onClose }) {
   return createPortal(
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
       <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden transition-all duration-300">
-        
+
         {/* ==================== HEADER ==================== */}
         <div className="flex justify-between items-center px-6 py-4 border-b border-slate-100">
           <h2 className="text-base font-bold text-slate-950 flex items-center gap-2">
@@ -182,7 +286,7 @@ export default function MySubmissionsModal({ isOpen, onClose }) {
           ) : (
             currentPage && (
               <div className="space-y-6">
-                
+
                 {/* Team metadata card */}
                 <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-5 space-y-4">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200/60 pb-3">
@@ -215,7 +319,7 @@ export default function MySubmissionsModal({ isOpen, onClose }) {
                           {currentPage.team.mentor.name}
                         </span>
                         <span className="text-[10px] text-slate-500 block select-text font-medium mt-0.5 leading-tight">
-                          {currentPage.team.mentor.department}
+                          {normalizeMentorDepartment(currentPage.team.mentor.department)}
                         </span>
                       </div>
                     )}
@@ -227,7 +331,7 @@ export default function MySubmissionsModal({ isOpen, onClose }) {
                   <h4 className="text-xs font-bold text-accent uppercase tracking-wider flex items-center gap-1.5 border-b border-slate-50 pb-2">
                     <Lightbulb size={14} /> Project Details
                   </h4>
-                  
+
                   {!currentPage.idea ? (
                     <p className="text-sm text-slate-500 font-medium italic">No ideas submitted yet.</p>
                   ) : (
@@ -291,7 +395,7 @@ export default function MySubmissionsModal({ isOpen, onClose }) {
                   <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5 border-b border-slate-100 pb-2">
                     <Users size={14} /> Team Members
                   </h4>
-                  
+
                   <div className="space-y-3 font-semibold text-slate-800">
                     {renderMemberRow('Leader', currentPage.team.members.leader)}
                     {renderMemberRow('Member 2', currentPage.team.members.member2)}
