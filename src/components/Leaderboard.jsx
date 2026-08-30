@@ -179,7 +179,7 @@ export default function Leaderboard() {
 
     // 3. Average TRL: Avg TRL should be calculated from each team's highest TRL
     const teamsWithTrl = filteredTeamsForChart.filter(t => t.highestTrl !== null && t.highestTrl !== undefined);
-    const avgTrl = teamsWithTrl.length > 0
+    const _avgTrl = teamsWithTrl.length > 0
       ? Number((teamsWithTrl.reduce((sum, t) => sum + Number(t.highestTrl), 0) / teamsWithTrl.length).toFixed(1))
       : 0;
 
@@ -310,14 +310,10 @@ export default function Leaderboard() {
             </div>
 
             {/* Summary Metrics Strip */}
-            <div className="mt-6 pt-4 border-t border-slate-100 grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <div className="mt-6 pt-4 border-t border-slate-100 grid grid-cols-2 min-[400px]:grid-cols-3 gap-4">
               <div className="flex flex-col bg-slate-50/50 p-3 rounded-xl border border-slate-100">
                 <span className="text-[9px] font-extrabold text-slate-400 uppercase tracking-wider">Total Teams</span>
                 <span className="text-xl font-bold text-slate-900 mt-1">{chartTotalTeams}</span>
-              </div>
-              <div className="flex flex-col bg-[#0b1e36]/5 p-3 rounded-xl border border-slate-100">
-                <span className="text-[9px] font-extrabold text-slate-400 uppercase tracking-wider">Avg TRL</span>
-                <span className="text-xl font-bold text-slate-900 mt-1">{avgTrl}</span>
               </div>
               <div className="flex flex-col bg-slate-50/50 p-3 rounded-xl border border-slate-100">
                 <span className="text-[9px] font-extrabold text-slate-400 uppercase tracking-wider">Highest TRL</span>

@@ -72,6 +72,37 @@ function HeroTimer({
   const dragRef = useRef(null)
   const startDragPos = useRef({ x: 0, y: 0 })
 
+  const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' ? window.innerWidth < 768 : false)
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
+  const [isProfileOpen, setIsProfileOpen] = useState(false)
+  const [isPopupOpen, setIsPopupOpen] = useState(false)
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth < 768)
+    }
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [])
+
+  useEffect(() => {
+    const handleMenuState = (e) => {
+      setIsMobileMenuOpen(e.detail)
+    }
+    window.addEventListener('mobile-menu-state', handleMenuState)
+    return () => window.removeEventListener('mobile-menu-state', handleMenuState)
+  }, [])
+
+  useEffect(() => {
+    const handleProfileState = (e) => {
+      if (e.detail) {
+        setIsProfileOpen(!!e.detail.open)
+      }
+    }
+    window.addEventListener('profile-dropdown-state', handleProfileState)
+    return () => window.removeEventListener('profile-dropdown-state', handleProfileState)
+  }, [])
+
   const fetchTimerData = async () => {
     try {
       const { data: regData, error: regError } = await supabase
@@ -243,19 +274,80 @@ function HeroTimer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dbPhases, regTimer])
 
-  // Auto-collapse when scrolling away from Hero section
+  // Auto-collapse on scroll ONLY on mobile (widths < 768px)
   useEffect(() => {
     const handleScroll = () => {
-      if (typeof window !== 'undefined' && window.scrollY > 10) {
+      if (typeof window !== 'undefined' && window.innerWidth < 768 && window.scrollY > 10) {
         setIsCollapsed(true)
       }
     }
     window.addEventListener('scroll', handleScroll, { passive: true })
-    if (typeof window !== 'undefined' && window.scrollY > 10) {
-      setIsCollapsed(true)
-    }
     return () => window.removeEventListener('scroll', handleScroll)
   }, [setIsCollapsed])
+
+
+
+  const [shouldHideTimer, setShouldHideTimer] = useState(false)
+  const [hasScrolledAway, setHasScrolledAway] = useState(false)
+  const timerAnchorRef = useRef(null)
+
+  const getNavbarBottom = () => {
+    const nav = document.querySelector('nav')
+    if (nav) {
+      return nav.getBoundingClientRect().bottom
+    }
+    return 80 // fallback
+  }
+
+  useEffect(() => {
+    if (isMobile) return
+
+    let rAFId = null
+    const update = () => {
+      if (timerAnchorRef.current) {
+        const anchorRect = timerAnchorRef.current.getBoundingClientRect()
+        const navBottom = getNavbarBottom()
+
+        // Hide when the top of the timer reaches/touches the bottom of the Navbar
+        const shouldHide = anchorRect.top <= navBottom + 5
+        setShouldHideTimer(shouldHide)
+        if (shouldHide) {
+          setHasScrolledAway(true)
+        }
+      }
+    }
+
+    const onScrollOrResize = () => {
+      if (rAFId) cancelAnimationFrame(rAFId)
+      rAFId = requestAnimationFrame(update)
+    }
+
+    window.addEventListener('scroll', onScrollOrResize, { passive: true })
+    window.addEventListener('resize', onScrollOrResize)
+
+    // Initial check
+    update()
+
+    return () => {
+      window.removeEventListener('scroll', onScrollOrResize)
+      window.removeEventListener('resize', onScrollOrResize)
+      if (rAFId) cancelAnimationFrame(rAFId)
+    }
+  }, [isMobile])
+
+  // Keydown listener for ESC key to close popup
+  useEffect(() => {
+    if (!isPopupOpen) return
+
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setIsPopupOpen(false)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isPopupOpen])
 
   // Calculate safe initial placement based on screensize & overlap checking
   const calculateSafePosition = (timerWidth, timerHeight) => {
@@ -395,38 +487,17 @@ function HeroTimer({
     return () => window.removeEventListener('resize', handleResize)
   }, [position, setPosition, heroContainerRef])
 
-  if (!timeLeft) return null
-
-  if (isCollapsed) {
-    return (
-      <button
-        type="button"
-        onClick={() => setIsCollapsed(false)}
-        aria-label="Open timer"
-        className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-[100] flex h-10 w-10 sm:h-12 sm:w-12 items-center justify-center rounded-full bg-slate-950/80 hover:bg-slate-900 border border-white/10 text-white shadow-lg hover:scale-105 transition-all focus:outline-none focus:ring-2 focus:ring-accent cursor-pointer animate-pulse"
-      >
-        <Timer size={20} className="text-accent" />
-      </button>
-    )
-  }
-
-  const totalHours = (timeLeft.days || 0) * 24 + (timeLeft.hours || 0)
+  const days = timeLeft.days || 0
+  const hours = timeLeft.hours || 0
   const minutes = timeLeft.minutes || 0
   const seconds = timeLeft.seconds || 0
 
-  const totalHoursStr = String(totalHours).padStart(2, '0')
+  const daysStr = String(days).padStart(2, '0')
+  const hoursStr = String(hours).padStart(2, '0')
   const minutesStr = String(minutes).padStart(2, '0')
   const secondsStr = String(seconds).padStart(2, '0')
 
-  const start = new Date(timeLeft.scheduled_start_at).getTime()
-  const end = new Date(timeLeft.scheduled_end_at).getTime()
-  const total = end - start
-  const elapsed = Date.now() - start
-  let percent = 0
-  if (total > 0) {
-    percent = Math.min(100, Math.max(0, (elapsed / total) * 100))
-  }
-  const needleAngle = -225 + (percent / 100) * 270
+
 
   const statusLabel = getStatusLabel(timeLeft.status)
   const statusColor = getStatusColor(timeLeft.status)
@@ -435,121 +506,213 @@ function HeroTimer({
   const startFormatted = formatDateTime(timeLeft.scheduled_start_at)
   const endFormatted = formatDateTime(timeLeft.scheduled_end_at)
 
-  const ariaLabel = `${phaseLabel} phase. ${totalHours} hours, ${minutes} minutes, ${seconds} seconds remaining. Starts ${startFormatted} and ends ${endFormatted}. Status: ${statusLabel}.`
+  const ariaLabel = `${phaseLabel} phase. ${days} days, ${hours} hours, ${minutes} minutes, ${seconds} seconds remaining. Starts ${startFormatted} and ends ${endFormatted}. Status: ${statusLabel}.`
 
-  return (
-    <div
-      ref={dragRef}
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerUp}
-      style={{
-        position: 'absolute',
-        left: position ? `${position.x}px` : 'auto',
-        top: position ? `${position.y}px` : '96px',
-        right: position ? 'auto' : '16px',
-        touchAction: 'none',
-        zIndex: 99,
-        width: 'min(calc(100vw - 24px), 310px)'
-      }}
-      className={`select-none cursor-grab active:cursor-grabbing max-w-full ${
-        isDragging ? 'cursor-grabbing' : ''
-      }`}
-    >
+
+  // Render modal popup if open
+  const renderPopupModal = () => {
+    if (!isPopupOpen) return null
+    return (
       <div
-        className="relative flex items-center gap-3.5 bg-slate-955/80 backdrop-blur-md rounded-2xl p-3 border border-white/10 text-white w-full shrink-0 font-sans shadow-lg select-none"
-        aria-label={ariaLabel}
-        title={ariaLabel}
+        className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[250] flex items-center justify-center p-4"
+        onClick={() => setIsPopupOpen(false)}
       >
-        {/* Close Button */}
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation()
-            setIsCollapsed(true)
-          }}
-          aria-label="Close timer"
-          className="close-btn-class absolute top-2 right-2 flex h-6 w-6 items-center justify-center rounded-full bg-white/10 hover:bg-white/20 border border-white/10 text-white hover:text-white transition-all focus:outline-none cursor-pointer z-[101]"
+        <div
+          className="relative bg-slate-955 border border-white/10 rounded-3xl p-6 text-white w-full max-w-sm shadow-2xl font-sans"
+          onClick={(e) => e.stopPropagation()}
         >
-          <X size={12} />
-        </button>
+          {/* Close button */}
+          <button
+            type="button"
+            onClick={() => setIsPopupOpen(false)}
+            className="absolute top-4 right-4 flex h-8 w-8 items-center justify-center rounded-full bg-white/10 hover:bg-white/20 border border-white/10 text-white transition-all cursor-pointer"
+          >
+            <X size={16} />
+          </button>
 
-        {/* Speedometer Dial Gauge */}
-        <div className="shrink-0 flex items-center justify-center">
-          <svg className="w-16 h-16 sm:w-24 sm:h-24" viewBox="0 0 100 100">
-            <circle cx="50" cy="50" r="44" fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="1.5" />
-            <circle cx="50" cy="50" r="41" fill="none" stroke="rgba(255,255,255,0.15)" strokeWidth="0.5" />
+          {/* Header */}
+          <div className="flex items-center justify-between gap-3 mb-5 pr-8 border-b border-white/10 pb-3 w-full min-w-0">
+            <span className="text-[10px] sm:text-xs font-black tracking-wider text-accent uppercase min-w-0 shrink">
+              {phaseLabel}
+            </span>
+            <span className={`text-[9px] sm:text-[10px] font-black tracking-widest uppercase ${statusColor} shrink-0 px-2 py-0.5 bg-white/5 rounded border border-white/5`}>
+              {statusLabel}
+            </span>
+          </div>
 
-            <path
-              d="M 21.7 78.3 A 40 40 0 1 1 78.3 78.3"
-              fill="none"
-              stroke="rgba(255,255,255,0.06)"
-              strokeWidth="4"
-              strokeLinecap="round"
-            />
-
-            <path
-              d="M 21.7 78.3 A 40 40 0 1 1 78.3 78.3"
-              fill="none"
-              stroke="rgba(255,255,255,0.25)"
-              strokeWidth="3.5"
-              strokeDasharray="1.5 5.5"
-              strokeLinecap="round"
-            />
-
-            <circle cx="50" cy="50" r="6" fill="#1e293b" />
-
-            <line
-              x1="50"
-              y1="50"
-              x2="50"
-              y2="15"
-              stroke="#f59e0b"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              transform={`rotate(${needleAngle} 50 50)`}
-              className="transition-transform duration-1000 ease-out"
-            />
-
-            <circle cx="50" cy="50" r="4.5" fill="#f59e0b" />
-            <circle cx="50" cy="50" r="2" fill="#b45309" />
-          </svg>
-        </div>
-
-        {/* Text Details */}
-        <div className="flex-grow min-w-0 flex flex-col justify-between text-left pr-4">
-          <div>
-            <div className="flex items-center justify-between gap-2 mb-0.5">
-              <span className="text-[9px] sm:text-[10px] font-black tracking-wider text-accent truncate uppercase">
-                {phaseLabel}
-              </span>
-              <span className={`text-[8px] sm:text-[9px] font-black tracking-widest uppercase ${statusColor} shrink-0 px-1.5 py-0.5 bg-white/5 rounded-sm border border-white/5`}>
-                {statusLabel}
-              </span>
+          {/* Time countdown */}
+          <div className="flex flex-col items-center justify-center my-6 w-full">
+            <div className="grid grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] items-center justify-items-center w-full max-w-[280px] font-mono leading-none select-none text-slate-100">
+              <span className="text-2xl sm:text-3xl font-black">{daysStr}</span>
+              <span className="text-slate-500 text-lg sm:text-xl font-bold px-1">:</span>
+              <span className="text-2xl sm:text-3xl font-black">{hoursStr}</span>
+              <span className="text-slate-500 text-lg sm:text-xl font-bold px-1">:</span>
+              <span className="text-2xl sm:text-3xl font-black">{minutesStr}</span>
+              <span className="text-slate-500 text-lg sm:text-xl font-bold px-1">:</span>
+              <span className="text-2xl sm:text-3xl font-black">{secondsStr}</span>
             </div>
-
-            <div className="text-lg sm:text-2xl font-black text-slate-100 tracking-tight font-mono leading-none my-1 select-none">
-              {totalHoursStr} : {minutesStr} : {secondsStr}
+            <div className="grid grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] justify-items-center w-full max-w-[280px] text-[8px] text-slate-500 font-extrabold tracking-wider uppercase mt-1.5">
+              <span>DAY</span>
+              <span className="opacity-0 px-1">:</span>
+              <span>HR</span>
+              <span className="opacity-0 px-1">:</span>
+              <span>MIN</span>
+              <span className="opacity-0 px-1">:</span>
+              <span>SEC</span>
             </div>
           </div>
 
-          <div className="mt-1 pt-1.5 border-t border-white/5 flex flex-col gap-0.5 text-[8px] sm:text-[9px] leading-tight text-slate-400 font-medium">
-            <div className="flex justify-between items-center">
-              <span className="text-[7px] sm:text-[8px] text-slate-500 uppercase font-bold tracking-wider mr-2">START</span>
-              <span className="font-mono text-slate-300">{startFormatted || 'N/A'}</span>
+          {/* Details dates */}
+          <div className="pt-3.5 border-t border-white/10 flex flex-col gap-2 text-[10px] text-slate-350 font-semibold w-full">
+            <div className="grid grid-cols-[55px_1fr] items-center">
+              <span className="text-slate-500 uppercase font-black tracking-wider">START</span>
+              <span className="font-mono text-slate-200 text-right">{startFormatted || 'N/A'}</span>
             </div>
-            <div className="flex justify-between items-center">
-              <span className="text-[7px] sm:text-[8px] text-slate-500 uppercase font-bold tracking-wider mr-2">END</span>
-              <span className="font-mono text-slate-300">{endFormatted || 'N/A'}</span>
+            <div className="grid grid-cols-[55px_1fr] items-center">
+              <span className="text-slate-500 uppercase font-black tracking-wider">END</span>
+              <span className="font-mono text-slate-200 text-right">{endFormatted || 'N/A'}</span>
             </div>
           </div>
         </div>
       </div>
-    </div>
+    )
+  }
+
+  // Render floating clock button
+  const renderFloatingClock = () => {
+    if (isMobileMenuOpen || isProfileOpen) return null
+    return (
+      <button
+        type="button"
+        onClick={() => setIsPopupOpen(true)}
+        aria-label="Open timer details"
+        className={`fixed z-[90] flex items-center justify-center rounded-full bg-slate-955 border-2 border-amber-500 text-amber-500 hover:bg-slate-900 shadow-[0_4px_20px_rgba(0,0,0,0.5)] hover:scale-105 transition-all focus:outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer animate-pulse ${
+          isMobile
+            ? 'bottom-[18px] right-[18px] h-11 w-11'
+            : 'bottom-[20px] right-[20px] h-12 w-12 sm:h-14 sm:w-14'
+        }`}
+      >
+        <Timer size={isMobile ? 20 : 24} className="text-amber-500" />
+      </button>
+    )
+  }
+
+  const showFloatingClock = isMobile ? !isProfileOpen : (shouldHideTimer || !hasScrolledAway) && !isProfileOpen
+  const showFullTimerCard = !isMobile && !shouldHideTimer && !isCollapsed && hasScrolledAway && !isProfileOpen
+
+  return (
+    <>
+      {/* Anchor element for desktop scroll tracking */}
+      {!isMobile && (
+        <div
+          ref={timerAnchorRef}
+          style={{
+            position: 'absolute',
+            top: '180px',
+            right: '12%',
+            width: '390px',
+            height: '190px',
+            visibility: 'hidden',
+            pointerEvents: 'none'
+          }}
+        />
+      )}
+
+      {/* Floating clock button (Desktop or Mobile) */}
+      {showFloatingClock && renderFloatingClock()}
+
+      {/* Full Timer Card inside Hero (Desktop only) */}
+      {showFullTimerCard && (
+        <div
+          ref={dragRef}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          style={{
+            position: 'absolute',
+            left: position ? `${position.x}px` : 'auto',
+            top: position ? `${position.y}px` : '180px',
+            right: position ? 'auto' : '12%',
+            touchAction: 'none',
+            zIndex: 99,
+            width: 'min(calc(100vw - 24px), 390px)'
+          }}
+          className={`select-none cursor-grab active:cursor-grabbing max-w-full md:-rotate-3 md:transform ${
+            isDragging ? 'cursor-grabbing' : ''
+          }`}
+        >
+          <div
+            className="relative flex flex-col bg-slate-955/80 backdrop-blur-md rounded-3xl p-6 border border-white/10 text-white w-full shrink-0 font-sans shadow-lg select-none"
+            aria-label={ariaLabel}
+            title={ariaLabel}
+          >
+            {/* Close Button */}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                setIsCollapsed(true)
+              }}
+              aria-label="Close timer"
+              className="close-btn-class absolute top-4 right-4 flex h-6 w-6 items-center justify-center rounded-full bg-white/10 hover:bg-white/20 border border-white/10 text-white hover:text-white transition-all focus:outline-none cursor-pointer z-[101]"
+            >
+              <X size={12} />
+            </button>
+
+            {/* Header: Status & Phase name */}
+            <div className="flex items-center justify-between gap-3 mb-5 pr-8 w-full min-w-0">
+              <span className="text-[10px] sm:text-xs font-black tracking-wider text-accent uppercase min-w-0 shrink">
+                {phaseLabel}
+              </span>
+              <span className={`text-[8px] sm:text-[10px] font-black tracking-widest uppercase ${statusColor} shrink-0 px-2 py-0.5 bg-white/5 rounded-sm border border-white/5`}>
+                {statusLabel}
+              </span>
+            </div>
+
+            {/* Main Countdown Display */}
+            <div className="flex flex-col items-center justify-center my-3 w-full">
+              <div className="grid grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] items-center justify-items-center w-full max-w-[280px] font-mono leading-none select-none text-slate-100">
+                <span className="text-2xl sm:text-3xl font-black">{daysStr}</span>
+                <span className="text-slate-500 text-lg sm:text-xl font-bold px-1">:</span>
+                <span className="text-2xl sm:text-3xl font-black">{hoursStr}</span>
+                <span className="text-slate-500 text-lg sm:text-xl font-bold px-1">:</span>
+                <span className="text-2xl sm:text-3xl font-black">{minutesStr}</span>
+                <span className="text-slate-500 text-lg sm:text-xl font-bold px-1">:</span>
+                <span className="text-2xl sm:text-3xl font-black">{secondsStr}</span>
+              </div>
+              <div className="grid grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] justify-items-center w-full max-w-[280px] text-[8px] text-slate-500 font-extrabold tracking-wider uppercase mt-1.5">
+                <span>DAY</span>
+                <span className="opacity-0 px-1">:</span>
+                <span>HR</span>
+                <span className="opacity-0 px-1">:</span>
+                <span>MIN</span>
+                <span className="opacity-0 px-1">:</span>
+                <span>SEC</span>
+              </div>
+            </div>
+
+            {/* Footer Details */}
+            <div className="mt-4 pt-3.5 border-t border-white/10 flex flex-col gap-2 text-[10px] text-slate-350 font-semibold w-full">
+              <div className="grid grid-cols-[55px_1fr] items-center">
+                <span className="text-slate-500 uppercase font-black tracking-wider">START</span>
+                <span className="font-mono text-slate-200 text-right">{startFormatted || 'N/A'}</span>
+              </div>
+              <div className="grid grid-cols-[55px_1fr] items-center">
+                <span className="text-slate-500 uppercase font-black tracking-wider">END</span>
+                <span className="font-mono text-slate-200 text-right">{endFormatted || 'N/A'}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Popup Modal (shared on mobile and desktop clock click) */}
+      {renderPopupModal()}
+    </>
   )
 }
 
-export default function Hero({ onRegisterClick, timeLeft }) {
+export default function Hero({ onRegisterClick, timeLeft, profile: _profile, onMySubmissionsClick }) {
   const [isCollapsed, setIsCollapsed] = useState(false)
   const [timerPosition, setTimerPosition] = useState(null)
   const heroContentRef = useRef(null)
@@ -606,12 +769,7 @@ export default function Hero({ onRegisterClick, timeLeft }) {
           transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
           className="flex flex-col items-center w-full"
         >
-          {/* Mobile IPL Logo */}
-          <img
-            src="/logo.png"
-            alt="IPL Logo"
-            className="h-16 w-auto mb-6 block md:hidden object-contain max-w-full"
-          />
+
 
           <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-4 py-1.5 text-sm text-blue-100 backdrop-blur-sm">
             <Sparkles size={16} className="text-accent" aria-hidden="true" />
@@ -644,22 +802,47 @@ export default function Hero({ onRegisterClick, timeLeft }) {
             ))}
           </div>
 
-          <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row w-full px-4">
-            <a
-              href={REGISTRATION_FORM_URL}
-              onClick={handleRegister}
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-full bg-accent px-8 py-3.5 text-base font-semibold text-white shadow-lg transition-all hover:-translate-y-0.5 hover:bg-amber-600 hover:shadow-xl cursor-pointer"
-            >
-              Register Now
-              <ArrowRight size={18} aria-hidden="true" />
-            </a>
-            <a
-              href="#about"
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-full border-2 border-white/30 bg-white/10 px-8 py-3.5 text-base font-semibold text-white backdrop-blur-sm transition-all hover:-translate-y-0.5 hover:border-white/50 hover:bg-white/20 shrink-0"
-            >
-              Explore the Program
-            </a>
-          </div>
+          {/* CTA Buttons */}
+          {(() => {
+            const isRegistrationOpen = timeLeft &&
+              timeLeft.label === 'Registration Open' &&
+              (timeLeft.status === 'running' || timeLeft.status === 'paused')
+
+            return (
+              <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row w-full px-4">
+                {isRegistrationOpen && (
+                  <a
+                    href={REGISTRATION_FORM_URL}
+                    onClick={handleRegister}
+                    className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-full bg-accent px-8 py-3.5 text-base font-semibold text-white shadow-lg transition-all hover:-translate-y-0.5 hover:bg-amber-600 hover:shadow-xl cursor-pointer"
+                  >
+                    Registration Now
+                    <ArrowRight size={18} aria-hidden="true" />
+                  </a>
+                )}
+
+                <button
+                  type="button"
+                  onClick={onMySubmissionsClick}
+                  className={`w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-full px-8 py-3.5 text-base font-semibold text-white shadow-lg transition-all hover:-translate-y-0.5 hover:shadow-xl cursor-pointer ${
+                    isRegistrationOpen
+                      ? 'border-2 border-white/30 bg-white/10 hover:border-white/50 hover:bg-white/20 backdrop-blur-sm'
+                      : 'bg-accent hover:bg-amber-600'
+                  }`}
+                >
+                  Phase 1
+                  <ArrowRight size={18} aria-hidden="true" />
+                </button>
+
+                <a
+                  href="#about"
+                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-full border-2 border-white/30 bg-white/10 px-8 py-3.5 text-base font-semibold text-white backdrop-blur-sm transition-all hover:-translate-y-0.5 hover:border-white/50 hover:bg-white/20 shrink-0"
+                >
+                  Explore the Program
+                </a>
+              </div>
+            )
+          })()}
         </motion.div>
       </div>
 

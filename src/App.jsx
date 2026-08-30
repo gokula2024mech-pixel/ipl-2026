@@ -5,6 +5,7 @@ import Navbar from './components/Navbar'
 import Hero from './components/Hero'
 import RegistrationModal from './components/RegistrationModal'
 import MySubmissionsModal from './components/MySubmissionsModal'
+import MySubmissionsPage from './components/MySubmissionsPage'
 import EntryCountdown from './components/EntryCountdown'
 import { supabase } from './supabaseClient'
 
@@ -39,6 +40,7 @@ export default function App() {
   const [isRegistrationOpen, setIsRegistrationOpen] = useState(false)
   const [isMySubmissionsOpen, setIsMySubmissionsOpen] = useState(false)
   const [viewMode, setViewMode] = useState("public")
+  const [selectedPhase, setSelectedPhase] = useState('my_submissions')
   const [currentHash, setCurrentHash] = useState(window.location.hash)
 
   // Authoritative Countdown States
@@ -519,12 +521,21 @@ export default function App() {
             setProfile(userProfile)
           }
         }}
-        onMySubmissionsClick={() => setIsMySubmissionsOpen(true)}
+        onMySubmissionsClick={(phase = 'my_submissions') => {
+          setSelectedPhase(phase)
+          setViewMode("submissions")
+        }}
         timeLeft={timeLeft}
         onReturnToAdmin={() => setViewMode("admin")}
       />
       <main>
-        {isLeaderboardPage ? (
+        {viewMode === "submissions" ? (
+          <MySubmissionsPage
+            onBackToHome={() => setViewMode("public")}
+            selectedPhase={selectedPhase}
+            setSelectedPhase={setSelectedPhase}
+          />
+        ) : isLeaderboardPage ? (
           <Suspense fallback={
             <div className="flex min-h-[60vh] items-center justify-center bg-white py-20">
               <div className="h-8 w-8 animate-spin rounded-full border-4 border-accent border-t-transparent mx-auto"></div>
@@ -534,7 +545,15 @@ export default function App() {
           </Suspense>
         ) : (
           <>
-            <Hero onRegisterClick={handleOpenRegistration} timeLeft={timeLeft} />
+            <Hero
+              onRegisterClick={handleOpenRegistration}
+              timeLeft={timeLeft}
+              profile={profile}
+              onMySubmissionsClick={() => {
+                setSelectedPhase('phase_1')
+                setViewMode("submissions")
+              }}
+            />
             <Suspense fallback={<SectionFallback />}>
               <About />
               <ProgramHighlights />
@@ -568,6 +587,7 @@ export default function App() {
       <MySubmissionsModal
         isOpen={isMySubmissionsOpen}
         onClose={() => setIsMySubmissionsOpen(false)}
+        mode="full"
       />
 
       {profile?.role === 'admin' && viewMode === 'public' && (

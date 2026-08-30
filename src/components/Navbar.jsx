@@ -50,11 +50,18 @@ export default function Navbar({ onRegisterClick, user, profile, onProfileUpdate
     } else {
       document.body.style.overflow = ''
     }
+    // Notify application about mobile menu state
+    window.dispatchEvent(new CustomEvent('mobile-menu-state', { detail: mobileOpen }))
 
     return () => {
       document.body.style.overflow = ''
     }
   }, [mobileOpen])
+
+  // Notify application about profile dropdown state
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('profile-dropdown-state', { detail: { open: profileDropdownOpen } }))
+  }, [profileDropdownOpen])
 
   // Lock page scrolling when name-change confirmation modal is open
   useEffect(() => {
@@ -334,18 +341,56 @@ export default function Navbar({ onRegisterClick, user, profile, onProfileUpdate
                               <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider leading-none">Email</p>
                               <p className="text-sm font-semibold text-slate-800 mt-1.5 select-all break-all whitespace-normal w-full">{user.email}</p>
                             </div>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setProfileDropdownOpen(false)
-                                if (onMySubmissionsClick) {
-                                  onMySubmissionsClick()
-                                }
-                              }}
-                              className="w-full rounded-lg border border-slate-300 py-2.5 text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
-                            >
-                              My Submissions
-                            </button>
+                            <div className="flex flex-col gap-1.5 w-full">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setProfileDropdownOpen(false)
+                                  if (onMySubmissionsClick) {
+                                    onMySubmissionsClick('my_submissions')
+                                  }
+                                }}
+                                className="w-full rounded-lg border border-slate-300 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                              >
+                                My Submissions
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setProfileDropdownOpen(false)
+                                  if (onMySubmissionsClick) {
+                                    onMySubmissionsClick('phase_1')
+                                  }
+                                }}
+                                className="w-full rounded-lg border border-slate-300 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                              >
+                                Phase 1
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setProfileDropdownOpen(false)
+                                  if (onMySubmissionsClick) {
+                                    onMySubmissionsClick('phase_2')
+                                  }
+                                }}
+                                className="w-full rounded-lg border border-slate-300 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                              >
+                                Phase 2
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setProfileDropdownOpen(false)
+                                  if (onMySubmissionsClick) {
+                                    onMySubmissionsClick('phase_3')
+                                  }
+                                }}
+                                className="w-full rounded-lg border border-slate-300 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                              >
+                                Phase 3
+                              </button>
+                            </div>
                             <div className="flex gap-2 pt-2 border-t border-slate-100">
                               {!profile?.name_confirmed && (
                                 <button
@@ -557,18 +602,56 @@ export default function Navbar({ onRegisterClick, user, profile, onProfileUpdate
                   )}
 
                   {(profile?.role !== 'admin') && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setMobileOpen(false)
-                        if (onMySubmissionsClick) {
-                          onMySubmissionsClick()
-                        }
-                      }}
-                      className="w-full rounded-lg border border-slate-300 py-2.5 text-center text-sm font-bold text-slate-700 hover:bg-slate-50 cursor-pointer mb-3 bg-white"
-                    >
-                      My Submissions
-                    </button>
+                    <div className="flex flex-col gap-2 w-full mb-3">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMobileOpen(false)
+                          if (onMySubmissionsClick) {
+                            onMySubmissionsClick('my_submissions')
+                          }
+                        }}
+                        className="w-full rounded-lg border border-slate-300 py-2 text-center text-sm font-bold text-slate-700 hover:bg-slate-50 cursor-pointer bg-white"
+                      >
+                        My Submissions
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMobileOpen(false)
+                          if (onMySubmissionsClick) {
+                            onMySubmissionsClick('phase_1')
+                          }
+                        }}
+                        className="w-full rounded-lg border border-slate-300 py-2 text-center text-sm font-bold text-slate-700 hover:bg-slate-50 cursor-pointer bg-white"
+                      >
+                        Phase 1
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMobileOpen(false)
+                          if (onMySubmissionsClick) {
+                            onMySubmissionsClick('phase_2')
+                          }
+                        }}
+                        className="w-full rounded-lg border border-slate-300 py-2 text-center text-sm font-bold text-slate-700 hover:bg-slate-50 cursor-pointer bg-white"
+                      >
+                        Phase 2
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMobileOpen(false)
+                          if (onMySubmissionsClick) {
+                            onMySubmissionsClick('phase_3')
+                          }
+                        }}
+                        className="w-full rounded-lg border border-slate-300 py-2 text-center text-sm font-bold text-slate-700 hover:bg-slate-50 cursor-pointer bg-white"
+                      >
+                        Phase 3
+                      </button>
+                    </div>
                   )}
 
                   {(!profile?.registration_id && profile?.role !== 'admin') && (

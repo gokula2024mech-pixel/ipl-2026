@@ -35,6 +35,7 @@ app.use(express.urlencoded({ extended: true }))
 
 // Mount API routes
 app.use('/api', registrationRoutes)
+app.use('/api', require('./routes/phase1Routes'))
 
 // Root route
 app.get('/', (req, res) => {

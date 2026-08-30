@@ -997,8 +997,8 @@ router.get('/my-submissions', async (req, res) => {
       .or(`leader_email.ilike."${userEmail}",member2_email.ilike."${userEmail}",member3_email.ilike."${userEmail}"`);
 
     if (regsErr) {
-      console.error('[MySubmissions] Fetch registrations error:', regsErr.message);
-      return res.status(500).json({ success: false, message: 'Failed to retrieve team registrations.' });
+      console.error('[MySubmissions] Fetch registrations error:', regsErr);
+      return res.status(500).json({ success: false, message: 'Failed to retrieve team registrations: ' + regsErr.message });
     }
 
     if (!regs || regs.length === 0) {
@@ -1040,7 +1040,13 @@ router.get('/my-submissions', async (req, res) => {
           leader: { name: reg.leader_name, email: reg.leader_email, department: reg.leader_department },
           member2: { name: reg.member2_name, email: reg.member2_email, department: reg.member2_department },
           member3: { name: reg.member3_name, email: reg.member3_email, department: reg.member3_department }
-        }
+        },
+        projectTitle: reg.project_title,
+        innovationDomain: reg.innovation_domain,
+        problemArea: reg.problem_area,
+        proposedSolution: reg.proposed_solution,
+        expectedImpact: reg.expected_impact,
+        trlLevel: reg.trl_level
       };
 
       if (team) {

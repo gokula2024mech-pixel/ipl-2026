@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { X, Award, Lightbulb, Users, ArrowLeft, ArrowRight, Loader2, AlertCircle } from 'lucide-react'
+import { X, Award, Lightbulb, Users, ArrowLeft, ArrowRight, Loader2, AlertCircle, Download, Upload, FileText, AlertTriangle } from 'lucide-react'
 import { supabase } from '../supabaseClient'
 
 const rawApiUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000').trim().replace(/\/+$/, '')
@@ -110,12 +110,17 @@ function normalizeMentorDepartment(val) {
   return val;
 }
 
-export default function MySubmissionsModal({ isOpen, onClose }) {
+export default function MySubmissionsModal({ isOpen, onClose, mode = 'full' }) {
   const [submissions, setSubmissions] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [currentPageIndex, setCurrentPageIndex] = useState(0)
   const [userEmail, setUserEmail] = useState('')
+  const [phase1Active, setPhase1Active] = useState(false)
+  const [phase1Submissions, setPhase1Submissions] = useState([])
+  const [activeTemplates, setActiveTemplates] = useState([])
+  const [uploadingDocId, setUploadingDocId] = useState(null)
+  const [downloadingTemplateDocType, setDownloadingTemplateDocType] = useState(null)
 
   useEffect(() => {
     if (isOpen) {
@@ -133,6 +138,104 @@ export default function MySubmissionsModal({ isOpen, onClose }) {
       }
     }
   }, [isOpen])
+
+  const handleDownloadTemplate = async (documentType, filename) => {
+    try {
+      setDownloadingTemplateDocType(documentType)
+      const { data: { session } } = await supabase.auth.getSession()
+      const token = session?.access_token
+      if (!token) throw new Error('Authentication required.')
+
+      const response = await fetch(`${API_BASE_URL}/api/phase1/template/${documentType}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+
+      if (!response.ok) {
+        throw new Error('Unable to download template.')
+      }
+
+      const blob = await response.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename || `${documentType}.docx`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      window.URL.revokeObjectURL(url)
+    } catch (err) {
+      alert(err.message || 'Failed to download template.')
+    } finally {
+      setDownloadingTemplateDocType(null)
+    }
+  }
+
+  const handleDownload = async (fileId, originalName) => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const token = session?.access_token
+      if (!token) return
+
+      const response = await fetch(`${API_BASE_URL}/api/phase1/document/${fileId}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to download document')
+      }
+
+      const blob = await response.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = originalName
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      window.URL.revokeObjectURL(url)
+    } catch (err) {
+      alert(err.message)
+    }
+  }
+
+  const handleUpload = async (e, documentType) => {
+    const file = e.target.files[0]
+    if (!file) return
+
+    setUploadingDocId(documentType)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const token = session?.access_token
+      if (!token) throw new Error('Authentication required.')
+
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('documentType', documentType)
+
+      const response = await fetch(`${API_BASE_URL}/api/phase1/upload`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        },
+        body: formData
+      })
+
+      const result = await response.json()
+      if (!response.ok || !result.success) {
+        throw new Error(result.message || 'File upload failed.')
+      }
+
+      alert('Document uploaded successfully!')
+      await fetchSubmissions()
+    } catch (err) {
+      alert(err.message)
+    } finally {
+      setUploadingDocId(null)
+      e.target.value = ''
+    }
+  }
 
   const fetchSubmissions = async () => {
     setLoading(true)
@@ -163,6 +266,37 @@ export default function MySubmissionsModal({ isOpen, onClose }) {
       } else {
         throw new Error(data.message || 'Unable to retrieve submissions.')
       }
+
+      // 1. Fetch Phase 1 Active status directly from supabase
+      const { data: phaseData } = await supabase
+        .from('phases')
+        .select('timer_status')
+        .eq('phase_number', 1)
+        .maybeSingle()
+      setPhase1Active(phaseData?.timer_status === 'running')
+
+      // 2. Fetch Phase 1 submissions
+      const subsRes = await fetch(`${API_BASE_URL}/api/phase1/submissions`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+      if (subsRes.ok) {
+        const subsData = await subsRes.json()
+        if (subsData.success) {
+          setPhase1Submissions(subsData.submissions || [])
+        }
+      }
+
+      // 3. Fetch Phase 1 active templates
+      const templatesRes = await fetch(`${API_BASE_URL}/api/phase1/templates`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+      if (templatesRes.ok) {
+        const templatesData = await templatesRes.json()
+        if (templatesData.success) {
+          setActiveTemplates(templatesData.templates || [])
+        }
+      }
+
     } catch (err) {
       console.error('[MySubmissions] Error fetching submissions:', err)
       setError(err.message || 'Unable to load your submissions. Please try again.')
@@ -244,7 +378,7 @@ export default function MySubmissionsModal({ isOpen, onClose }) {
         {/* ==================== HEADER ==================== */}
         <div className="flex justify-between items-center px-6 py-4 border-b border-slate-100">
           <h2 className="text-base font-bold text-slate-950 flex items-center gap-2">
-            <Award className="text-accent" size={18} /> My Submissions
+            <Award className="text-accent" size={18} /> {mode === 'templates_only' ? 'Official Phase 1 Templates' : 'My Submissions'}
           </h2>
           <button
             type="button"
@@ -274,6 +408,49 @@ export default function MySubmissionsModal({ isOpen, onClose }) {
               >
                 Retry Fetch
               </button>
+            </div>
+          ) : mode === 'templates_only' ? (
+            <div className="space-y-4">
+              <div className="border border-slate-100 rounded-2xl p-5 space-y-4">
+                <div className="grid gap-3 grid-cols-1 sm:grid-cols-2">
+                  {[
+                    { id: 'FORM_2', label: 'Form 2 – To Grant', desc: 'Official Form 2 document template.' },
+                    { id: 'FORM_5', label: 'Form 5 – Declaration as to Inventorship', desc: 'Official Form 5 inventorship declaration template.' },
+                    { id: 'FIGURE_OF_ABSTRACT', label: 'Figure of Abstract', desc: 'Standard abstract figure drawing template.' },
+                    { id: 'LIST_OF_DRAWINGS', label: 'List of Drawings', desc: 'Standard list of patent drawings template.' }
+                  ].map((doc) => {
+                    const template = activeTemplates.find(t => t.document_type === doc.id)
+                    const filename = template ? template.filename : `${doc.id === 'FIGURE_OF_ABSTRACT' ? 'Figure of Abstract.png' : doc.id === 'LIST_OF_DRAWINGS' ? 'List of Drawings.pdf' : doc.id.replace(/_/g, ' ') + '.docx'}`
+                    const isDownloading = downloadingTemplateDocType === doc.id
+
+                    return (
+                      <div key={doc.id} className="p-4 bg-slate-50 border border-slate-100 rounded-xl flex flex-col justify-between gap-3 font-medium">
+                        <div>
+                          <span className="font-bold text-slate-900 text-xs md:text-sm block">{doc.label}</span>
+                          <span className="text-[10px] text-slate-400 font-medium block mt-0.5">{doc.desc}</span>
+                        </div>
+
+                        <button
+                          type="button"
+                          disabled={isDownloading}
+                          onClick={() => handleDownloadTemplate(doc.id, filename)}
+                          className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-700 bg-white hover:bg-slate-50 transition cursor-pointer disabled:opacity-50 w-full"
+                        >
+                          {isDownloading ? (
+                            <>
+                              <Loader2 className="animate-spin" size={12} /> Downloading...
+                            </>
+                          ) : (
+                            <>
+                              <Download size={12} /> Download Template
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
             </div>
           ) : totalPages === 0 ? (
             <div className="flex flex-col items-center text-center py-20 gap-4 text-slate-400">
@@ -390,6 +567,177 @@ export default function MySubmissionsModal({ isOpen, onClose }) {
                   )}
                 </div>
 
+                {/* Official Phase 1 Templates Card */}
+                <div className="border border-slate-100 rounded-2xl p-5 space-y-4">
+                  <div className="flex items-center justify-between border-b border-slate-50 pb-2">
+                    <h4 className="text-xs font-bold text-primary uppercase tracking-wider flex items-center gap-1.5">
+                      <FileText size={14} /> Official Phase 1 Templates
+                    </h4>
+                  </div>
+
+                  <div className="grid gap-3 grid-cols-1 sm:grid-cols-2">
+                    {[
+                      { id: 'FORM_2', label: 'Form 2 – To Grant', desc: 'Official Form 2 document template.' },
+                      { id: 'FORM_5', label: 'Form 5 – Declaration as to Inventorship', desc: 'Official Form 5 inventorship declaration template.' },
+                      { id: 'FIGURE_OF_ABSTRACT', label: 'Figure of Abstract', desc: 'Standard abstract figure drawing template.' },
+                      { id: 'LIST_OF_DRAWINGS', label: 'List of Drawings', desc: 'Standard list of patent drawings template.' }
+                    ].map((doc) => {
+                      const template = activeTemplates.find(t => t.document_type === doc.id)
+                      const filename = template ? template.filename : `${doc.id === 'FIGURE_OF_ABSTRACT' ? 'Figure of Abstract.png' : doc.id === 'LIST_OF_DRAWINGS' ? 'List of Drawings.pdf' : doc.id.replace(/_/g, ' ') + '.docx'}`
+                      const isDownloading = downloadingTemplateDocType === doc.id
+
+                      return (
+                        <div key={doc.id} className="p-4 bg-slate-50 border border-slate-100 rounded-xl flex flex-col justify-between gap-3 font-medium">
+                          <div>
+                            <span className="font-bold text-slate-900 text-xs md:text-sm block">{doc.label}</span>
+                            <span className="text-[10px] text-slate-400 font-medium block mt-0.5">{doc.desc}</span>
+                          </div>
+
+                          <button
+                            type="button"
+                            disabled={isDownloading}
+                            onClick={() => handleDownloadTemplate(doc.id, filename)}
+                            className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-700 bg-white hover:bg-slate-50 transition cursor-pointer disabled:opacity-50 w-full"
+                          >
+                            {isDownloading ? (
+                              <>
+                                <Loader2 className="animate-spin" size={12} /> Downloading...
+                              </>
+                            ) : (
+                              <>
+                                <Download size={12} /> Download Template
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                {/* Phase 1 Document Submissions Card */}
+                <div className="border border-slate-100 rounded-2xl p-5 space-y-5">
+                  <div className="flex items-center justify-between border-b border-slate-50 pb-2">
+                    <h4 className="text-xs font-bold text-accent uppercase tracking-wider flex items-center gap-1.5">
+                      <FileText size={14} /> Phase 1 Document Submission
+                    </h4>
+                    <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-sm border ${
+                      phase1Active
+                        ? 'bg-green-50 text-green-700 border-green-100'
+                        : 'bg-red-50 text-red-700 border-red-100'
+                    }`}>
+                      {phase1Active ? 'Submissions Open' : 'Submissions Closed'}
+                    </span>
+                  </div>
+
+                  <div className="space-y-4">
+                    {[
+                      { id: 'FORM_2', label: 'Form 2 – To Grant' },
+                      { id: 'FORM_5', label: 'Form 5 – Declaration as to Inventorship' },
+                      { id: 'FIGURE_OF_ABSTRACT', label: 'Figure of Abstract' },
+                      { id: 'LIST_OF_DRAWINGS', label: 'List of Drawings' }
+                    ].map((doc) => {
+                      const sub = phase1Submissions.find(s => s.document_type === doc.id)
+                      const isUploading = uploadingDocId === doc.id
+
+                      // Determine status
+                      let status = 'NOT_UPLOADED'
+                      let rejectionReason = ''
+                      if (sub) {
+                        status = sub.review_status // UPLOADED, UNDER_REVIEW, APPROVED, REJECTED
+                        rejectionReason = sub.rejection_reason
+                      }
+
+                      // Check disable conditions
+                      const canUpload = phase1Active && (status === 'NOT_UPLOADED' || status === 'REJECTED' || status === 'UPLOADED')
+
+                      return (
+                        <div key={doc.id} className="p-4 bg-slate-50 border border-slate-200/80 rounded-xl space-y-3">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                            <div>
+                              <span className="font-bold text-slate-900 text-sm">{doc.label}</span>
+                            </div>
+
+                            {/* Status Badge */}
+                            <span className={`text-[10px] font-extrabold uppercase tracking-wider px-2.5 py-0.5 rounded-full border w-fit ${
+                              status === 'APPROVED' ? 'bg-green-50 text-green-700 border-green-100' :
+                              status === 'REJECTED' ? 'bg-red-50 text-red-700 border-red-100' :
+                              status === 'UNDER_REVIEW' ? 'bg-blue-50 text-blue-700 border-blue-100' :
+                              status === 'UPLOADED' ? 'bg-amber-50 text-amber-700 border-amber-100' :
+                              'bg-slate-100 text-slate-500 border-slate-200'
+                            }`}>
+                              {status === 'NOT_UPLOADED' ? 'Not Uploaded' : status.replace(/_/g, ' ')}
+                            </span>
+                          </div>
+
+                          {/* Rejection Reason Alert */}
+                          {status === 'REJECTED' && rejectionReason && (
+                            <div className="bg-red-50 border border-red-100 text-red-700 rounded-lg p-3 text-xs">
+                              <span className="font-bold block uppercase tracking-wider text-[9px] mb-0.5">Rejection Reason:</span>
+                              <p className="font-medium select-text break-words">{rejectionReason}</p>
+                            </div>
+                          )}
+
+                          {/* Uploaded Filename Info */}
+                          {sub && (
+                            <div className="text-[11px] text-slate-500 font-medium space-y-0.5">
+                              <div className="flex items-center gap-1">
+                                <span className="text-slate-400">File:</span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDownload(sub.google_drive_file_id, sub.original_filename)}
+                                  className="text-primary hover:underline font-bold text-left break-all select-all focus:outline-none"
+                                >
+                                  {sub.original_filename}
+                                </button>
+                              </div>
+                              <div>
+                                <span className="text-slate-400">Uploaded on:</span>{' '}
+                                <span className="text-slate-700 font-bold">
+                                  {new Date(sub.uploaded_at).toLocaleString()}
+                                </span>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Action Buttons */}
+                          <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-200/50">
+
+                            {canUpload && (
+                              <label className={`relative inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-accent hover:bg-amber-600 shadow transition cursor-pointer ${
+                                isUploading ? 'opacity-50 pointer-events-none' : ''
+                              }`}>
+                                {isUploading ? (
+                                  <>
+                                    <Loader2 className="animate-spin" size={12} /> Uploading...
+                                  </>
+                                ) : (
+                                  <>
+                                    <Upload size={12} /> {status === 'NOT_UPLOADED' ? 'Upload Completed' : 'Upload Revised'}
+                                  </>
+                                )}
+                                <input
+                                  type="file"
+                                  disabled={isUploading}
+                                  onChange={(e) => handleUpload(e, doc.id)}
+                                  className="hidden"
+                                  accept=".pdf,.png,.jpg,.jpeg,.doc,.docx"
+                                />
+                              </label>
+                            )}
+
+                            {!phase1Active && (status === 'NOT_UPLOADED' || status === 'REJECTED') && (
+                              <span className="text-[10px] text-red-500 font-bold flex items-center gap-1">
+                                <AlertTriangle size={10} /> Uploads Closed (Phase 1 inactive)
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+
                 {/* Team members list */}
                 <div className="border border-slate-100 rounded-2xl p-5 space-y-4 bg-slate-50/30">
                   <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5 border-b border-slate-100 pb-2">
@@ -409,7 +757,7 @@ export default function MySubmissionsModal({ isOpen, onClose }) {
         </div>
 
         {/* ==================== FOOTER / PAGINATION ==================== */}
-        {totalPages > 0 && (
+        {mode !== 'templates_only' && totalPages > 0 && (
           <div className="px-6 py-4 border-t border-slate-100 flex items-center justify-between bg-slate-50/50">
             <button
               type="button"
