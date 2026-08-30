@@ -14,7 +14,20 @@ const NAV_LINKS = [
   { label: 'Contact', href: '#contact' },
 ]
 
-export default function Navbar({ onRegisterClick, user, profile, onProfileUpdate, onMySubmissionsClick }) {
+
+
+const MOBILE_NAV_LINKS = [
+  { label: 'Home', href: '#' },
+  { label: 'About IPL 2026', href: '#about' },
+  { label: 'Program Details', href: '#journey' },
+  { label: 'Timeline', href: '#timeline' },
+  { label: 'Domains', href: '#domains' },
+  { label: 'Guidelines', href: '#eligibility' },
+  { label: 'FAQs', href: '#' },
+  { label: 'Contact Us', href: '#contact' },
+]
+
+export default function Navbar({ onRegisterClick, user, profile, onProfileUpdate, onMySubmissionsClick, timeLeft: _timeLeft, onReturnToAdmin }) {
   const [mobileOpen, setMobileOpen] = useState(false)
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
@@ -388,10 +401,12 @@ export default function Navbar({ onRegisterClick, user, profile, onProfileUpdate
           )}
         </div>
 
+
+
         {/* ==================== MOBILE MENU BUTTON ==================== */}
         <button
           type="button"
-          className="rounded-lg p-2 text-slate-800 transition-colors hover:bg-slate-100 lg:hidden"
+          className="rounded-lg p-2 text-slate-800 transition-colors hover:bg-slate-100 lg:hidden shrink-0 cursor-pointer focus:outline-none"
           onClick={() => setMobileOpen((open) => !open)}
           aria-expanded={mobileOpen}
           aria-label={mobileOpen ? 'Close menu' : 'Open menu'}
@@ -416,8 +431,8 @@ export default function Navbar({ onRegisterClick, user, profile, onProfileUpdate
           >
             <ul className="flex flex-col gap-1 px-4 py-4">
               {/* Mobile Navigation Links */}
-              {NAV_LINKS.map((link) => (
-                <li key={link.href}>
+              {MOBILE_NAV_LINKS.map((link) => (
+                <li key={link.label}>
                   <a
                     href={link.href}
                     onClick={(e) => handleMobileNav(e, link.href)}
@@ -427,6 +442,23 @@ export default function Navbar({ onRegisterClick, user, profile, onProfileUpdate
                   </a>
                 </li>
               ))}
+
+              {profile?.role === 'admin' && (
+                <li className="border-t border-slate-100 mt-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMobileOpen(false)
+                      if (onReturnToAdmin) {
+                        onReturnToAdmin()
+                      }
+                    }}
+                    className="w-full text-left block rounded-lg px-4 py-3 text-base font-bold text-accent transition-all hover:bg-amber-50 hover:text-amber-700 active:bg-amber-100 cursor-pointer"
+                  >
+                    Return to Admin Console
+                  </button>
+                </li>
+              )}
 
               {/* Mobile User Section / Register / Logout */}
               {user ? (

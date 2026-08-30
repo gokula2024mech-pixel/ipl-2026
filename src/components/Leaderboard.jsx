@@ -265,7 +265,13 @@ export default function Leaderboard() {
               </div>
 
               {/* Chart Grid */}
-              <div className="overflow-x-auto w-full scrollbar-thin">
+              <div className="space-y-2">
+                <div className="block sm:hidden text-right">
+                  <span className="inline-flex items-center gap-1 text-[9px] font-bold text-slate-400 uppercase tracking-wider bg-slate-100 px-2 py-0.5 rounded-md">
+                    ← Scroll Chart →
+                  </span>
+                </div>
+                <div className="overflow-x-auto w-full scrollbar-thin">
                 <div className="flex justify-between items-end h-48 min-w-[640px] px-2 pb-2 relative">
                   {/* Grid Lines */}
                   <div className="absolute inset-0 flex flex-col justify-between pointer-events-none pb-12 pt-6">
@@ -300,6 +306,7 @@ export default function Leaderboard() {
                   })}
                 </div>
               </div>
+            </div>
             </div>
 
             {/* Summary Metrics Strip */}
@@ -375,8 +382,14 @@ export default function Leaderboard() {
             <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider mb-4 flex items-center gap-2">
               <Users size={16} className="text-primary" /> Team Rankings
             </h3>
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse text-left text-sm text-slate-600">
+            <div className="space-y-2">
+              <div className="block sm:hidden text-right">
+                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-100 px-2.5 py-1 rounded-md">
+                  ← Scroll Horizontally →
+                </span>
+              </div>
+              <div className="overflow-x-auto border border-slate-200 rounded-xl shadow-inner">
+                <table className="w-full border-collapse text-left text-sm text-slate-600 min-w-[700px]">
                 <thead className="bg-slate-50 text-[10px] font-bold text-slate-700 uppercase border-b border-slate-200">
                   <tr>
                     <th className="px-4 py-3 w-16">Rank</th>
@@ -425,6 +438,7 @@ export default function Leaderboard() {
                   })}
                 </tbody>
               </table>
+            </div>
             </div>
 
             {/* Pagination Controls */}
@@ -586,8 +600,14 @@ export default function Leaderboard() {
                 <Building size={14} className="text-primary" /> DEPARTMENT RANKINGS
               </h3>
 
-              <div className="overflow-x-auto border border-slate-150 rounded-2xl shadow-inner">
-                <table className="w-full border-collapse text-left text-sm text-slate-600">
+              <div className="space-y-2">
+                <div className="block sm:hidden text-right">
+                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-100 px-2.5 py-1 rounded-md">
+                    ← Scroll Horizontally →
+                  </span>
+                </div>
+                <div className="overflow-x-auto border border-slate-150 rounded-2xl shadow-inner">
+                  <table className="w-full border-collapse text-left text-sm text-slate-600 min-w-[600px]">
                   <thead className="bg-slate-50 text-[10px] font-bold text-slate-700 uppercase border-b border-slate-200">
                     <tr>
                       <th className="px-4 py-3 w-16">Rank</th>
@@ -636,6 +656,7 @@ export default function Leaderboard() {
                 </table>
               </div>
             </div>
+            </div>
 
             {/* RIGHT SIDE — TRL DISTRIBUTION CHART */}
             <div className="space-y-4 flex flex-col justify-between">
@@ -646,7 +667,13 @@ export default function Leaderboard() {
                 <p className="text-[11px] text-slate-400 font-medium mb-6">Department-wise team distribution across TRL levels</p>
 
                 {/* Stacked Chart Area */}
-                <div className="overflow-x-auto w-full scrollbar-thin">
+                <div className="space-y-2">
+                  <div className="block sm:hidden text-right">
+                    <span className="inline-flex items-center gap-1 text-[9px] font-bold text-slate-400 uppercase tracking-wider bg-slate-100 px-2 py-0.5 rounded-md">
+                      ← Scroll Chart →
+                    </span>
+                  </div>
+                  <div className="overflow-x-auto w-full scrollbar-thin">
                   <div className="flex justify-between items-end h-64 min-w-[400px] px-2 pb-2 relative gap-4">
                     {/* Grid Lines */}
                     <div className="absolute inset-0 flex flex-col justify-between pointer-events-none pb-12 pt-6">
@@ -690,6 +717,7 @@ export default function Leaderboard() {
                     })}
                   </div>
                 </div>
+              </div>
               </div>
 
               {/* Legend */}
@@ -847,8 +875,14 @@ export default function Leaderboard() {
                 <Compass size={14} className="text-primary" /> DOMAIN RANKINGS
               </h3>
 
-              <div className="overflow-x-auto border border-slate-150 rounded-2xl shadow-inner">
-                <table className="w-full border-collapse text-left text-sm text-slate-600">
+              <div className="space-y-2">
+                <div className="block sm:hidden text-right">
+                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-100 px-2.5 py-1 rounded-md">
+                    ← Scroll Horizontally →
+                  </span>
+                </div>
+                <div className="overflow-x-auto border border-slate-150 rounded-2xl shadow-inner">
+                  <table className="w-full border-collapse text-left text-sm text-slate-600 min-w-[650px]">
                   <thead className="bg-slate-50 text-[10px] font-bold text-slate-700 uppercase border-b border-slate-200">
                     <tr>
                       <th className="px-4 py-3 w-16">Rank</th>
@@ -897,6 +931,7 @@ export default function Leaderboard() {
                 </table>
               </div>
             </div>
+            </div>
 
             {/* RIGHT SIDE — TRL DISTRIBUTION CHART */}
             <div className="space-y-4 flex flex-col justify-between">
@@ -907,7 +942,13 @@ export default function Leaderboard() {
                 <p className="text-[11px] text-slate-400 font-medium mb-6">Domain-wise team distribution across TRL levels</p>
 
                 {/* Stacked Chart Area */}
-                <div className="overflow-x-auto w-full scrollbar-thin">
+                <div className="space-y-2">
+                  <div className="block sm:hidden text-right">
+                    <span className="inline-flex items-center gap-1 text-[9px] font-bold text-slate-400 uppercase tracking-wider bg-slate-100 px-2 py-0.5 rounded-md">
+                      ← Scroll Chart →
+                    </span>
+                  </div>
+                  <div className="overflow-x-auto w-full scrollbar-thin">
                   <div className="flex justify-between items-end h-64 min-w-[400px] px-2 pb-2 relative gap-4">
                     {/* Grid Lines */}
                     <div className="absolute inset-0 flex flex-col justify-between pointer-events-none pb-12 pt-6">
@@ -952,6 +993,7 @@ export default function Leaderboard() {
                   </div>
                 </div>
               </div>
+              </div>
 
               {/* Legend */}
               <div className="mt-4 flex flex-wrap gap-x-4 gap-y-2 justify-center text-[9px] font-bold uppercase tracking-wider text-slate-500 bg-slate-50 p-3 rounded-xl border border-slate-100">
@@ -993,10 +1035,10 @@ export default function Leaderboard() {
       {/* Tabs Menu */}
       <div className="mx-auto max-w-7xl px-4 md:px-6 lg:px-8 -mt-6 relative z-20">
         <div className="flex justify-center">
-          <div className="inline-flex rounded-2xl bg-white p-1 shadow-lg border border-slate-200/80 ring-1 ring-slate-100/50">
+          <div className="inline-flex rounded-2xl bg-white p-1 shadow-lg border border-slate-200/80 ring-1 ring-slate-100/50 max-w-full overflow-x-auto whitespace-nowrap scrollbar-none">
             <button
               onClick={() => { setActiveTab('overall'); setTeamsPage(1); }}
-              className={`inline-flex items-center gap-1.5 rounded-xl px-4 py-2.5 text-xs font-extrabold uppercase tracking-wider transition-all cursor-pointer ${
+              className={`inline-flex shrink-0 items-center gap-1.5 rounded-xl px-4 py-2.5 text-xs font-extrabold uppercase tracking-wider transition-all cursor-pointer ${
                 activeTab === 'overall'
                   ? 'bg-primary text-white shadow-sm'
                   : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'
@@ -1007,7 +1049,7 @@ export default function Leaderboard() {
             </button>
             <button
               onClick={() => { setActiveTab('department'); setTeamsPage(1); }}
-              className={`inline-flex items-center gap-1.5 rounded-xl px-4 py-2.5 text-xs font-extrabold uppercase tracking-wider transition-all cursor-pointer ${
+              className={`inline-flex shrink-0 items-center gap-1.5 rounded-xl px-4 py-2.5 text-xs font-extrabold uppercase tracking-wider transition-all cursor-pointer ${
                 activeTab === 'department'
                   ? 'bg-primary text-white shadow-sm'
                   : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'
@@ -1018,7 +1060,7 @@ export default function Leaderboard() {
             </button>
             <button
               onClick={() => { setActiveTab('domain'); setTeamsPage(1); }}
-              className={`inline-flex items-center gap-1.5 rounded-xl px-4 py-2.5 text-xs font-extrabold uppercase tracking-wider transition-all cursor-pointer ${
+              className={`inline-flex shrink-0 items-center gap-1.5 rounded-xl px-4 py-2.5 text-xs font-extrabold uppercase tracking-wider transition-all cursor-pointer ${
                 activeTab === 'domain'
                   ? 'bg-primary text-white shadow-sm'
                   : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'
@@ -1033,8 +1075,8 @@ export default function Leaderboard() {
 
       {/* Event KPI Summary Block */}
       <div className="mx-auto max-w-7xl px-4 md:px-6 lg:px-8 mt-10">
-        <div className="grid grid-cols-2 gap-4 md:grid-cols-5 mb-8">
-          <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm flex flex-col justify-between hover:shadow-md transition">
+        <div className="grid grid-cols-1 min-[360px]:grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 lg:grid-cols-5 mb-8">
+          <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-sm flex flex-col justify-between hover:shadow-md transition">
             <div className="flex items-center justify-between mb-3">
               <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Teams Registered</span>
               <div className="p-1.5 rounded-lg bg-blue-50 text-primary"><Users size={16} /></div>
@@ -1045,7 +1087,7 @@ export default function Leaderboard() {
             </div>
           </div>
 
-          <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm flex flex-col justify-between hover:shadow-md transition">
+          <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-sm flex flex-col justify-between hover:shadow-md transition">
             <div className="flex items-center justify-between mb-3">
               <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Students Participating</span>
               <div className="p-1.5 rounded-lg bg-amber-50 text-accent"><Award size={16} /></div>
@@ -1056,7 +1098,7 @@ export default function Leaderboard() {
             </div>
           </div>
 
-          <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm flex flex-col justify-between hover:shadow-md transition">
+          <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-sm flex flex-col justify-between hover:shadow-md transition">
             <div className="flex items-center justify-between mb-3">
               <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Ideas Submitted</span>
               <div className="p-1.5 rounded-lg bg-purple-50 text-purple-600"><Layers size={16} /></div>
@@ -1067,7 +1109,7 @@ export default function Leaderboard() {
             </div>
           </div>
 
-          <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm flex flex-col justify-between hover:shadow-md transition">
+          <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-sm flex flex-col justify-between hover:shadow-md transition">
             <div className="flex items-center justify-between mb-3">
               <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Departments</span>
               <div className="p-1.5 rounded-lg bg-emerald-50 text-emerald-600"><Building size={16} /></div>
@@ -1078,7 +1120,7 @@ export default function Leaderboard() {
             </div>
           </div>
 
-          <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm flex flex-col justify-between hover:shadow-md transition">
+          <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-sm flex flex-col justify-between hover:shadow-md transition">
             <div className="flex items-center justify-between mb-3">
               <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Innovation Domains</span>
               <div className="p-1.5 rounded-lg bg-orange-50 text-orange-600"><Cpu size={16} /></div>

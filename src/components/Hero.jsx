@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
-import { ArrowRight, Sparkles, X } from 'lucide-react'
+import { ArrowRight, Sparkles, X, Timer } from 'lucide-react'
 import { TAGLINE, SUB_TAGLINE, REGISTRATION_FORM_URL } from '../data/content'
 import { supabase } from '../supabaseClient'
 
@@ -30,46 +30,30 @@ const formatDateTime = (dateStr) => {
   return `${day} ${month} ${year}, ${hours}:${minutes} ${ampm}`
 }
 
-const renderHeroDates = (timeLeft) => {
-  const startStr = timeLeft.scheduled_start_at
-  const endStr = timeLeft.scheduled_end_at
-  if (!startStr || !endStr) return 'No configured dates'
-
-  const startFormatted = formatDateTime(startStr)
-  const endFormatted = formatDateTime(endStr)
-  if (!startFormatted || !endFormatted) return 'No configured dates'
-
-  if (timeLeft.status === 'upcoming') {
-    return (
-      <div className="flex flex-col gap-1 w-full text-slate-500 font-sans">
-        <div className="flex justify-between items-center text-[10px]">
-          <span className="text-[9px] tracking-wider text-amber-500 font-black uppercase">STARTS</span>
-          <span className="font-bold">{startFormatted}</span>
-        </div>
-        <div className="flex justify-between items-center text-[10px]">
-          <span className="text-[9px] tracking-wider text-amber-500 font-black uppercase">ENDS</span>
-          <span className="font-bold">{endFormatted}</span>
-        </div>
-      </div>
-    )
-  }
-
-  // Active / Paused / Closed
-  return (
-    <div className="flex flex-col gap-0.5 w-full text-slate-500 font-sans">
-      <div className="text-[9px] tracking-wider text-slate-400 font-black uppercase">TIMELINE</div>
-      <div className="flex items-center gap-1.5 text-[11px] font-bold">
-        <span>{startFormatted}</span>
-        <span className="text-amber-500">→</span>
-        <span>{endFormatted}</span>
-      </div>
-    </div>
-  )
+function getStatusLabel(status) {
+  if (status === 'running' || status === 'paused') return 'ACTIVE'
+  if (status === 'upcoming') return 'UPCOMING'
+  if (status === 'closed' || status === 'completed') return 'COMPLETED'
+  return 'EXPIRED'
 }
 
-// Embedded Floating Timer Component
-function HeroTimer({ timeLeft: propTimeLeft }) {
-  const [isTimerVisible, setIsTimerVisible] = useState(true)
+// Mapped status color
+function getStatusColor(status) {
+  if (status === 'running' || status === 'paused') return 'text-emerald-400'
+  if (status === 'upcoming') return 'text-blue-400'
+  return 'text-slate-400'
+}
+
+// Embedded Speedometer/Mechanical Timer Component
+function HeroTimer({
+  timeLeft: propTimeLeft,
+  isCollapsed,
+  setIsCollapsed,
+  position,
+  setPosition,
+  heroContentRef,
+  heroContainerRef
+}) {
   const [dbPhases, setDbPhases] = useState([])
   const [regTimer, setRegTimer] = useState(null)
   const [localTimeLeft, setLocalTimeLeft] = useState({
@@ -84,22 +68,17 @@ function HeroTimer({ timeLeft: propTimeLeft }) {
   })
 
   const timeLeft = propTimeLeft || localTimeLeft
-
-  // Dragging State
-  const [dragPosition, setDragPosition] = useState(null)
   const [isDragging, setIsDragging] = useState(false)
   const dragRef = useRef(null)
-  const cursorOffsetRef = useRef({ x: 0, y: 0 })
+  const startDragPos = useRef({ x: 0, y: 0 })
 
   const fetchTimerData = async () => {
     try {
-      // 1. Fetch registration timer
       const { data: regData, error: regError } = await supabase
         .from('registration_timer')
         .select('*')
         .maybeSingle()
 
-      // 2. Fetch phases
       const { data: phasesData, error: phasesError } = await supabase
         .from('phases')
         .select('*')
@@ -112,95 +91,83 @@ function HeroTimer({ timeLeft: propTimeLeft }) {
     }
   }
 
-  // Pointer Event Handlers for Dragging
-  const handlePointerDown = (e) => {
-    // Only allow left click (mouse) or touch inputs
-    if (e.button !== 0 && e.type === 'pointerdown') return
+  const getActiveTimerConfig = () => {
+    if (!regTimer || dbPhases.length === 0) return null
 
-    // Prevent dragging on interactive elements inside the card
-    if (e.target.closest('button') || e.target.closest('a') || e.target.closest('input')) {
-      return
+    if (regTimer.timer_status === 'running' || regTimer.timer_status === 'paused') {
+      return {
+        label: 'Registration Open',
+        status: regTimer.timer_status,
+        paused: regTimer.is_timer_paused,
+        remaining_seconds: regTimer.remaining_seconds,
+        scheduled_start_at: regTimer.scheduled_start_at,
+        scheduled_end_at: regTimer.scheduled_end_at
+      }
     }
 
-    const card = dragRef.current
-    if (!card) return
-
-    setIsDragging(true)
-    card.setPointerCapture(e.pointerId)
-
-    const rect = card.getBoundingClientRect()
-    cursorOffsetRef.current = {
-      x: e.clientX - rect.left,
-      y: e.clientY - rect.top
+    const activePhase = dbPhases.find(p => p.timer_status === 'running' || p.timer_status === 'paused')
+    if (activePhase) {
+      return {
+        label: activePhase.name,
+        status: activePhase.timer_status,
+        paused: activePhase.is_timer_paused,
+        remaining_seconds: activePhase.remaining_seconds,
+        scheduled_start_at: activePhase.scheduled_start_at,
+        scheduled_end_at: activePhase.scheduled_end_at
+      }
     }
 
-    setDragPosition({
-      left: rect.left,
-      top: rect.top
-    })
+    if (regTimer.timer_status === 'upcoming') {
+      return {
+        label: 'Registration',
+        status: regTimer.timer_status,
+        paused: false,
+        remaining_seconds: null,
+        scheduled_start_at: regTimer.scheduled_start_at,
+        scheduled_end_at: regTimer.scheduled_end_at
+      }
+    }
+
+    const upcomingPhase = dbPhases.find(p => p.timer_status === 'upcoming')
+    if (upcomingPhase) {
+      return {
+        label: upcomingPhase.name,
+        status: upcomingPhase.timer_status,
+        paused: false,
+        remaining_seconds: null,
+        scheduled_start_at: upcomingPhase.scheduled_start_at,
+        scheduled_end_at: upcomingPhase.scheduled_end_at
+      }
+    }
+
+    if (regTimer.scheduled_start_at && regTimer.scheduled_end_at) {
+      return {
+        label: 'Registration Closed',
+        status: 'closed',
+        paused: false,
+        remaining_seconds: 0,
+        scheduled_start_at: regTimer.scheduled_start_at,
+        scheduled_end_at: regTimer.scheduled_end_at
+      }
+    }
+
+    const lastPhase = dbPhases[dbPhases.length - 1]
+    if (lastPhase) {
+      return {
+        label: 'Registration Closed',
+        status: 'closed',
+        paused: false,
+        remaining_seconds: 0,
+        scheduled_start_at: lastPhase.scheduled_start_at,
+        scheduled_end_at: lastPhase.scheduled_end_at
+      }
+    }
+
+    return null
   }
-
-  const handlePointerMove = (e) => {
-    if (!isDragging || !dragPosition) return
-
-    const card = dragRef.current
-    if (!card) return
-
-    const rect = card.getBoundingClientRect()
-    const viewportWidth = window.innerWidth
-    const viewportHeight = window.innerHeight
-
-    let newLeft = e.clientX - cursorOffsetRef.current.x
-    let newTop = e.clientY - cursorOffsetRef.current.y
-
-    // Constrain position to completely keep card within the viewport bounds
-    newLeft = Math.max(0, Math.min(newLeft, Math.max(0, viewportWidth - rect.width)))
-    newTop = Math.max(0, Math.min(newTop, Math.max(0, viewportHeight - rect.height)))
-
-    setDragPosition({
-      left: newLeft,
-      top: newTop
-    })
-  }
-
-  const handlePointerUp = (e) => {
-    if (!isDragging) return
-    setIsDragging(false)
-    const card = dragRef.current
-    if (card) {
-      card.releasePointerCapture(e.pointerId)
-    }
-  }
-
-  // Clamp position on resize so card stays within the visible viewport bounds
-  useEffect(() => {
-    const handleResize = () => {
-      setDragPosition((prev) => {
-        if (!prev) return null
-        const card = dragRef.current
-        if (!card) return prev
-        const rect = card.getBoundingClientRect()
-        const viewportWidth = window.innerWidth
-        const viewportHeight = window.innerHeight
-        const newLeft = Math.max(0, Math.min(prev.left, Math.max(0, viewportWidth - rect.width)))
-        const newTop = Math.max(0, Math.min(prev.top, Math.max(0, viewportHeight - rect.height)))
-        return { left: newLeft, top: newTop }
-      })
-    }
-    window.addEventListener('resize', handleResize)
-    return () => window.removeEventListener('resize', handleResize)
-  }, [])
 
   useEffect(() => {
     fetchTimerData()
-
-    // Realtime channel subscriptions
-    const phasesChannel = supabase
-      .channel('hero-timer-phases')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'phases' }, () => {
-        fetchTimerData()
-      })
-      .subscribe()
 
     const regChannel = supabase
       .channel('hero-timer-registration')
@@ -209,99 +176,20 @@ function HeroTimer({ timeLeft: propTimeLeft }) {
       })
       .subscribe()
 
+    const phasesChannel = supabase
+      .channel('hero-timer-phases')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'phases' }, () => {
+        fetchTimerData()
+      })
+      .subscribe()
+
     return () => {
-      supabase.removeChannel(phasesChannel)
       supabase.removeChannel(regChannel)
+      supabase.removeChannel(phasesChannel)
     }
   }, [])
 
   useEffect(() => {
-    const getActiveTimerConfig = () => {
-      if (!regTimer || dbPhases.length === 0) return null
-
-      // 1. If Registration is running or paused
-      if (regTimer.timer_status === 'running' || regTimer.timer_status === 'paused') {
-        return {
-          label: 'Registration Open',
-          status: regTimer.timer_status,
-          paused: regTimer.is_timer_paused,
-          remaining_seconds: regTimer.remaining_seconds,
-          scheduled_start_at: regTimer.scheduled_start_at,
-          scheduled_end_at: regTimer.scheduled_end_at
-        }
-      }
-
-      // 2. Find a running or paused phase
-      const activePhase = dbPhases.find(p => p.timer_status === 'running' || p.timer_status === 'paused')
-      if (activePhase) {
-        return {
-          label: activePhase.name,
-          status: activePhase.timer_status,
-          paused: activePhase.is_timer_paused,
-          remaining_seconds: activePhase.remaining_seconds,
-          scheduled_start_at: activePhase.scheduled_start_at,
-          scheduled_end_at: activePhase.scheduled_end_at
-        }
-      }
-
-      // 3. Find next upcoming phase or registration
-      if (regTimer.timer_status === 'upcoming') {
-        return {
-          label: 'Registration',
-          status: regTimer.timer_status,
-          paused: false,
-          remaining_seconds: null,
-          scheduled_start_at: regTimer.scheduled_start_at,
-          scheduled_end_at: regTimer.scheduled_end_at
-        }
-      }
-
-      const upcomingPhase = dbPhases.find(p => p.timer_status === 'upcoming')
-      if (upcomingPhase) {
-        return {
-          label: upcomingPhase.name,
-          status: upcomingPhase.timer_status,
-          paused: false,
-          remaining_seconds: null,
-          scheduled_start_at: upcomingPhase.scheduled_start_at,
-          scheduled_end_at: upcomingPhase.scheduled_end_at
-        }
-      }
-
-      // 4. Closed/completed - fallback to the registration timer dates, or the last phase's dates
-      if (regTimer.scheduled_start_at && regTimer.scheduled_end_at) {
-        return {
-          label: 'Registration Closed',
-          status: 'closed',
-          paused: false,
-          remaining_seconds: 0,
-          scheduled_start_at: regTimer.scheduled_start_at,
-          scheduled_end_at: regTimer.scheduled_end_at
-        }
-      }
-
-      const lastPhase = dbPhases[dbPhases.length - 1]
-      if (lastPhase) {
-        return {
-          label: 'Registration Closed',
-          status: 'closed',
-          paused: false,
-          remaining_seconds: 0,
-          scheduled_start_at: lastPhase.scheduled_start_at,
-          scheduled_end_at: lastPhase.scheduled_end_at
-        }
-      }
-
-      return {
-        label: 'Registration Closed',
-        status: 'closed',
-        paused: false,
-        remaining_seconds: 0,
-        scheduled_start_at: null,
-        scheduled_end_at: null
-      }
-    }
-
     const timer = setInterval(() => {
       const config = getActiveTimerConfig()
       if (!config) return
@@ -352,25 +240,202 @@ function HeroTimer({ timeLeft: propTimeLeft }) {
     }, 1000)
 
     return () => clearInterval(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dbPhases, regTimer])
 
-  // Custom styles for dragging behavior with a subtle 2-degree tilt
-  const dragStyle = dragPosition
-    ? {
-        position: 'fixed',
-        left: `${dragPosition.left}px`,
-        top: `${dragPosition.top}px`,
-        margin: 0,
-        zIndex: 9999,
-        touchAction: 'none',
-        transform: 'rotate(-2deg)'
+  // Auto-collapse when scrolling away from Hero section
+  useEffect(() => {
+    const handleScroll = () => {
+      if (typeof window !== 'undefined' && window.scrollY > 10) {
+        setIsCollapsed(true)
       }
-    : {
-        touchAction: 'none',
-        transform: 'rotate(-2deg)'
+    }
+    window.addEventListener('scroll', handleScroll, { passive: true })
+    if (typeof window !== 'undefined' && window.scrollY > 10) {
+      setIsCollapsed(true)
+    }
+    return () => window.removeEventListener('scroll', handleScroll)
+  }, [setIsCollapsed])
+
+  // Calculate safe initial placement based on screensize & overlap checking
+  const calculateSafePosition = (timerWidth, timerHeight) => {
+    if (!heroContainerRef.current) return { x: 0, y: 96 }
+
+    const containerRect = heroContainerRef.current.getBoundingClientRect()
+    const w = containerRect.width
+    const h = containerRect.height
+    const navbarHeight = 80
+    const margin = 12
+
+    // Default top-right position
+    const initX = Math.max(margin, w - timerWidth - margin - 16)
+    const initY = navbarHeight + 8
+
+    // On mobile, check if this overlaps with the centered hero content
+    if (w < 768 && heroContentRef && heroContentRef.current) {
+      const heroRect = heroContentRef.current.getBoundingClientRect()
+
+      const relHeroRect = {
+        left: heroRect.left - containerRect.left,
+        right: heroRect.right - containerRect.left,
+        top: heroRect.top - containerRect.top,
+        bottom: heroRect.bottom - containerRect.top
       }
 
-  if (!isTimerVisible) return null
+      // Predefined candidate positions (relative to container)
+      const candidates = [
+        { x: w - timerWidth - margin, y: navbarHeight + 8 }, // top-right
+        { x: margin, y: h - timerHeight - margin },          // bottom-left
+        { x: w - timerWidth - margin, y: h - timerHeight - margin }, // bottom-right
+        { x: margin, y: navbarHeight + 8 }                   // top-left
+      ]
+
+      const safeCandidates = candidates.filter(c => {
+        const timerRect = {
+          left: c.x,
+          right: c.x + timerWidth,
+          top: c.y,
+          bottom: c.y + timerHeight
+        }
+        // Collision check
+        const overlap = !(
+          timerRect.right < relHeroRect.left ||
+          timerRect.left > relHeroRect.right ||
+          timerRect.bottom < relHeroRect.top ||
+          timerRect.top > relHeroRect.bottom
+        )
+        return !overlap
+      })
+
+      if (safeCandidates.length > 0) {
+        return { x: safeCandidates[0].x, y: safeCandidates[0].y }
+      }
+    }
+
+    return { x: initX, y: initY }
+  }
+
+  // Set initial safe position on mount
+  useEffect(() => {
+    if (!isCollapsed && !position && dragRef.current) {
+      const rect = dragRef.current.getBoundingClientRect()
+      const safePos = calculateSafePosition(rect.width, rect.height)
+      setPosition(safePos)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isCollapsed, position])
+
+  // Dragging interaction events
+  const handlePointerDown = (e) => {
+    if (e.target.closest('.close-btn-class')) return
+
+    if (dragRef.current && heroContainerRef.current) {
+      dragRef.current.setPointerCapture(e.pointerId)
+      setIsDragging(true)
+
+      const cardRect = dragRef.current.getBoundingClientRect()
+      startDragPos.current = {
+        x: e.clientX - cardRect.left,
+        y: e.clientY - cardRect.top
+      }
+    }
+  }
+
+  const handlePointerMove = (e) => {
+    if (!isDragging || !dragRef.current || !heroContainerRef.current) return
+
+    const containerRect = heroContainerRef.current.getBoundingClientRect()
+    const cardRect = dragRef.current.getBoundingClientRect()
+
+    let newX = (e.clientX - containerRect.left) - startDragPos.current.x
+    let newY = (e.clientY - containerRect.top) - startDragPos.current.y
+
+    const margin = 12
+    const navbarHeight = 80
+
+    const maxX = containerRect.width - cardRect.width - margin
+    const maxY = containerRect.height - cardRect.height - margin
+
+    newX = Math.max(margin, Math.min(newX, maxX))
+    newY = Math.max(navbarHeight + 8, Math.min(newY, maxY))
+
+    setPosition({ x: newX, y: newY })
+  }
+
+  const handlePointerUp = (e) => {
+    if (isDragging) {
+      setIsDragging(false)
+      if (dragRef.current) {
+        dragRef.current.releasePointerCapture(e.pointerId)
+      }
+    }
+  }
+
+  // Handle window resizing and layout changes
+  useEffect(() => {
+    const handleResize = () => {
+      if (position && dragRef.current && heroContainerRef.current) {
+        const containerRect = heroContainerRef.current.getBoundingClientRect()
+        const cardRect = dragRef.current.getBoundingClientRect()
+        const margin = 12
+        const navbarHeight = 80
+
+        const maxX = containerRect.width - cardRect.width - margin
+        const maxY = containerRect.height - cardRect.height - margin
+
+        const clampedX = Math.max(margin, Math.min(position.x, maxX))
+        const clampedY = Math.max(navbarHeight + 8, Math.min(position.y, maxY))
+
+        if (clampedX !== position.x || clampedY !== position.y) {
+          setPosition({ x: clampedX, y: clampedY })
+        }
+      }
+    }
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [position, setPosition, heroContainerRef])
+
+  if (!timeLeft) return null
+
+  if (isCollapsed) {
+    return (
+      <button
+        type="button"
+        onClick={() => setIsCollapsed(false)}
+        aria-label="Open timer"
+        className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-[100] flex h-10 w-10 sm:h-12 sm:w-12 items-center justify-center rounded-full bg-slate-950/80 hover:bg-slate-900 border border-white/10 text-white shadow-lg hover:scale-105 transition-all focus:outline-none focus:ring-2 focus:ring-accent cursor-pointer animate-pulse"
+      >
+        <Timer size={20} className="text-accent" />
+      </button>
+    )
+  }
+
+  const totalHours = (timeLeft.days || 0) * 24 + (timeLeft.hours || 0)
+  const minutes = timeLeft.minutes || 0
+  const seconds = timeLeft.seconds || 0
+
+  const totalHoursStr = String(totalHours).padStart(2, '0')
+  const minutesStr = String(minutes).padStart(2, '0')
+  const secondsStr = String(seconds).padStart(2, '0')
+
+  const start = new Date(timeLeft.scheduled_start_at).getTime()
+  const end = new Date(timeLeft.scheduled_end_at).getTime()
+  const total = end - start
+  const elapsed = Date.now() - start
+  let percent = 0
+  if (total > 0) {
+    percent = Math.min(100, Math.max(0, (elapsed / total) * 100))
+  }
+  const needleAngle = -225 + (percent / 100) * 270
+
+  const statusLabel = getStatusLabel(timeLeft.status)
+  const statusColor = getStatusColor(timeLeft.status)
+  const phaseLabel = String(timeLeft.label || 'REGISTRATION').toUpperCase()
+
+  const startFormatted = formatDateTime(timeLeft.scheduled_start_at)
+  const endFormatted = formatDateTime(timeLeft.scheduled_end_at)
+
+  const ariaLabel = `${phaseLabel} phase. ${totalHours} hours, ${minutes} minutes, ${seconds} seconds remaining. Starts ${startFormatted} and ends ${endFormatted}. Status: ${statusLabel}.`
 
   return (
     <div
@@ -378,68 +443,106 @@ function HeroTimer({ timeLeft: propTimeLeft }) {
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
-      style={dragStyle}
-      className={`w-[calc(100%-24px)] max-w-[320px] bg-white rounded-2xl border border-slate-200/80 border-t-4 border-t-accent p-4 sm:p-5 shadow-xl flex flex-col gap-4 text-left select-none shrink-0 ${
-        isDragging ? 'cursor-grabbing' : 'cursor-grab'
-      } ${
-        !dragPosition
-          ? 'fixed bottom-6 left-1/2 -translate-x-1/2 md:top-28 md:right-16 md:bottom-auto md:left-auto md:translate-x-0 z-50'
-          : 'fixed z-50'
+      style={{
+        position: 'absolute',
+        left: position ? `${position.x}px` : 'auto',
+        top: position ? `${position.y}px` : '96px',
+        right: position ? 'auto' : '16px',
+        touchAction: 'none',
+        zIndex: 99,
+        width: 'min(calc(100vw - 24px), 310px)'
+      }}
+      className={`select-none cursor-grab active:cursor-grabbing max-w-full ${
+        isDragging ? 'cursor-grabbing' : ''
       }`}
     >
-      <button
-        type="button"
-        onClick={() => setIsTimerVisible(false)}
-        aria-label="Close timer"
-        className="absolute top-2 right-2 flex h-8 w-8 items-center justify-center rounded-full bg-slate-50 border border-slate-200/60 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-all focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-1 z-50 cursor-pointer"
+      <div
+        className="relative flex items-center gap-3.5 bg-slate-955/80 backdrop-blur-md rounded-2xl p-3 border border-white/10 text-white w-full shrink-0 font-sans shadow-lg select-none"
+        aria-label={ariaLabel}
+        title={ariaLabel}
       >
-        <X size={14} />
-      </button>
+        {/* Close Button */}
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            setIsCollapsed(true)
+          }}
+          aria-label="Close timer"
+          className="close-btn-class absolute top-2 right-2 flex h-6 w-6 items-center justify-center rounded-full bg-white/10 hover:bg-white/20 border border-white/10 text-white hover:text-white transition-all focus:outline-none cursor-pointer z-[101]"
+        >
+          <X size={12} />
+        </button>
 
-      {/* Status Indicators & Title */}
-      <div className="flex items-center justify-between pointer-events-none pr-8">
-        <div className="flex items-center gap-1.5 min-w-0">
-          <span className={`h-2.5 w-2.5 rounded-full shrink-0 ${
-            timeLeft.status === 'running' ? 'bg-green-500 animate-pulse' :
-            timeLeft.status === 'paused' ? 'bg-amber-500' : 'bg-slate-400'
-          }`} />
-          <span className="text-xs font-extrabold text-slate-800 tracking-tight truncate" title={timeLeft.label}>
-            {timeLeft.label}
-          </span>
-        </div>
-        <span className="text-[10px] font-black text-slate-700 tracking-wider uppercase shrink-0">IPL 2026</span>
-      </div>
+        {/* Speedometer Dial Gauge */}
+        <div className="shrink-0 flex items-center justify-center">
+          <svg className="w-16 h-16 sm:w-24 sm:h-24" viewBox="0 0 100 100">
+            <circle cx="50" cy="50" r="44" fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="1.5" />
+            <circle cx="50" cy="50" r="41" fill="none" stroke="rgba(255,255,255,0.15)" strokeWidth="0.5" />
 
-      {/* Date Range */}
-      <div className="text-[11px] font-bold text-slate-400 leading-normal pointer-events-none w-full">
-        {renderHeroDates(timeLeft)}
-      </div>
+            <path
+              d="M 21.7 78.3 A 40 40 0 1 1 78.3 78.3"
+              fill="none"
+              stroke="rgba(255,255,255,0.06)"
+              strokeWidth="4"
+              strokeLinecap="round"
+            />
 
-      {/* Countdown Grid (Integer Blocks) */}
-      <div className="grid grid-cols-4 gap-2 text-center pointer-events-none w-full">
-        <div className="bg-slate-50 rounded-lg p-2 border border-slate-100/80 min-w-0">
-          <span className="font-mono text-lg sm:text-xl font-black text-slate-900 leading-none break-words block">
-            {String(timeLeft.days).padStart(2, '0')}
-          </span>
-          <span className="block text-[8px] font-extrabold text-slate-400 tracking-wider mt-1 truncate">DAYS</span>
+            <path
+              d="M 21.7 78.3 A 40 40 0 1 1 78.3 78.3"
+              fill="none"
+              stroke="rgba(255,255,255,0.25)"
+              strokeWidth="3.5"
+              strokeDasharray="1.5 5.5"
+              strokeLinecap="round"
+            />
+
+            <circle cx="50" cy="50" r="6" fill="#1e293b" />
+
+            <line
+              x1="50"
+              y1="50"
+              x2="50"
+              y2="15"
+              stroke="#f59e0b"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              transform={`rotate(${needleAngle} 50 50)`}
+              className="transition-transform duration-1000 ease-out"
+            />
+
+            <circle cx="50" cy="50" r="4.5" fill="#f59e0b" />
+            <circle cx="50" cy="50" r="2" fill="#b45309" />
+          </svg>
         </div>
-        <div className="bg-slate-50 rounded-lg p-2 border border-slate-100/80 min-w-0">
-          <span className="font-mono text-lg sm:text-xl font-black text-slate-900 leading-none break-words block">
-            {String(timeLeft.hours).padStart(2, '0')}
-          </span>
-          <span className="block text-[8px] font-extrabold text-slate-400 tracking-wider mt-1 truncate">HOURS</span>
-        </div>
-        <div className="bg-slate-50 rounded-lg p-2 border border-slate-100/80 min-w-0">
-          <span className="font-mono text-lg sm:text-xl font-black text-slate-900 leading-none break-words block">
-            {String(timeLeft.minutes).padStart(2, '0')}
-          </span>
-          <span className="block text-[8px] font-extrabold text-slate-400 tracking-wider mt-1 truncate">MINS</span>
-        </div>
-        <div className="bg-slate-50 rounded-lg p-2 border border-slate-100/80 min-w-0">
-          <span className="font-mono text-lg sm:text-xl font-black text-slate-900 leading-none break-words block">
-            {String(timeLeft.seconds).padStart(2, '0')}
-          </span>
-          <span className="block text-[8px] font-extrabold text-slate-400 tracking-wider mt-1 truncate">SECS</span>
+
+        {/* Text Details */}
+        <div className="flex-grow min-w-0 flex flex-col justify-between text-left pr-4">
+          <div>
+            <div className="flex items-center justify-between gap-2 mb-0.5">
+              <span className="text-[9px] sm:text-[10px] font-black tracking-wider text-accent truncate uppercase">
+                {phaseLabel}
+              </span>
+              <span className={`text-[8px] sm:text-[9px] font-black tracking-widest uppercase ${statusColor} shrink-0 px-1.5 py-0.5 bg-white/5 rounded-sm border border-white/5`}>
+                {statusLabel}
+              </span>
+            </div>
+
+            <div className="text-lg sm:text-2xl font-black text-slate-100 tracking-tight font-mono leading-none my-1 select-none">
+              {totalHoursStr} : {minutesStr} : {secondsStr}
+            </div>
+          </div>
+
+          <div className="mt-1 pt-1.5 border-t border-white/5 flex flex-col gap-0.5 text-[8px] sm:text-[9px] leading-tight text-slate-400 font-medium">
+            <div className="flex justify-between items-center">
+              <span className="text-[7px] sm:text-[8px] text-slate-500 uppercase font-bold tracking-wider mr-2">START</span>
+              <span className="font-mono text-slate-300">{startFormatted || 'N/A'}</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-[7px] sm:text-[8px] text-slate-500 uppercase font-bold tracking-wider mr-2">END</span>
+              <span className="font-mono text-slate-300">{endFormatted || 'N/A'}</span>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -447,6 +550,11 @@ function HeroTimer({ timeLeft: propTimeLeft }) {
 }
 
 export default function Hero({ onRegisterClick, timeLeft }) {
+  const [isCollapsed, setIsCollapsed] = useState(false)
+  const [timerPosition, setTimerPosition] = useState(null)
+  const heroContentRef = useRef(null)
+  const heroContainerRef = useRef(null)
+
   const handleRegister = (e) => {
     if (onRegisterClick) {
       e.preventDefault()
@@ -456,6 +564,7 @@ export default function Hero({ onRegisterClick, timeLeft }) {
 
   return (
     <section
+      ref={heroContainerRef}
       id="hero"
       className="relative flex min-h-screen items-center justify-center overflow-hidden bg-primary pt-24 pb-12"
       aria-label="Hero"
@@ -491,6 +600,7 @@ export default function Hero({ onRegisterClick, timeLeft }) {
       <div className="relative mx-auto max-w-4xl px-4 py-16 md:px-6 lg:px-8 lg:py-24 w-full flex flex-col items-center text-center">
         {/* Centered Hero Content Block */}
         <motion.div
+          ref={heroContentRef}
           initial={{ opacity: 0, y: 40 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
@@ -554,7 +664,15 @@ export default function Hero({ onRegisterClick, timeLeft }) {
       </div>
 
       {/* Floating Draggable Timer Card */}
-      <HeroTimer timeLeft={timeLeft} />
+      <HeroTimer
+        timeLeft={timeLeft}
+        isCollapsed={isCollapsed}
+        setIsCollapsed={setIsCollapsed}
+        position={timerPosition}
+        setPosition={setTimerPosition}
+        heroContentRef={heroContentRef}
+        heroContainerRef={heroContainerRef}
+      />
     </section>
   )
 }

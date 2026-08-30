@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { supabase } from "../supabaseClient";
 import {
   Menu,
@@ -14,7 +14,9 @@ import {
   UserPlus,
   BookOpen,
   Download,
-  ShieldAlert
+  ShieldAlert,
+  X,
+  Timer
 } from "lucide-react";
 
 const parseDurationToSeconds = (durationText) => {
@@ -228,7 +230,301 @@ const EXPORT_COLUMN_GROUPS = [
   }
 ];
 
-export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
+function formatPhaseDate(dateStr) {
+  if (!dateStr) return "";
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return "";
+
+  const day = d.getDate();
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const month = months[d.getMonth()];
+  const year = d.getFullYear();
+
+  let hours = d.getHours();
+  const minutes = String(d.getMinutes()).padStart(2, "0");
+  const ampm = hours >= 12 ? "PM" : "AM";
+  hours = hours % 12;
+  hours = hours ? hours : 12;
+
+  return `${day} ${month} ${year}, ${hours}:${minutes} ${ampm}`;
+}
+
+
+
+function getStatusLabel(status) {
+  if (status === 'running' || status === 'paused') return 'ACTIVE';
+  if (status === 'upcoming') return 'UPCOMING';
+  if (status === 'closed' || status === 'completed') return 'COMPLETED';
+  return 'EXPIRED';
+}
+
+function getStatusColor(status) {
+  if (status === 'running' || status === 'paused') return 'text-emerald-600 bg-emerald-50 border-emerald-100';
+  if (status === 'upcoming') return 'text-blue-600 bg-blue-50 border-blue-100';
+  return 'text-slate-500 bg-slate-50 border-slate-100';
+}
+
+function AdminMechanicalTimer({ timeLeft, isCollapsed, setIsCollapsed, position, setPosition, containerRef }) {
+  const [isDragging, setIsDragging] = useState(false)
+  const dragRef = useRef(null)
+  const startDragPos = useRef({ x: 0, y: 0 })
+
+  const calculateSafePosition = (timerWidth, _timerHeight) => {
+    if (!containerRef.current) return { x: 0, y: 8 }
+
+    const containerRect = containerRef.current.getBoundingClientRect()
+    const w = containerRect.width
+    const margin = 12
+
+    // Default top-right position
+    const initX = Math.max(margin, w - timerWidth - margin - 16)
+    const initY = 8
+
+    return { x: initX, y: initY }
+  }
+
+  useEffect(() => {
+    if (!isCollapsed && !position && dragRef.current) {
+      const rect = dragRef.current.getBoundingClientRect()
+      const safePos = calculateSafePosition(rect.width, rect.height)
+      setPosition(safePos)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isCollapsed, position])
+
+  const handlePointerDown = (e) => {
+    if (e.target.closest('.close-btn-class')) return
+
+    if (dragRef.current && containerRef.current) {
+      dragRef.current.setPointerCapture(e.pointerId)
+      setIsDragging(true)
+
+      const cardRect = dragRef.current.getBoundingClientRect()
+      startDragPos.current = {
+        x: e.clientX - cardRect.left,
+        y: e.clientY - cardRect.top
+      }
+    }
+  }
+
+  const handlePointerMove = (e) => {
+    if (!isDragging || !dragRef.current || !containerRef.current) return
+
+    const containerRect = containerRef.current.getBoundingClientRect()
+    const cardRect = dragRef.current.getBoundingClientRect()
+
+    let newX = (e.clientX - containerRect.left) - startDragPos.current.x
+    let newY = (e.clientY - containerRect.top) - startDragPos.current.y
+
+    const margin = 12
+    const maxX = containerRect.width - cardRect.width - margin
+    const maxY = containerRect.height - cardRect.height - margin
+
+    newX = Math.max(margin, Math.min(newX, maxX))
+    newY = Math.max(8, Math.min(newY, maxY))
+
+    setPosition({ x: newX, y: newY })
+  }
+
+  const handlePointerUp = (e) => {
+    if (isDragging) {
+      setIsDragging(false)
+      if (dragRef.current) {
+        dragRef.current.releasePointerCapture(e.pointerId)
+      }
+    }
+  }
+
+  useEffect(() => {
+    const handleResize = () => {
+      if (position && dragRef.current && containerRef.current) {
+        const containerRect = containerRef.current.getBoundingClientRect()
+        const cardRect = dragRef.current.getBoundingClientRect()
+        const margin = 12
+
+        const maxX = containerRect.width - cardRect.width - margin
+        const maxY = containerRect.height - cardRect.height - margin
+
+        const clampedX = Math.max(margin, Math.min(position.x, maxX))
+        const clampedY = Math.max(8, Math.min(position.y, maxY))
+
+        if (clampedX !== position.x || clampedY !== position.y) {
+          setPosition({ x: clampedX, y: clampedY })
+        }
+      }
+    }
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [position, setPosition, containerRef])
+
+  // Auto-collapse when scrolling
+  useEffect(() => {
+    const handleScroll = () => {
+      if (typeof window !== 'undefined' && window.scrollY > 10) {
+        setIsCollapsed(true)
+      }
+    }
+    window.addEventListener('scroll', handleScroll, { passive: true })
+    if (typeof window !== 'undefined' && window.scrollY > 10) {
+      setIsCollapsed(true)
+    }
+    return () => window.removeEventListener('scroll', handleScroll)
+  }, [setIsCollapsed])
+
+  if (!timeLeft) return null
+
+  if (isCollapsed) {
+    return (
+      <button
+        type="button"
+        onClick={() => setIsCollapsed(false)}
+        aria-label="Open timer"
+        className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-[100] flex h-10 w-10 sm:h-12 sm:w-12 items-center justify-center rounded-full bg-white border border-slate-200 text-slate-800 shadow-md hover:scale-105 transition-all focus:outline-none focus:ring-2 focus:ring-accent cursor-pointer animate-pulse"
+      >
+        <Timer size={20} className="text-accent" />
+      </button>
+    )
+  }
+
+  const totalHours = (timeLeft.days || 0) * 24 + (timeLeft.hours || 0);
+  const minutes = timeLeft.minutes || 0;
+  const seconds = timeLeft.seconds || 0;
+
+  const totalHoursStr = String(totalHours).padStart(2, "0");
+  const minutesStr = String(minutes).padStart(2, "0");
+  const secondsStr = String(seconds).padStart(2, "0");
+
+  const start = new Date(timeLeft.scheduled_start_at).getTime();
+  const end = new Date(timeLeft.scheduled_end_at).getTime();
+  const total = end - start;
+  const elapsed = Date.now() - start;
+  let percent = 0;
+  if (total > 0) {
+    percent = Math.min(100, Math.max(0, (elapsed / total) * 100));
+  }
+  const needleAngle = -225 + (percent / 100) * 270;
+
+  const statusLabel = getStatusLabel(timeLeft.status);
+  const statusColor = getStatusColor(timeLeft.status);
+  const phaseLabel = String(timeLeft.label || 'REGISTRATION').toUpperCase();
+
+  const startFormatted = formatPhaseDate(timeLeft.scheduled_start_at);
+  const endFormatted = formatPhaseDate(timeLeft.scheduled_end_at);
+
+  const ariaLabel = `${phaseLabel} phase. ${totalHours} hours, ${minutes} minutes, ${seconds} seconds remaining. Starts ${startFormatted} and ends ${endFormatted}. Status: ${statusLabel}.`;
+
+  return (
+    <div
+      ref={dragRef}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      style={{
+        position: 'absolute',
+        left: position ? `${position.x}px` : 'auto',
+        top: position ? `${position.y}px` : '8px',
+        right: position ? 'auto' : '16px',
+        touchAction: 'none',
+        zIndex: 99
+      }}
+      className={`select-none cursor-grab active:cursor-grabbing max-w-full ${
+        isDragging ? 'cursor-grabbing' : ''
+      }`}
+    >
+      <div
+        className="relative flex items-center gap-3.5 bg-white/80 backdrop-blur-md rounded-2xl p-3 border border-slate-200 text-slate-800 w-[calc(100vw-24px)] min-[340px]:w-[310px] sm:w-[340px] shrink-0 font-sans shadow-md select-none"
+        aria-label={ariaLabel}
+        title={ariaLabel}
+      >
+        {/* Close Button */}
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            setIsCollapsed(true)
+          }}
+          aria-label="Close timer"
+          className="close-btn-class absolute top-2 right-2 flex h-6 w-6 items-center justify-center rounded-full bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-400 hover:text-slate-600 transition-all focus:outline-none cursor-pointer z-[101]"
+        >
+          <X size={12} />
+        </button>
+
+        {/* Speedometer Dial Gauge */}
+        <div className="shrink-0 flex items-center justify-center">
+          <svg className="w-16 h-16 sm:w-24 sm:h-24" viewBox="0 0 100 100">
+            <circle cx="50" cy="50" r="44" fill="none" stroke="rgba(0,0,0,0.04)" strokeWidth="1.5" />
+            <circle cx="50" cy="50" r="41" fill="none" stroke="rgba(0,0,0,0.08)" strokeWidth="0.5" />
+
+            <path
+              d="M 21.7 78.3 A 40 40 0 1 1 78.3 78.3"
+              fill="none"
+              stroke="rgba(0,0,0,0.03)"
+              strokeWidth="4"
+              strokeLinecap="round"
+            />
+
+            <path
+              d="M 21.7 78.3 A 40 40 0 1 1 78.3 78.3"
+              fill="none"
+              stroke="rgba(0,0,0,0.15)"
+              strokeWidth="3.5"
+              strokeDasharray="1.5 5.5"
+              strokeLinecap="round"
+            />
+
+            <circle cx="50" cy="50" r="6" fill="#f8fafc" stroke="rgba(0,0,0,0.1)" strokeWidth="0.5" />
+
+            <line
+              x1="50"
+              y1="50"
+              x2="50"
+              y2="15"
+              stroke="#f59e0b"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              transform={`rotate(${needleAngle} 50 50)`}
+              className="transition-transform duration-1000 ease-out"
+            />
+
+            <circle cx="50" cy="50" r="4.5" fill="#f59e0b" />
+            <circle cx="50" cy="50" r="2" fill="#b45309" />
+          </svg>
+        </div>
+
+        {/* Text Details */}
+        <div className="flex-grow min-w-0 flex flex-col justify-between text-left pr-4">
+          <div>
+            <div className="flex items-center justify-between gap-2 mb-0.5">
+              <span className="text-[9px] sm:text-[10px] font-black tracking-wider text-accent truncate uppercase">
+                {phaseLabel}
+              </span>
+              <span className={`text-[8px] sm:text-[9px] font-black tracking-widest uppercase ${statusColor} shrink-0 px-1.5 py-0.5 rounded-sm border`}>
+                {statusLabel}
+              </span>
+            </div>
+
+            <div className="text-lg sm:text-2xl font-black text-slate-800 tracking-tight font-mono leading-none my-1 select-none">
+              {totalHoursStr} : {minutesStr} : {secondsStr}
+            </div>
+          </div>
+
+          <div className="mt-1 pt-1.5 border-t border-slate-100 flex flex-col gap-0.5 text-[8px] sm:text-[9px] leading-tight text-slate-500 font-medium">
+            <div className="flex justify-between items-center">
+              <span className="text-[7px] sm:text-[8px] text-slate-400 uppercase font-bold tracking-wider mr-2">START</span>
+              <span className="font-mono text-slate-600">{startFormatted || 'N/A'}</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-[7px] sm:text-[8px] text-slate-400 uppercase font-bold tracking-wider mr-2">END</span>
+              <span className="font-mono text-slate-600">{endFormatted || 'N/A'}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function AdminDashboard({ user, profile, onViewPublicPortal, timeLeft }) {
   const [activeTab, setActiveTab] = useState(() => {
     try {
       return localStorage.getItem('admin_active_tab') || 'overview';
@@ -236,6 +532,9 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
       return 'overview';
     }
   });
+  const [isAdminTimerCollapsed, setIsAdminTimerCollapsed] = useState(false);
+  const [adminTimerPosition, setAdminTimerPosition] = useState(null);
+  const adminContentRef = useRef(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
@@ -323,6 +622,9 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
     try {
       localStorage.setItem('admin_active_tab', activeTab);
     } catch (e) {}
+    if (activeTab !== 'overview') {
+      setIsAdminTimerCollapsed(true);
+    }
   }, [activeTab]);
 
   useEffect(() => {
@@ -1964,7 +2266,16 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
 
       {/* Main Content Area (offset by sidebar width on desktop) */}
       <main className="md:pl-64 min-h-[calc(100vh-4rem)]">
-        <div className={`mx-auto px-4 py-8 md:px-8 ${activeTab === "teams" ? "w-full max-w-none" : "max-w-7xl"}`}>
+        <div ref={adminContentRef} className={`mx-auto px-4 py-8 md:px-8 ${activeTab === "teams" ? "w-full max-w-none" : "max-w-7xl"} relative`}>
+          {/* Mechanical Phase Timer for Admin Portal */}
+          <AdminMechanicalTimer
+            timeLeft={timeLeft}
+            isCollapsed={isAdminTimerCollapsed}
+            setIsCollapsed={setIsAdminTimerCollapsed}
+            position={adminTimerPosition}
+            setPosition={setAdminTimerPosition}
+            containerRef={adminContentRef}
+          />
 
           {/* Alerts Block */}
           {error && (
@@ -2504,25 +2815,32 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
                     {evaluators.length === 0 ? (
                       <p className="mt-4 text-sm text-slate-500 italic">No evaluators have been added yet.</p>
                     ) : (
-                      <div className="mt-4 overflow-x-auto">
-                        <table className="w-full border-collapse text-left text-sm text-slate-600">
-                          <thead className="bg-slate-50 text-xs font-bold text-slate-700 uppercase">
-                            <tr>
-                              <th className="px-6 py-3 border-b border-slate-200">Name</th>
-                              <th className="px-6 py-3 border-b border-slate-200">Email</th>
-                              <th className="px-6 py-3 border-b border-slate-200">Date Added</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-100">
-                            {evaluators.map((evaluator) => (
-                              <tr key={evaluator.user_id} className="hover:bg-slate-50/50">
-                                <td className="px-6 py-4 font-semibold text-slate-900">{evaluator.name || "N/A"}</td>
-                                <td className="px-6 py-4">{evaluator.email}</td>
-                                <td className="px-6 py-4">{formatDate(evaluator.created_at)}</td>
+                      <div className="mt-4 space-y-2">
+                        <div className="block sm:hidden text-right">
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-100 px-2 py-0.5 rounded-md">
+                            ← Scroll →
+                          </span>
+                        </div>
+                        <div className="overflow-x-auto border border-slate-200 rounded-xl shadow-inner">
+                          <table className="w-full border-collapse text-left text-sm text-slate-600 min-w-[600px]">
+                            <thead className="bg-slate-50 text-xs font-bold text-slate-700 uppercase">
+                              <tr>
+                                <th className="px-6 py-3 border-b border-slate-200">Name</th>
+                                <th className="px-6 py-3 border-b border-slate-200">Email</th>
+                                <th className="px-6 py-3 border-b border-slate-200">Date Added</th>
                               </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {evaluators.map((evaluator) => (
+                                <tr key={evaluator.user_id} className="hover:bg-slate-50/50">
+                                  <td className="px-6 py-4 font-semibold text-slate-900">{evaluator.name || "N/A"}</td>
+                                  <td className="px-6 py-4">{evaluator.email}</td>
+                                  <td className="px-6 py-4">{formatDate(evaluator.created_at)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -2666,13 +2984,13 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
                     </div>
 
                     {/* Filter controls row */}
-                    <div className="grid grid-cols-2 gap-3 sm:flex sm:flex-wrap sm:items-center sm:gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200/65">
-                      <div className="flex flex-col grow min-w-[150px]">
+                    <div className="grid grid-cols-1 gap-4 sm:flex sm:flex-wrap sm:items-center sm:gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200/65">
+                      <div className="flex flex-col grow min-w-[150px] w-full">
                         <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Department</label>
                         <select
                           value={filterDepartment}
                           onChange={(e) => { setFilterDepartment(e.target.value); setCurrentPage(1); }}
-                          className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs outline-none focus:border-primary text-slate-700 font-medium"
+                          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 sm:px-2 sm:py-1.5 text-sm sm:text-xs outline-none focus:border-primary text-slate-700 font-semibold sm:font-medium cursor-pointer"
                         >
                           <option value="">All Departments</option>
                           {departmentsList.map(dept => (
@@ -2681,12 +2999,12 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
                         </select>
                       </div>
 
-                      <div className="flex flex-col grow min-w-[150px]">
+                      <div className="flex flex-col grow min-w-[150px] w-full">
                         <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Innovation Domain</label>
                         <select
                           value={filterDomain}
                           onChange={(e) => { setFilterDomain(e.target.value); setCurrentPage(1); }}
-                          className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs outline-none focus:border-primary text-slate-700 font-medium"
+                          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 sm:px-2 sm:py-1.5 text-sm sm:text-xs outline-none focus:border-primary text-slate-700 font-semibold sm:font-medium cursor-pointer"
                         >
                           <option value="">All Domains</option>
                           {Array.from(new Set(registrations.map(r => r.innovation_domain).filter(Boolean))).sort().map(domain => (
@@ -2695,12 +3013,12 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
                         </select>
                       </div>
 
-                      <div className="flex flex-col grow min-w-[90px] max-w-[150px]">
+                      <div className="flex flex-col grow min-w-[90px] sm:max-w-[150px] w-full">
                         <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">TRL Level</label>
                         <select
                           value={filterTrl}
                           onChange={(e) => { setFilterTrl(e.target.value); setCurrentPage(1); }}
-                          className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs outline-none focus:border-primary text-slate-700 font-medium"
+                          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 sm:px-2 sm:py-1.5 text-sm sm:text-xs outline-none focus:border-primary text-slate-700 font-semibold sm:font-medium cursor-pointer"
                         >
                           <option value="">All TRL</option>
                           {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(num => (
@@ -2710,7 +3028,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
                       </div>
 
                       {(filterDepartment || filterDomain || filterTrl || teamsSearch) && (
-                        <div className="flex items-end col-span-2 sm:col-span-1">
+                        <div className="flex items-end w-full sm:w-auto mt-2 sm:mt-0">
                           <button
                             type="button"
                             onClick={() => {
@@ -2720,7 +3038,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
                               setTeamsSearch("");
                               setCurrentPage(1);
                             }}
-                            className="w-full text-xs text-red-500 hover:text-red-700 font-semibold px-3 py-1.5 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 transition cursor-pointer"
+                            className="w-full text-xs text-red-500 hover:text-red-700 font-bold sm:font-semibold px-3 py-2 sm:px-3 sm:py-1.5 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 transition cursor-pointer"
                           >
                             Clear Filters
                           </button>
@@ -2732,7 +3050,13 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
                   {filteredRegistrations.length === 0 ? (
                     <p className="text-sm text-slate-500 italic py-8 text-center bg-slate-50 rounded-xl">No matching teams found.</p>
                   ) : (
-                    <div className="overflow-x-auto border border-slate-200 rounded-xl shadow-inner">
+                    <div className="space-y-2">
+                      <div className="block lg:hidden text-right">
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-100 px-2.5 py-1 rounded-md">
+                          ← Scroll Horizontally to view all columns →
+                        </span>
+                      </div>
+                      <div className="overflow-x-auto border border-slate-200 rounded-xl shadow-inner">
                       <table className="w-full border-collapse text-left text-sm text-slate-600 min-w-[1600px]">
                         <thead className="bg-slate-50 font-bold text-slate-700 uppercase border-b border-slate-200">
                           <tr>
@@ -2811,6 +3135,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
                           ))}
                         </tbody>
                       </table>
+                    </div>
                     </div>
                   )}
 
@@ -2906,7 +3231,13 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
                   {evaluations.length === 0 ? (
                     <p className="text-sm text-slate-500 italic py-8 text-center bg-slate-50 rounded-xl">No evaluations have been submitted yet.</p>
                   ) : (
-                    <div className="overflow-x-auto border border-slate-200 rounded-xl">
+                    <div className="space-y-2">
+                      <div className="block sm:hidden text-right">
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-100 px-2.5 py-1 rounded-md">
+                          ← Scroll Horizontally →
+                        </span>
+                      </div>
+                      <div className="overflow-x-auto border border-slate-200 rounded-xl">
                       <table className="w-full border-collapse text-left text-xs text-slate-600 min-w-[700px]">
                         <thead className="bg-slate-50 font-bold text-slate-700 uppercase border-b border-slate-200">
                           <tr>
@@ -2960,6 +3291,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
                           })}
                         </tbody>
                       </table>
+                    </div>
                     </div>
                   )}
                 </section>
@@ -3197,7 +3529,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
       {modifyTimerPhase && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true">
           <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setModifyTimerPhase(null)}></div>
-          <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl ring-1 ring-slate-200">
+          <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl ring-1 ring-slate-200 max-h-[calc(100vh-2rem)] overflow-y-auto">
             <h3 className="font-heading text-lg font-bold text-slate-900 mb-4">
               Modify {modifyTimerType === "registration" ? "Registration" : `Phase ${modifyTimerPhase.phase_number}`} Timer
             </h3>
@@ -3205,36 +3537,36 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
             <div className="space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Scheduled Start</label>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <input
                     type="date"
                     value={startDate}
                     onChange={(e) => setStartDate(e.target.value)}
-                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
                   />
                   <input
                     type="time"
                     value={startTime}
                     onChange={(e) => setStartTime(e.target.value)}
-                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
                   />
                 </div>
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Scheduled End</label>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <input
                     type="date"
                     value={endDate}
                     onChange={(e) => setEndDate(e.target.value)}
-                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
                   />
                   <input
                     type="time"
                     value={endTime}
                     onChange={(e) => setEndTime(e.target.value)}
-                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
                   />
                 </div>
               </div>
@@ -3264,7 +3596,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal }) {
       {extendTimerPhase && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true">
           <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setExtendTimerPhase(null)}></div>
-          <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl ring-1 ring-slate-200">
+          <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl ring-1 ring-slate-200 max-h-[calc(100vh-2rem)] overflow-y-auto">
             <h3 className="font-heading text-lg font-bold text-slate-900 mb-4">
               Extend {extendTimerType === "registration" ? "Registration" : `Phase ${extendTimerPhase.phase_number}`} Timer
             </h3>

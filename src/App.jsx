@@ -521,6 +521,7 @@ export default function App() {
         }}
         onMySubmissionsClick={() => setIsMySubmissionsOpen(true)}
         timeLeft={timeLeft}
+        onReturnToAdmin={() => setViewMode("admin")}
       />
       <main>
         {isLeaderboardPage ? (
@@ -573,7 +574,7 @@ export default function App() {
         <button
           type="button"
           onClick={() => setViewMode("admin")}
-          className="fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-full bg-accent px-5 py-3 text-sm font-bold text-white shadow-lg hover:bg-amber-600 cursor-pointer"
+          className="hidden lg:flex fixed bottom-6 right-6 z-50 items-center gap-2 rounded-full bg-accent px-5 py-3 text-sm font-bold text-white shadow-lg hover:bg-amber-600 cursor-pointer"
         >
           Return to Admin Console
         </button>
