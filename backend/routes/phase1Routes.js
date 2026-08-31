@@ -103,10 +103,10 @@ async function getOrCreateTemplatesFolder() {
 async function discoverTemplatesFromDrive() {
   if (!driveClient) throw new Error('Google Drive integration is unconfigured.')
 
-  const templatesFolderId = process.env.IPL_PHASE1_TEMPLATES_FOLDER_ID || await getOrCreateTemplatesFolder()
+  const templatesFolderId = process.env.GOOGLE_DRIVE_TEMPLATES_FOLDER_ID || process.env.IPL_PHASE1_TEMPLATES_FOLDER_ID || '11B9SnNRH7v1f9W1HZkDVCtNwt9Y5Mm6p'
 
   const response = await driveClient.files.list({
-    q: `'${templatesFolderId}' in parents and trashed = false`,
+    q: `'${templatesFolderId}' in parents and mimeType != 'application/vnd.google-apps.folder' and trashed = false`,
     fields: 'files(id, name, mimeType)',
     spaces: 'drive',
     includeItemsFromAllDrives: true,
@@ -114,44 +114,24 @@ async function discoverTemplatesFromDrive() {
   })
 
   const files = response.data.files || []
-  const templates = []
 
-  const docTypes = [
-    {
-      id: 'FORM_2',
-      label: 'Form 2 – To Grant',
-      pattern: /form\s*[-_]?\s*2/i
-    },
-    {
-      id: 'FORM_5',
-      label: 'Form 5 – Declaration as to Inventorship',
-      pattern: /form\s*[-_]?\s*5/i
-    },
-    {
-      id: 'FIGURE_OF_ABSTRACT',
-      label: 'Figure of Abstract',
-      pattern: /(figure[-_]?of[-_]?abstract|abstract)/i
-    },
-    {
-      id: 'LIST_OF_DRAWINGS',
-      label: 'List of Drawings',
-      pattern: /(list[-_]?of[-_]?drawings|drawing)/i
+  return files.map(f => {
+    let docType = 'OTHER'
+    if (/form\s*[-_]?\s*2/i.test(f.name) || /grant/i.test(f.name)) docType = 'FORM_2'
+    else if (/form\s*[-_]?\s*5/i.test(f.name) || /declaration/i.test(f.name)) docType = 'FORM_5'
+    else if (/abstract/i.test(f.name)) docType = 'FIGURE_OF_ABSTRACT'
+    else if (/drawing/i.test(f.name)) docType = 'LIST_OF_DRAWINGS'
+    else docType = f.name.replace(/\.[^/.]+$/, '').replace(/[^a-zA-Z0-9]/g, '_').toUpperCase()
+
+    return {
+      id: f.id,
+      document_type: docType,
+      template_name: f.name.replace(/\.[^/.]+$/, ''),
+      filename: f.name,
+      google_drive_file_id: f.id,
+      mimeType: f.mimeType
     }
-  ]
-
-  for (const doc of docTypes) {
-    const found = files.find(f => doc.pattern.test(f.name))
-    if (found) {
-      templates.push({
-        document_type: doc.id,
-        template_name: doc.label,
-        filename: found.name,
-        google_drive_file_id: found.id
-      })
-    }
-  }
-
-  return templates
+  })
 }
 
 async function getOrCreateTeamFolder(registrationId) {

@@ -139,6 +139,10 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
   const [downloadingTemplateDocType, setDownloadingTemplateDocType] = useState(null)
   const [currentPageIndex, setCurrentPageIndex] = useState(0)
 
+  // Patent classification selection
+  const [selectedCategory, setSelectedCategory] = useState('Hardware')
+  const [selectedPatentType, setSelectedPatentType] = useState('Design Patent')
+
   // Edit Team Details states
   const [isEditing, setIsEditing] = useState(false)
   const [editProjectTitle, setEditProjectTitle] = useState('')
@@ -296,15 +300,17 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
       setPhase1Active(phase1Config?.timer_status === 'running')
       setPhase1Deadline(phase1Config?.scheduled_end_at || null)
 
-      // 3. Fetch active templates
-      const templatesRes = await fetch(`${API_BASE_URL}/api/phase1/templates`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
-      if (templatesRes.ok) {
-        const templatesData = await templatesRes.json()
-        if (templatesData.success) {
-          setActiveTemplates(templatesData.templates || [])
+      // 3. Fetch active templates dynamically from Google Drive templetes folder
+      try {
+        const templatesRes = await fetch(`${API_BASE_URL}/api/patents/templates`)
+        if (templatesRes.ok) {
+          const templatesData = await templatesRes.json()
+          if (templatesData.success && templatesData.templates) {
+            setActiveTemplates(templatesData.templates)
+          }
         }
+      } catch (tmplErr) {
+        console.warn('[MySubmissions] Failed to fetch patent templates:', tmplErr)
       }
 
     } catch (err) {
@@ -363,15 +369,14 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
     }
   }
 
-  const handleDownloadTemplate = async (documentType, filename) => {
+  const handleDownloadTemplate = async (templateId, filename) => {
     try {
-      setDownloadingTemplateDocType(documentType)
+      setDownloadingTemplateDocType(templateId)
       const { data: { session } } = await supabase.auth.getSession()
       const token = session?.access_token
-      if (!token) throw new Error('Authentication required.')
 
-      const response = await fetch(`${API_BASE_URL}/api/phase1/template/${documentType}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
+      const response = await fetch(`${API_BASE_URL}/api/patents/templates/${templateId}`, {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
       })
 
       if (!response.ok) {
@@ -382,7 +387,7 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
       const url = window.URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = filename || `${documentType}.docx`
+      a.download = filename || 'template.docx'
       document.body.appendChild(a)
       a.click()
       a.remove()
@@ -400,7 +405,7 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
       const token = session?.access_token
       if (!token) return
 
-      const response = await fetch(`${API_BASE_URL}/api/phase1/document/${fileId}`, {
+      const response = await fetch(`${API_BASE_URL}/api/patents/file/${fileId}`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -424,22 +429,28 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
     }
   }
 
-  const handleUpload = async (e, documentType) => {
+  const handleUpload = async (e, template) => {
     const file = e.target.files[0]
     if (!file) return
 
-    setUploadingDocId(documentType)
+    setUploadingDocId(template.id)
     try {
       const { data: { session } } = await supabase.auth.getSession()
       const token = session?.access_token
       if (!token) throw new Error('Authentication required.')
 
+      const dept = currentPage?.team?.leaderDepartment || currentPage?.team?.mentorDepartment || 'Mechanical Engineering'
+
       const formData = new FormData()
       formData.append('file', file)
-      formData.append('documentType', documentType)
-      formData.append('registrationId', activeRegId)
+      formData.append('phase', 'phase 1')
+      formData.append('department', dept)
+      formData.append('category', selectedCategory)
+      formData.append('patentType', selectedPatentType)
+      formData.append('teamId', activeRegId)
+      formData.append('templateId', template.id)
 
-      const response = await fetch(`${API_BASE_URL}/api/phase1/upload`, {
+      const response = await fetch(`${API_BASE_URL}/api/patents/upload`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`
@@ -449,10 +460,14 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
 
       const result = await response.json()
       if (!response.ok || !result.success) {
+        if (result.code === 'FILE_EXISTS') {
+          alert('This document has already been uploaded for this team in Google Drive.')
+          return
+        }
         throw new Error(result.message || 'File upload failed.')
       }
 
-      alert('Document uploaded successfully!')
+      alert('Document uploaded successfully to Google Drive!')
       if (activeRegId) {
         await fetchPhase1SubmissionsForReg(activeRegId)
       }
@@ -1075,48 +1090,112 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
                 </div>
               </div>
 
+              {/* Patent Classification & Destination Controls */}
+              {currentPage && (
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-3">
+                  <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider border-b border-slate-100 pb-2 flex items-center justify-between">
+                    <span>Patent Classification & Destination</span>
+                    <span className="text-[10px] font-medium text-slate-400 normal-case">
+                      Team ID: <strong className="text-slate-700 font-bold">{activeRegId}</strong>
+                    </span>
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 pt-1">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                        Category
+                      </label>
+                      <select
+                        value={selectedCategory}
+                        onChange={(e) => setSelectedCategory(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 outline-none focus:border-primary cursor-pointer"
+                      >
+                        <option value="Hardware">Hardware</option>
+                        <option value="Software">Software</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                        Patent Type
+                      </label>
+                      <select
+                        value={selectedPatentType}
+                        onChange={(e) => setSelectedPatentType(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 outline-none focus:border-primary cursor-pointer"
+                      >
+                        <option value="Design Patent">Design Patent</option>
+                        <option value="Utility Patent">Utility Patent</option>
+                      </select>
+                    </div>
+
+                    <div className="sm:col-span-2 md:col-span-1">
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                        Department Destination
+                      </label>
+                      <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 truncate">
+                        {currentPage.team.leaderDepartment || 'Mechanical Engineering'}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="text-[11px] text-slate-500 font-medium pt-2 border-t border-slate-100 flex flex-wrap items-center gap-1.5">
+                    <span>Target Folder Path:</span>
+                    <span className="font-mono text-[10px] font-bold text-slate-800 bg-slate-100 px-2 py-0.5 rounded">
+                      phase 1 / {currentPage.team.leaderDepartment || 'Mechanical Engineering'} / {selectedCategory} / {selectedPatentType} / {activeRegId}
+                    </span>
+                  </div>
+                </div>
+              )}
+
               {/* Official Templates Grid */}
               <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
-                <h4 className="text-xs font-bold text-primary uppercase tracking-wider flex items-center gap-1.5 border-b border-slate-100 pb-2">
-                  <FileText size={14} /> Official Phase 1 Templates
-                </h4>
-                <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
-                  {[
-                    { id: 'FORM_2', label: 'Form 2 – To Grant', desc: 'Official Form 2 document template.' },
-                    { id: 'FORM_5', label: 'Form 5 – Declaration as to Inventorship', desc: 'Official Form 5 inventorship declaration template.' },
-                    { id: 'FIGURE_OF_ABSTRACT', label: 'Figure of Abstract', desc: 'Standard abstract figure drawing template.' },
-                    { id: 'LIST_OF_DRAWINGS', label: 'List of Drawings', desc: 'Standard list of patent drawings template.' }
-                  ].map((doc) => {
-                    const template = activeTemplates.find(t => t.document_type === doc.id)
-                    const filename = template ? template.filename : `${doc.id === 'FIGURE_OF_ABSTRACT' ? 'Figure of Abstract.png' : doc.id === 'LIST_OF_DRAWINGS' ? 'List of Drawings.pdf' : doc.id.replace(/_/g, ' ') + '.docx'}`
-                    const isDownloading = downloadingTemplateDocType === doc.id
-
-                    return (
-                      <div key={doc.id} className="p-4 bg-slate-50 border border-slate-200/60 rounded-xl flex flex-col justify-between gap-3 font-medium shadow-sm">
-                        <div>
-                          <span className="font-bold text-slate-900 text-xs md:text-sm block">{doc.label}</span>
-                          <span className="text-[10px] text-slate-400 font-medium block mt-0.5">{doc.desc}</span>
-                        </div>
-                        <button
-                          type="button"
-                          disabled={isDownloading}
-                          onClick={() => handleDownloadTemplate(doc.id, filename)}
-                          className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-700 bg-white hover:bg-slate-50 transition cursor-pointer disabled:opacity-50 w-full focus:outline-none"
-                        >
-                          {isDownloading ? (
-                            <>
-                              <MechanicalLoader size={12} className="text-current" /> Downloading...
-                            </>
-                          ) : (
-                            <>
-                              <Download size={12} /> Download Template
-                            </>
-                          )}
-                        </button>
-                      </div>
-                    )
-                  })}
+                <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                  <h4 className="text-xs font-bold text-primary uppercase tracking-wider flex items-center gap-1.5">
+                    <FileText size={14} /> Official Phase 1 Templates
+                  </h4>
+                  <span className="text-[10px] text-slate-400 font-medium">
+                    Dynamic source: Google Drive / templetes
+                  </span>
                 </div>
+
+                {activeTemplates.length === 0 ? (
+                  <div className="p-8 text-center text-slate-400 text-xs">
+                    <MechanicalLoader size={16} className="inline mr-2 animate-spin text-slate-400" />
+                    Loading official templates from Google Drive...
+                  </div>
+                ) : (
+                  <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
+                    {activeTemplates.map((tmpl) => {
+                      const isDownloading = downloadingTemplateDocType === tmpl.id
+
+                      return (
+                        <div key={tmpl.id} className="p-4 bg-slate-50 border border-slate-200/60 rounded-xl flex flex-col justify-between gap-3 font-medium shadow-sm">
+                          <div>
+                            <span className="font-bold text-slate-900 text-xs md:text-sm block">{tmpl.name}</span>
+                            <span className="text-[10px] text-slate-400 font-medium block mt-0.5">
+                              {tmpl.size ? `${(tmpl.size / 1024).toFixed(1)} KB • Word Document` : 'Official Document Template'}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            disabled={isDownloading}
+                            onClick={() => handleDownloadTemplate(tmpl.id, tmpl.name)}
+                            className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-700 bg-white hover:bg-slate-50 transition cursor-pointer disabled:opacity-50 w-full focus:outline-none"
+                          >
+                            {isDownloading ? (
+                              <>
+                                <MechanicalLoader size={12} className="text-current" /> Downloading...
+                              </>
+                            ) : (
+                              <>
+                                <Download size={12} /> Download Template
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
               </div>
 
               {/* Document Submissions list */}
@@ -1135,90 +1214,59 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
                     </span>
                   </div>
 
-                  <div className="space-y-4">
-                    {[
-                      { id: 'FORM_2', label: 'Form 2 – To Grant' },
-                      { id: 'FORM_5', label: 'Form 5 – Declaration as to Inventorship' },
-                      { id: 'FIGURE_OF_ABSTRACT', label: 'Figure of Abstract' },
-                      { id: 'LIST_OF_DRAWINGS', label: 'List of Drawings' }
-                    ].map((doc) => {
-                      const sub = phase1Submissions.find(s => s.document_type === doc.id)
-                      const isUploading = uploadingDocId === doc.id
+                  {activeTemplates.length === 0 ? (
+                    <div className="p-8 text-center text-slate-400 text-xs">
+                      Loading submission options...
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {activeTemplates.map((tmpl) => {
+                        const expectedFileName = `${activeRegId}_${tmpl.name}`
+                        const isUploading = uploadingDocId === tmpl.id
 
-                      let status = 'NOT_UPLOADED'
-                      let rejectionReason = ''
-                      if (sub) {
-                        status = sub.review_status
-                        rejectionReason = sub.rejection_reason || ''
-                      }
-
-                      return (
-                        <div key={doc.id} className="p-4 border border-slate-200 rounded-xl bg-slate-50/50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                          <div className="min-w-0">
-                            <span className="font-bold text-slate-900 text-xs sm:text-sm block leading-tight">{doc.label}</span>
-                            <div className="flex flex-wrap gap-2 items-center mt-2">
-                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-sm border ${
-                                status === 'APPROVED'
-                                  ? 'bg-green-50 text-green-700 border-green-200'
-                                  : status === 'REJECTED'
-                                  ? 'bg-red-50 text-red-700 border-red-200'
-                                  : status === 'UNDER_REVIEW' || status === 'UPLOADED'
-                                  ? 'bg-amber-50 text-amber-700 border-amber-200'
-                                  : 'bg-slate-100 text-slate-500 border-slate-200'
-                              }`}>
-                                {status === 'NOT_UPLOADED' ? 'Not Submitted' : status.replace(/_/g, ' ')}
-                              </span>
-
-                              {sub && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleDownload(sub.google_drive_file_id, sub.original_filename)}
-                                  className="text-xs font-semibold text-blue-600 hover:text-blue-800 truncate select-all underline text-left break-all max-w-[200px] sm:max-w-[300px]"
-                                >
-                                  {sub.original_filename}
-                                </button>
-                              )}
+                        return (
+                          <div key={tmpl.id} className="p-4 border border-slate-200 rounded-xl bg-slate-50/50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                            <div className="min-w-0">
+                              <span className="font-bold text-slate-900 text-xs sm:text-sm block leading-tight">{tmpl.name}</span>
+                              <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-slate-500 font-medium">
+                                <span>Required filename:</span>
+                                <code className="bg-slate-100 px-1.5 py-0.5 rounded font-mono font-bold text-slate-700 select-all">
+                                  {expectedFileName}
+                                </code>
+                              </div>
                             </div>
 
-                            {status === 'REJECTED' && rejectionReason && (
-                              <div className="mt-2 text-[10px] sm:text-xs text-red-650 bg-red-50/30 p-2 rounded border border-red-100 break-words select-text">
-                                <span className="font-bold">Rejection Reason:</span> {rejectionReason}
-                              </div>
-                            )}
-                          </div>
-
-                          <div className="shrink-0 w-full sm:w-auto">
-                            {phase1Active && (status === 'NOT_UPLOADED' || status === 'REJECTED') ? (
-                              <label className="inline-flex w-full sm:w-auto justify-center items-center gap-1.5 px-4 py-2 rounded-xl bg-accent text-xs font-bold text-white shadow hover:bg-amber-600 transition cursor-pointer select-none">
-                                {isUploading ? (
-                                  <>
-                                    <MechanicalLoader size={12} className="text-current" /> Uploading...
-                                  </>
-                                ) : (
-                                  <>
-                                    <Upload size={12} /> {status === 'REJECTED' ? 'Re-upload Document' : 'Upload Document'}
-                                  </>
-                                )}
-                                <input
-                                  type="file"
-                                  disabled={isUploading}
-                                  onChange={(e) => handleUpload(e, doc.id)}
-                                  className="hidden"
-                                  accept=".pdf,.png,.jpg,.jpeg,.doc,.docx"
-                                />
-                              </label>
-                            ) : (
-                              !phase1Active && (status === 'NOT_UPLOADED' || status === 'REJECTED') && (
+                            <div className="shrink-0 w-full sm:w-auto">
+                              {phase1Active ? (
+                                <label className="inline-flex w-full sm:w-auto justify-center items-center gap-1.5 px-4 py-2 rounded-xl bg-accent text-xs font-bold text-white shadow hover:bg-amber-600 transition cursor-pointer select-none">
+                                  {isUploading ? (
+                                    <>
+                                      <MechanicalLoader size={12} className="text-current" /> Uploading...
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Upload size={12} /> Upload Document
+                                    </>
+                                  )}
+                                  <input
+                                    type="file"
+                                    disabled={isUploading}
+                                    onChange={(e) => handleUpload(e, tmpl)}
+                                    className="hidden"
+                                    accept=".pdf,.png,.jpg,.jpeg,.doc,.docx"
+                                  />
+                                </label>
+                              ) : (
                                 <span className="text-[10px] text-red-500 font-bold flex items-center gap-1">
                                   <AlertTriangle size={10} /> Submissions Closed
                                 </span>
-                              )
-                            )}
+                              )}
+                            </div>
                           </div>
-                        </div>
-                      )
-                    })}
-                  </div>
+                        )
+                      })}
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-16 text-center text-slate-400">

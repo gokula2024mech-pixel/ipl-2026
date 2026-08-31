@@ -36,6 +36,16 @@ app.use(express.urlencoded({ extended: true }))
 // Mount API routes
 app.use('/api', registrationRoutes)
 app.use('/api', require('./routes/phase1Routes'))
+app.use('/api/patents', require('./routes/patentRoutes'))
+
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.json({
+    success: true,
+    status: 'healthy',
+    timestamp: new Date().toISOString()
+  })
+})
 
 // Root route
 app.get('/', (req, res) => {
