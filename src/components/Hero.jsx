@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
-import { ArrowRight, Sparkles, X, Timer } from 'lucide-react'
+import { ArrowRight, Sparkles, X } from 'lucide-react'
 import { TAGLINE, SUB_TAGLINE, REGISTRATION_FORM_URL } from '../data/content'
 import { supabase } from '../supabaseClient'
 
@@ -42,6 +42,64 @@ function getStatusColor(status) {
   if (status === 'running' || status === 'paused') return 'text-emerald-400'
   if (status === 'upcoming') return 'text-blue-400'
   return 'text-slate-400'
+}
+
+// Embedded Speedometer/Mechanical Timer Component
+// Mathematical gear path generator
+function getGearPath(cx, cy, rOut, rIn, teethCount, holeRadius) {
+  const points = []
+  const angleStep = (Math.PI * 2) / teethCount
+  for (let i = 0; i < teethCount; i++) {
+    const angle = i * angleStep
+    const a1 = angle
+    const a2 = angle + angleStep * 0.25
+    const a3 = angle + angleStep * 0.5
+    const a4 = angle + angleStep * 0.75
+    points.push(`${(cx + rIn * Math.cos(a1)).toFixed(2)},${(cy + rIn * Math.sin(a1)).toFixed(2)}`)
+    points.push(`${(cx + rOut * Math.cos(a2)).toFixed(2)},${(cy + rOut * Math.sin(a2)).toFixed(2)}`)
+    points.push(`${(cx + rOut * Math.cos(a3)).toFixed(2)},${(cy + rOut * Math.sin(a3)).toFixed(2)}`)
+    points.push(`${(cx + rIn * Math.cos(a4)).toFixed(2)},${(cy + rIn * Math.sin(a4)).toFixed(2)}`)
+  }
+  const gearOutline = `M ${points.join(' L ')} Z`
+  const centerHole = `M ${cx} ${cy} m -${holeRadius} 0 a ${holeRadius} ${holeRadius} 0 1 0 ${holeRadius * 2} 0 a ${holeRadius} ${holeRadius} 0 1 0 -${holeRadius * 2} 0`
+  return `${gearOutline} ${centerHole}`
+}
+
+// 3-Gear Mechanical System Component
+function TimerGears({ className = 'text-accent/15', opacity = '0.08' }) {
+  return (
+    <svg
+      viewBox="0 0 300 120"
+      className={`absolute inset-0 w-full h-full pointer-events-none select-none overflow-hidden ${className}`}
+      style={{ opacity }}
+    >
+      <style dangerouslySetInnerHTML={{ __html: `
+        @keyframes timer-gear-cw {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+        @keyframes timer-gear-ccw {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(-360deg); }
+        }
+        .t-gear-g1 { animation: timer-gear-cw 16s linear infinite; }
+        .t-gear-g2 { animation: timer-gear-ccw 10.66s linear infinite; }
+        .t-gear-g3 { animation: timer-gear-cw 10.66s linear infinite; }
+        @media (prefers-reduced-motion: reduce) {
+          .t-gear-g1, .t-gear-g2, .t-gear-g3 { animation: none !important; }
+        }
+      `}} />
+      <g className="t-gear-g1" style={{ transformOrigin: '150px 60px' }}>
+        <path d={getGearPath(150, 60, 50, 42, 18, 12)} fill="currentColor" fillRule="evenodd" />
+      </g>
+      <g className="t-gear-g2" style={{ transformOrigin: '66px 60px' }}>
+        <path d={getGearPath(66, 60, 35, 28, 12, 8)} fill="currentColor" fillRule="evenodd" transform="rotate(10, 66, 60)" />
+      </g>
+      <g className="t-gear-g3" style={{ transformOrigin: '234px 60px' }}>
+        <path d={getGearPath(234, 60, 35, 28, 12, 8)} fill="currentColor" fillRule="evenodd" transform="rotate(10, 234, 60)" />
+      </g>
+    </svg>
+  )
 }
 
 // Embedded Speedometer/Mechanical Timer Component
@@ -285,10 +343,7 @@ function HeroTimer({
     return () => window.removeEventListener('scroll', handleScroll)
   }, [setIsCollapsed])
 
-
-
   const [shouldHideTimer, setShouldHideTimer] = useState(false)
-  const [hasScrolledAway, setHasScrolledAway] = useState(false)
   const timerAnchorRef = useRef(null)
 
   const getNavbarBottom = () => {
@@ -311,9 +366,6 @@ function HeroTimer({
         // Hide when the top of the timer reaches/touches the bottom of the Navbar
         const shouldHide = anchorRect.top <= navBottom + 5
         setShouldHideTimer(shouldHide)
-        if (shouldHide) {
-          setHasScrolledAway(true)
-        }
       }
     }
 
@@ -359,9 +411,10 @@ function HeroTimer({
     const navbarHeight = 80
     const margin = 12
 
-    // Default top-right position
-    const initX = Math.max(margin, w - timerWidth - margin - 16)
-    const initY = navbarHeight + 8
+    // Default position: lower-left quadrant
+    // left: approximately 4% of Hero width, top: approximately 58% of Hero height
+    const initX = Math.max(margin, w * 0.04)
+    const initY = Math.max(navbarHeight + 8, h * 0.58)
 
     // On mobile, check if this overlaps with the centered hero content
     if (w < 768 && heroContentRef && heroContentRef.current) {
@@ -497,8 +550,6 @@ function HeroTimer({
   const minutesStr = String(minutes).padStart(2, '0')
   const secondsStr = String(seconds).padStart(2, '0')
 
-
-
   const statusLabel = getStatusLabel(timeLeft.status)
   const statusColor = getStatusColor(timeLeft.status)
   const phaseLabel = String(timeLeft.label || 'REGISTRATION').toUpperCase()
@@ -508,50 +559,59 @@ function HeroTimer({
 
   const ariaLabel = `${phaseLabel} phase. ${days} days, ${hours} hours, ${minutes} minutes, ${seconds} seconds remaining. Starts ${startFormatted} and ends ${endFormatted}. Status: ${statusLabel}.`
 
-
   // Render modal popup if open
   const renderPopupModal = () => {
     if (!isPopupOpen) return null
     return (
       <div
-        className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[250] flex items-center justify-center p-4"
+        className="fixed inset-0 bg-slate-950/75 backdrop-blur-md z-[250] flex items-center justify-center p-4"
         onClick={() => setIsPopupOpen(false)}
       >
         <div
-          className="relative bg-slate-955 border border-white/10 rounded-3xl p-6 text-white w-full max-w-sm shadow-2xl font-sans"
+          className="relative bg-slate-900/90 border border-white/10 rounded-3xl p-6 text-white w-[92vw] max-w-[440px] shadow-2xl font-sans"
           onClick={(e) => e.stopPropagation()}
+          style={{
+            boxShadow: '0 0 30px rgba(0, 0, 0, 0.5), 0 0 20px rgba(245, 158, 11, 0.15)',
+            border: '1px solid rgba(255, 255, 255, 0.08)'
+          }}
         >
           {/* Close button */}
           <button
             type="button"
             onClick={() => setIsPopupOpen(false)}
-            className="absolute top-4 right-4 flex h-8 w-8 items-center justify-center rounded-full bg-white/10 hover:bg-white/20 border border-white/10 text-white transition-all cursor-pointer"
+            className="absolute top-4 right-4 flex h-8 w-8 items-center justify-center rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-white transition-all cursor-pointer z-10"
           >
             <X size={16} />
           </button>
 
           {/* Header */}
-          <div className="flex items-center justify-between gap-3 mb-5 pr-8 border-b border-white/10 pb-3 w-full min-w-0">
-            <span className="text-[10px] sm:text-xs font-black tracking-wider text-accent uppercase min-w-0 shrink">
+          <div className="flex items-center justify-between gap-3 mb-5 pr-8 border-b border-white/5 pb-3.5 w-full min-w-0">
+            <span className="text-xs sm:text-sm font-black tracking-wider text-accent uppercase min-w-0 shrink">
               {phaseLabel}
             </span>
-            <span className={`text-[9px] sm:text-[10px] font-black tracking-widest uppercase ${statusColor} shrink-0 px-2 py-0.5 bg-white/5 rounded border border-white/5`}>
+            <span className={`text-[10px] sm:text-[11px] font-black tracking-widest uppercase ${statusColor} shrink-0 px-2 py-0.5 bg-white/5 rounded border border-white/5`}>
               {statusLabel}
             </span>
           </div>
 
-          {/* Time countdown */}
-          <div className="flex flex-col items-center justify-center my-6 w-full">
-            <div className="grid grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] items-center justify-items-center w-full max-w-[280px] font-mono leading-none select-none text-slate-100">
-              <span className="text-2xl sm:text-3xl font-black">{daysStr}</span>
-              <span className="text-slate-500 text-lg sm:text-xl font-bold px-1">:</span>
-              <span className="text-2xl sm:text-3xl font-black">{hoursStr}</span>
-              <span className="text-slate-500 text-lg sm:text-xl font-bold px-1">:</span>
-              <span className="text-2xl sm:text-3xl font-black">{minutesStr}</span>
-              <span className="text-slate-500 text-lg sm:text-xl font-bold px-1">:</span>
-              <span className="text-2xl sm:text-3xl font-black">{secondsStr}</span>
+          {/* Center Gears and Time Countdown */}
+          <div className="relative flex flex-col items-center justify-center my-6 py-6 px-4 w-full bg-slate-955/65 border border-white/5 rounded-2xl overflow-hidden shadow-inner">
+            {/* Mesh of gears spinning behind */}
+            <TimerGears className="text-amber-500/10" opacity="0.15" />
+
+            {/* Digit Row */}
+            <div className="relative grid grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] items-center justify-items-center w-full max-w-[320px] font-mono leading-none select-none text-amber-400 drop-shadow-[0_0_8px_rgba(245,158,11,0.4)]">
+              <span className="text-4xl sm:text-5xl font-black">{daysStr}</span>
+              <span className="text-amber-500/60 text-2xl sm:text-3xl font-bold px-1 animate-pulse">:</span>
+              <span className="text-4xl sm:text-5xl font-black">{hoursStr}</span>
+              <span className="text-amber-500/60 text-2xl sm:text-3xl font-bold px-1 animate-pulse">:</span>
+              <span className="text-4xl sm:text-5xl font-black">{minutesStr}</span>
+              <span className="text-amber-500/60 text-2xl sm:text-3xl font-bold px-1 animate-pulse">:</span>
+              <span className="text-4xl sm:text-5xl font-black">{secondsStr}</span>
             </div>
-            <div className="grid grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] justify-items-center w-full max-w-[280px] text-[8px] text-slate-500 font-extrabold tracking-wider uppercase mt-1.5">
+
+            {/* Label Row */}
+            <div className="relative grid grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] justify-items-center w-full max-w-[320px] text-[10px] text-slate-400 font-black tracking-widest uppercase mt-3">
               <span>DAY</span>
               <span className="opacity-0 px-1">:</span>
               <span>HR</span>
@@ -563,7 +623,7 @@ function HeroTimer({
           </div>
 
           {/* Details dates */}
-          <div className="pt-3.5 border-t border-white/10 flex flex-col gap-2 text-[10px] text-slate-350 font-semibold w-full">
+          <div className="pt-3.5 border-t border-white/10 flex flex-col gap-2 text-[10px] sm:text-xs text-slate-350 font-semibold w-full">
             <div className="grid grid-cols-[55px_1fr] items-center">
               <span className="text-slate-500 uppercase font-black tracking-wider">START</span>
               <span className="font-mono text-slate-200 text-right">{startFormatted || 'N/A'}</span>
@@ -586,19 +646,29 @@ function HeroTimer({
         type="button"
         onClick={() => setIsPopupOpen(true)}
         aria-label="Open timer details"
-        className={`fixed z-[90] flex items-center justify-center rounded-full bg-slate-955 border-2 border-amber-500 text-amber-500 hover:bg-slate-900 shadow-[0_4px_20px_rgba(0,0,0,0.5)] hover:scale-105 transition-all focus:outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer animate-pulse ${
+        className={`fixed z-[200] flex items-center justify-center rounded-full bg-slate-900 border-2 border-amber-500 text-amber-500 hover:bg-slate-950 shadow-[0_0_15px_rgba(245,158,11,0.4)] hover:scale-105 transition-all focus:outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer overflow-hidden ${
           isMobile
-            ? 'bottom-[18px] right-[18px] h-11 w-11'
-            : 'bottom-[20px] right-[20px] h-12 w-12 sm:h-14 sm:w-14'
+            ? 'bottom-[20px] right-[20px] h-12 w-12'
+            : 'bottom-[24px] right-[24px] h-14 w-14'
         }`}
       >
-        <Timer size={isMobile ? 20 : 24} className="text-amber-500" />
+        <svg
+          viewBox="0 0 100 100"
+          className="w-7 h-7 text-amber-500 animate-[spin_8s_linear_infinite]"
+          style={{ transformOrigin: '50% 50%' }}
+        >
+          <path
+            d={getGearPath(50, 50, 48, 38, 12, 12)}
+            fill="currentColor"
+            fillRule="evenodd"
+          />
+        </svg>
       </button>
     )
   }
 
-  const showFloatingClock = isMobile ? !isProfileOpen : (shouldHideTimer || !hasScrolledAway) && !isProfileOpen
-  const showFullTimerCard = !isMobile && !shouldHideTimer && !isCollapsed && hasScrolledAway && !isProfileOpen
+  const showFloatingClock = isMobile ? (!isProfileOpen && !isMobileMenuOpen) : (shouldHideTimer && !isProfileOpen)
+  const showFullTimerCard = !isMobile && !shouldHideTimer && !isCollapsed && !isProfileOpen
 
   return (
     <>
@@ -608,8 +678,8 @@ function HeroTimer({
           ref={timerAnchorRef}
           style={{
             position: 'absolute',
-            top: '180px',
-            right: '12%',
+            left: '4%',
+            top: '58%',
             width: '390px',
             height: '190px',
             visibility: 'hidden',
@@ -630,9 +700,9 @@ function HeroTimer({
           onPointerUp={handlePointerUp}
           style={{
             position: 'absolute',
-            left: position ? `${position.x}px` : 'auto',
-            top: position ? `${position.y}px` : '180px',
-            right: position ? 'auto' : '12%',
+            left: position ? `${position.x}px` : '4%',
+            top: position ? `${position.y}px` : '58%',
+            right: 'auto',
             touchAction: 'none',
             zIndex: 99,
             width: 'min(calc(100vw - 24px), 390px)'
@@ -642,9 +712,13 @@ function HeroTimer({
           }`}
         >
           <div
-            className="relative flex flex-col bg-slate-955/80 backdrop-blur-md rounded-3xl p-6 border border-white/10 text-white w-full shrink-0 font-sans shadow-lg select-none"
+            className="relative flex flex-col bg-slate-900/95 backdrop-blur-md rounded-3xl p-6 border border-white/10 text-white w-full shrink-0 font-sans shadow-lg select-none"
             aria-label={ariaLabel}
             title={ariaLabel}
+            style={{
+              boxShadow: '0 0 30px rgba(0, 0, 0, 0.5), 0 0 20px rgba(245, 158, 11, 0.15)',
+              border: '1px solid rgba(255, 255, 255, 0.08)'
+            }}
           >
             {/* Close Button */}
             <button
@@ -654,33 +728,39 @@ function HeroTimer({
                 setIsCollapsed(true)
               }}
               aria-label="Close timer"
-              className="close-btn-class absolute top-4 right-4 flex h-6 w-6 items-center justify-center rounded-full bg-white/10 hover:bg-white/20 border border-white/10 text-white hover:text-white transition-all focus:outline-none cursor-pointer z-[101]"
+              className="close-btn-class absolute top-4 right-4 flex h-6 w-6 items-center justify-center rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-white hover:text-white transition-all focus:outline-none cursor-pointer z-[101]"
             >
               <X size={12} />
             </button>
 
             {/* Header: Status & Phase name */}
-            <div className="flex items-center justify-between gap-3 mb-5 pr-8 w-full min-w-0">
+            <div className="flex items-center justify-between gap-3 mb-4 pr-8 w-full min-w-0">
               <span className="text-[10px] sm:text-xs font-black tracking-wider text-accent uppercase min-w-0 shrink">
                 {phaseLabel}
               </span>
-              <span className={`text-[8px] sm:text-[10px] font-black tracking-widest uppercase ${statusColor} shrink-0 px-2 py-0.5 bg-white/5 rounded-sm border border-white/5`}>
+              <span className={`text-[8px] sm:text-[10px] font-black tracking-widest uppercase ${statusColor} shrink-0 px-2 py-0.5 bg-white/5 rounded border border-white/5`}>
                 {statusLabel}
               </span>
             </div>
 
             {/* Main Countdown Display */}
-            <div className="flex flex-col items-center justify-center my-3 w-full">
-              <div className="grid grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] items-center justify-items-center w-full max-w-[280px] font-mono leading-none select-none text-slate-100">
+            <div className="relative flex flex-col items-center justify-center my-3 py-4 px-3 w-full bg-slate-955/65 border border-white/5 rounded-2xl overflow-hidden shadow-inner">
+              {/* Gears rotating subtly behind the text */}
+              <TimerGears className="text-amber-500/10" opacity="0.12" />
+
+              {/* Digit Row */}
+              <div className="relative grid grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] items-center justify-items-center w-full max-w-[280px] font-mono leading-none select-none text-amber-400 drop-shadow-[0_0_6px_rgba(245,158,11,0.3)]">
                 <span className="text-2xl sm:text-3xl font-black">{daysStr}</span>
-                <span className="text-slate-500 text-lg sm:text-xl font-bold px-1">:</span>
+                <span className="text-amber-500/60 text-lg sm:text-xl font-bold px-1 animate-pulse">:</span>
                 <span className="text-2xl sm:text-3xl font-black">{hoursStr}</span>
-                <span className="text-slate-500 text-lg sm:text-xl font-bold px-1">:</span>
+                <span className="text-amber-500/60 text-lg sm:text-xl font-bold px-1 animate-pulse">:</span>
                 <span className="text-2xl sm:text-3xl font-black">{minutesStr}</span>
-                <span className="text-slate-500 text-lg sm:text-xl font-bold px-1">:</span>
+                <span className="text-amber-500/60 text-lg sm:text-xl font-bold px-1 animate-pulse">:</span>
                 <span className="text-2xl sm:text-3xl font-black">{secondsStr}</span>
               </div>
-              <div className="grid grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] justify-items-center w-full max-w-[280px] text-[8px] text-slate-500 font-extrabold tracking-wider uppercase mt-1.5">
+
+              {/* Label Row */}
+              <div className="relative grid grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] justify-items-center w-full max-w-[280px] text-[8px] text-slate-400 font-black tracking-widest uppercase mt-2">
                 <span>DAY</span>
                 <span className="opacity-0 px-1">:</span>
                 <span>HR</span>
@@ -732,7 +812,22 @@ export default function Hero({ onRegisterClick, timeLeft, profile: _profile, onM
       className="relative flex min-h-screen items-center justify-center overflow-hidden bg-primary pt-24 pb-12"
       aria-label="Hero"
     >
-      <div className="pointer-events-none absolute inset-0" aria-hidden="true">
+      {/* Background Video */}
+      <video
+        autoPlay
+        muted
+        loop
+        playsInline
+        preload="auto"
+        className="absolute inset-0 h-full w-full object-cover object-center pointer-events-none z-0"
+      >
+        <source src="/assets/hero-background.mp4" type="video/mp4" />
+      </video>
+
+      {/* Dark Blue Overlay */}
+      <div className="absolute inset-0 pointer-events-none bg-[#102d78]/35 z-1" />
+
+      <div className="pointer-events-none absolute inset-0" aria-hidden="true" style={{ zIndex: 2 }}>
         <div className="absolute -left-32 -top-32 h-96 w-96 rounded-full bg-blue-500/20 blur-3xl" />
         <div className="absolute -bottom-32 -right-32 h-96 w-96 rounded-full bg-amber-500/15 blur-3xl" />
         <motion.div
@@ -760,7 +855,7 @@ export default function Hero({ onRegisterClick, timeLeft, profile: _profile, onM
         </motion.div>
       </div>
 
-      <div className="relative mx-auto max-w-4xl px-4 py-16 md:px-6 lg:px-8 lg:py-24 w-full flex flex-col items-center text-center">
+      <div className="relative z-10 mx-auto max-w-4xl px-4 py-16 md:px-6 lg:px-8 lg:py-24 w-full flex flex-col items-center text-center">
         {/* Centered Hero Content Block */}
         <motion.div
           ref={heroContentRef}

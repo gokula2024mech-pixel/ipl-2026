@@ -7,6 +7,7 @@ import RegistrationModal from './components/RegistrationModal'
 import MySubmissionsModal from './components/MySubmissionsModal'
 import MySubmissionsPage from './components/MySubmissionsPage'
 import EntryCountdown from './components/EntryCountdown'
+import MechanicalLoader from './components/MechanicalLoader'
 import { supabase } from './supabaseClient'
 
 const About = lazy(() => import('./components/About'))
@@ -473,7 +474,7 @@ export default function App() {
     return (
       <div className="flex min-h-screen items-center justify-center bg-primary">
         <div className="text-center text-white">
-          <div className="h-10 w-10 animate-spin rounded-full border-4 border-accent border-t-transparent mx-auto"></div>
+          <MechanicalLoader size={48} className="text-accent mx-auto" />
           <p className="mt-4 font-heading font-medium">Loading session...</p>
         </div>
       </div>
@@ -538,7 +539,7 @@ export default function App() {
         ) : isLeaderboardPage ? (
           <Suspense fallback={
             <div className="flex min-h-[60vh] items-center justify-center bg-white py-20">
-              <div className="h-8 w-8 animate-spin rounded-full border-4 border-accent border-t-transparent mx-auto"></div>
+              <MechanicalLoader size={40} className="text-accent mx-auto" />
             </div>
           }>
             <Leaderboard />

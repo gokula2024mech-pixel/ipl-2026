@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
-import { Award, Lightbulb, Users, Loader2, AlertCircle, Download, Upload, FileText, AlertTriangle, ArrowLeft, ArrowRight, Calendar } from 'lucide-react'
+import { Award, Lightbulb, Users, AlertCircle, Download, Upload, FileText, AlertTriangle, ArrowLeft, ArrowRight, Calendar } from 'lucide-react'
+import MechanicalLoader from './MechanicalLoader'
 import { supabase } from '../supabaseClient'
 
 const rawApiUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000').trim().replace(/\/+$/, '')
@@ -475,7 +476,7 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
         <div>
           {loading ? (
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-20 flex flex-col items-center justify-center gap-3 text-slate-500">
-              <Loader2 className="animate-spin text-accent" size={36} />
+              <MechanicalLoader size={48} className="text-accent" />
               <p className="text-sm font-black uppercase tracking-wider">Loading details...</p>
             </div>
           ) : error ? (
@@ -756,7 +757,7 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
                         >
                           {isDownloading ? (
                             <>
-                              <Loader2 className="animate-spin" size={12} /> Downloading...
+                              <MechanicalLoader size={12} className="text-current" /> Downloading...
                             </>
                           ) : (
                             <>
@@ -843,7 +844,7 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
                               <label className="inline-flex w-full sm:w-auto justify-center items-center gap-1.5 px-4 py-2 rounded-xl bg-accent text-xs font-bold text-white shadow hover:bg-amber-600 transition cursor-pointer select-none">
                                 {isUploading ? (
                                   <>
-                                    <Loader2 className="animate-spin" size={12} /> Uploading...
+                                    <MechanicalLoader size={12} className="text-current" /> Uploading...
                                   </>
                                 ) : (
                                   <>

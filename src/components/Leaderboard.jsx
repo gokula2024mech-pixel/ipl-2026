@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Trophy, Building, Cpu, Loader2, AlertCircle, Users, LayoutDashboard, Compass, Layers, Award } from 'lucide-react'
+import { Trophy, Building, Cpu, AlertCircle, Users, LayoutDashboard, Compass, Layers, Award } from 'lucide-react'
 import SectionReveal from './SectionReveal'
+import MechanicalLoader from './MechanicalLoader'
 import { supabase } from '../supabaseClient'
 
 export default function Leaderboard() {
@@ -1133,7 +1134,7 @@ export default function Leaderboard() {
           {loading ? (
             <div className="flex h-96 items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white shadow-sm">
               <div className="text-center">
-                <Loader2 className="mx-auto h-8 w-8 animate-spin text-accent" />
+                <MechanicalLoader size={44} className="text-accent mx-auto" />
                 <p className="mt-3 text-sm text-slate-500 font-bold uppercase tracking-wider">Aggregating live metrics...</p>
               </div>
             </div>

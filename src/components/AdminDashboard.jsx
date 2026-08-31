@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { supabase } from "../supabaseClient";
+import MechanicalLoader from "./MechanicalLoader";
 import {
   Menu,
   LogOut,
@@ -2387,7 +2388,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
           {/* Loading state spinner */}
           {loading ? (
             <div className="flex flex-col items-center justify-center py-20">
-              <div className="h-10 w-10 animate-spin rounded-full border-4 border-primary border-t-transparent"></div>
+              <MechanicalLoader size={48} className="text-primary" />
               <p className="mt-4 text-sm font-medium text-slate-500">Loading data...</p>
             </div>
           ) : (

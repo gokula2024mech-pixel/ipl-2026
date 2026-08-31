@@ -13,11 +13,11 @@ import {
   Lightbulb,
   FileCheck,
   ShieldAlert,
-  Loader2,
   Globe,
   Rocket,
 } from 'lucide-react'
 import { supabase } from '../supabaseClient'
+import MechanicalLoader from './MechanicalLoader'
 
 const OFFICIAL_DOMAINS = [
   'Smart Manufacturing & Industry 4.0',
@@ -1727,7 +1727,7 @@ export default function RegistrationModal({ isOpen, onClose }) {
               >
                 {isSubmitting ? (
                   <>
-                    <Loader2 size={18} className="animate-spin" />
+                    <MechanicalLoader size={18} className="text-current" />
                     Submitting...
                   </>
                 ) : isNewIdeaMode ? (

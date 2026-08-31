@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { X, Award, Lightbulb, Users, ArrowLeft, ArrowRight, Loader2, AlertCircle, Download, Upload, FileText, AlertTriangle } from 'lucide-react'
+import { X, Award, Lightbulb, Users, ArrowLeft, ArrowRight, AlertCircle, Download, Upload, FileText, AlertTriangle } from 'lucide-react'
+import MechanicalLoader from './MechanicalLoader'
 import { supabase } from '../supabaseClient'
 
 const rawApiUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000').trim().replace(/\/+$/, '')
@@ -394,7 +395,7 @@ export default function MySubmissionsModal({ isOpen, onClose, mode = 'full' }) {
         <div className="flex-1 overflow-y-auto px-6 py-5 select-none text-slate-800 space-y-6">
           {loading ? (
             <div className="flex flex-col items-center justify-center py-20 gap-3 text-slate-500">
-              <Loader2 className="animate-spin text-accent" size={32} />
+              <MechanicalLoader size={44} className="text-accent" />
               <p className="text-xs font-bold uppercase tracking-wider">Loading your submissions...</p>
             </div>
           ) : error ? (
@@ -438,7 +439,7 @@ export default function MySubmissionsModal({ isOpen, onClose, mode = 'full' }) {
                         >
                           {isDownloading ? (
                             <>
-                              <Loader2 className="animate-spin" size={12} /> Downloading...
+                              <MechanicalLoader size={12} className="text-current" /> Downloading...
                             </>
                           ) : (
                             <>
@@ -601,7 +602,7 @@ export default function MySubmissionsModal({ isOpen, onClose, mode = 'full' }) {
                           >
                             {isDownloading ? (
                               <>
-                                <Loader2 className="animate-spin" size={12} /> Downloading...
+                                <MechanicalLoader size={12} className="text-current" /> Downloading...
                               </>
                             ) : (
                               <>
@@ -709,7 +710,7 @@ export default function MySubmissionsModal({ isOpen, onClose, mode = 'full' }) {
                               }`}>
                                 {isUploading ? (
                                   <>
-                                    <Loader2 className="animate-spin" size={12} /> Uploading...
+                                    <MechanicalLoader size={12} className="text-current" /> Uploading...
                                   </>
                                 ) : (
                                   <>
