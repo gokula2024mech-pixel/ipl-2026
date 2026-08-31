@@ -487,7 +487,6 @@ export default function Navbar({ onRegisterClick, user, profile, onProfileUpdate
                   </a>
                 </li>
               ))}
-
               {profile?.role === 'admin' && (
                 <li className="border-t border-slate-100 mt-2 pt-2">
                   <button
