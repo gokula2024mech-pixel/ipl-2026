@@ -20,14 +20,23 @@ const dotenv = require('dotenv')
 dotenv.config({ path: path.join(__dirname, '../.env') })
 
 let driveClient = null
-const parentFolderId = process.env.IPL_PHASE1_GOOGLE_DRIVE_FOLDER_ID || '11qARJIKCPNhn4mCwe-5X2OeLJYl2x0g5'
+const parentFolderId = process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID || process.env.IPL_PHASE1_GOOGLE_DRIVE_FOLDER_ID || '11qARJIKCPNhn4mCwe-5X2OeLJYl2x0g5'
 
 try {
   const serviceAccountEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL
   let privateKey = process.env.GOOGLE_PRIVATE_KEY
-  console.log('[Google Drive Router Init] email:', serviceAccountEmail, 'key defined:', !!privateKey)
+  const clientId = process.env.GOOGLE_CLIENT_ID
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET
+  const refreshToken = process.env.GOOGLE_REFRESH_TOKEN
 
-  if (serviceAccountEmail && privateKey) {
+  if (clientId && clientSecret && refreshToken) {
+    console.log('[Google Drive Router Init] Initializing via OAuth2 client...')
+    const oauth2Client = new google.auth.OAuth2(clientId, clientSecret)
+    oauth2Client.setCredentials({ refresh_token: refreshToken })
+    driveClient = google.drive({ version: 'v3', auth: oauth2Client })
+    console.log('[Google Drive] OAuth2 Client initialized successfully.')
+  } else if (serviceAccountEmail && privateKey) {
+    console.log('[Google Drive Router Init] Initializing via Service Account JWT... email:', serviceAccountEmail)
     // Handle escaped newlines in env variables
     privateKey = privateKey.replace(/\\n/g, '\n')
 
@@ -38,9 +47,9 @@ try {
     })
 
     driveClient = google.drive({ version: 'v3', auth })
-    console.log('[Google Drive] Client initialized successfully.')
+    console.log('[Google Drive] Service Account Client initialized successfully.')
   } else {
-    console.warn('[Google Drive] Client disabled: GOOGLE_SERVICE_ACCOUNT_EMAIL or GOOGLE_PRIVATE_KEY is not configured.')
+    console.warn('[Google Drive] Client disabled: No valid credentials (OAuth2 or Service Account) configured.')
   }
 } catch (err) {
   console.error('[Google Drive] Initialization error:', err.message)
@@ -93,7 +102,7 @@ async function getOrCreateTemplatesFolder() {
 
 async function discoverTemplatesFromDrive() {
   if (!driveClient) throw new Error('Google Drive integration is unconfigured.')
-  
+
   const templatesFolderId = process.env.IPL_PHASE1_TEMPLATES_FOLDER_ID || await getOrCreateTemplatesFolder()
 
   const response = await driveClient.files.list({
@@ -291,7 +300,11 @@ async function isAuthorizedForRegistration(userId, userEmail, registrationId) {
   const isM3 = (reg.member3_email || '').toLowerCase().trim() === cleanEmail
   const isM4 = (reg.member4_email || '').toLowerCase().trim() === cleanEmail
 
-  return isLeader || isM2 || isM3 || isM4
+  if (isLeader || isM2 || isM3 || isM4) {
+    return true
+  }
+
+  return false
 }
 
 // ------------------------------------------------------------------
@@ -677,9 +690,29 @@ router.post('/phase1/review', authenticateUser, checkAdmin, async (req, res) => 
       message: `Submission marked as ${status}.`
     })
   } catch (err) {
-    console.error('[Review Error]:', err.message)
-    return res.status(500).json({ success: false, message: 'Failed to update review state.' })
+    console.error('[Review Error]:', err.message);
+    return res.status(500).json({ success: false, message: 'Failed to update review state.' });
   }
-})
+});
+
+// GET active products' innovation domains, TRLs, and timestamps (bypasses client-side RLS)
+router.get('/leaderboard-domains', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('products')
+      .select('team_id, innovation_domain, trl_level, created_at, id')
+      .eq('status', 'active');
+    if (error) {
+      throw error;
+    }
+    return res.status(200).json({
+      success: true,
+      data: data || []
+    });
+  } catch (err) {
+    console.error('[leaderboard-domains API Error]:', err.message);
+    return res.status(500).json({ success: false, message: 'Failed to query active products data.' });
+  }
+});
 
 module.exports = router

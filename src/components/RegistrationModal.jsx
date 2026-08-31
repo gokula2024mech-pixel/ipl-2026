@@ -95,6 +95,7 @@ export default function RegistrationModal({ isOpen, onClose }) {
     member4Department: '',
     facultyMentorName: '',
     facultyMentorDepartment: '',
+    facultyMentorId: '',
     innovationDomain: '',
     sdgGoals: [],
     trlLevel: '',
@@ -105,6 +106,26 @@ export default function RegistrationModal({ isOpen, onClose }) {
     declarationAccepted: false,
   })
 
+  const [mentorsList, setMentorsList] = useState([])
+  const [selectedMentorType, setSelectedMentorType] = useState('') // '', 'preset', 'other'
+
+  useEffect(() => {
+    const fetchMentors = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('mentors')
+          .select('*')
+          .order('name', { ascending: true })
+        if (!error && data) {
+          setMentorsList(data)
+        }
+      } catch (err) {
+        console.error('Error fetching mentors list:', err)
+      }
+    }
+    fetchMentors()
+  }, [])
+
   // Load draft from localStorage on mount
   useEffect(() => {
     try {
@@ -112,6 +133,11 @@ export default function RegistrationModal({ isOpen, onClose }) {
       if (draft) {
         const parsed = JSON.parse(draft)
         setFormData((prev) => ({ ...prev, ...parsed }))
+        if (parsed.facultyMentorId) {
+          setSelectedMentorType('preset')
+        } else if (parsed.facultyMentorName) {
+          setSelectedMentorType('other')
+        }
       }
     } catch (e) {
       console.error('[RegistrationModal] Failed to load draft:', e)
@@ -1378,64 +1404,119 @@ export default function RegistrationModal({ isOpen, onClose }) {
               </div>
 
               <div className="grid gap-4 md:grid-cols-2">
-                <div>
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
-                    Faculty Mentor Name *
-                  </label>
-                  <input
-                    type="text"
-                    name="facultyMentorName"
-                    value={formData.facultyMentorName}
-                    onChange={handleChange}
-                    readOnly={isNewIdeaMode}
-                    disabled={isNewIdeaMode}
-                    placeholder="Dr. / Prof. Full Name"
-                    autoComplete="name"
-                    className={`mt-1 w-full rounded-xl border px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
-                      isNewIdeaMode
-                        ? 'bg-slate-100 border-slate-200 cursor-not-allowed text-slate-500'
-                        : errors.facultyMentorName
-                          ? 'bg-white border-red-400 focus:ring-red-200'
-                          : 'bg-white border-slate-300 focus:border-accent focus:ring-amber-100'
-                    }`}
-                  />
-                  {errors.facultyMentorName && (
-                    <p className="mt-1 text-xs text-red-600">
-                      {errors.facultyMentorName}
-                    </p>
-                  )}
-                </div>
+                {mentorsList.length > 0 && !isNewIdeaMode && (
+                  <div className="md:col-span-2">
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
+                      Choose Faculty Mentor *
+                    </label>
+                    <select
+                      value={formData.facultyMentorId ? formData.facultyMentorId : (selectedMentorType === 'other' ? 'other' : '')}
+                      onChange={(e) => {
+                        const val = e.target.value
+                        if (val === 'other') {
+                          setSelectedMentorType('other')
+                          setFormData((prev) => ({
+                            ...prev,
+                            facultyMentorId: '',
+                            facultyMentorName: '',
+                            facultyMentorDepartment: ''
+                          }))
+                        } else if (val === '') {
+                          setSelectedMentorType('')
+                          setFormData((prev) => ({
+                            ...prev,
+                            facultyMentorId: '',
+                            facultyMentorName: '',
+                            facultyMentorDepartment: ''
+                          }))
+                        } else {
+                          setSelectedMentorType('preset')
+                          const selected = mentorsList.find(m => m.id === val)
+                          if (selected) {
+                            setFormData((prev) => ({
+                              ...prev,
+                              facultyMentorId: selected.id,
+                              facultyMentorName: selected.name,
+                              facultyMentorDepartment: selected.department
+                            }))
+                          }
+                        }
+                      }}
+                      className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:border-accent focus:ring-2 focus:ring-amber-100"
+                    >
+                      <option value="">Select Faculty Mentor...</option>
+                      {mentorsList.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.name} ({m.department})
+                        </option>
+                      ))}
+                      <option value="other">Other (Enter name manually)</option>
+                    </select>
+                  </div>
+                )}
 
-                <div>
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
-                    Faculty Mentor Department *
-                  </label>
-                  <select
-                    name="facultyMentorDepartment"
-                    value={formData.facultyMentorDepartment}
-                    onChange={handleChange}
-                    disabled={isNewIdeaMode}
-                    className={`mt-1 w-full rounded-xl border px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
-                      isNewIdeaMode
-                        ? 'bg-slate-100 border-slate-200 cursor-not-allowed text-slate-500'
-                        : errors.facultyMentorDepartment
-                          ? 'bg-white border-red-400 focus:ring-red-200'
-                          : 'bg-white border-slate-300 focus:border-accent focus:ring-amber-100'
-                    }`}
-                  >
-                    <option value="">Select Department</option>
-                    {(departments.length > 0 ? departments : OFFICIAL_DEPARTMENTS).map((dept) => (
-                      <option key={dept} value={dept}>
-                        {dept}
-                      </option>
-                    ))}
-                  </select>
-                  {errors.facultyMentorDepartment && (
-                    <p className="mt-1 text-xs text-red-600">
-                      {errors.facultyMentorDepartment}
-                    </p>
-                  )}
-                </div>
+                {((selectedMentorType === 'other') || mentorsList.length === 0 || isNewIdeaMode) && (
+                  <>
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
+                        Faculty Mentor Name *
+                      </label>
+                      <input
+                        type="text"
+                        name="facultyMentorName"
+                        value={formData.facultyMentorName}
+                        onChange={handleChange}
+                        readOnly={isNewIdeaMode}
+                        disabled={isNewIdeaMode}
+                        placeholder="Dr. / Prof. Full Name"
+                        autoComplete="name"
+                        className={`mt-1 w-full rounded-xl border px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
+                          isNewIdeaMode
+                            ? 'bg-slate-100 border-slate-200 cursor-not-allowed text-slate-500'
+                            : errors.facultyMentorName
+                              ? 'bg-white border-red-400 focus:ring-red-200'
+                              : 'bg-white border-slate-300 focus:border-accent focus:ring-amber-100'
+                        }`}
+                      />
+                      {errors.facultyMentorName && (
+                        <p className="mt-1 text-xs text-red-600">
+                          {errors.facultyMentorName}
+                        </p>
+                      )}
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
+                        Faculty Mentor Department *
+                      </label>
+                      <select
+                        name="facultyMentorDepartment"
+                        value={formData.facultyMentorDepartment}
+                        onChange={handleChange}
+                        disabled={isNewIdeaMode}
+                        className={`mt-1 w-full rounded-xl border px-4 py-2.5 text-sm text-slate-900 outline-none transition-all focus:ring-2 ${
+                          isNewIdeaMode
+                            ? 'bg-slate-100 border-slate-200 cursor-not-allowed text-slate-500'
+                            : errors.facultyMentorDepartment
+                              ? 'bg-white border-red-400 focus:ring-red-200'
+                              : 'bg-white border-slate-300 focus:border-accent focus:ring-amber-100'
+                        }`}
+                      >
+                        <option value="">Select Department</option>
+                        {(departments.length > 0 ? departments : OFFICIAL_DEPARTMENTS).map((dept) => (
+                          <option key={dept} value={dept}>
+                            {dept}
+                          </option>
+                        ))}
+                      </select>
+                      {errors.facultyMentorDepartment && (
+                        <p className="mt-1 text-xs text-red-600">
+                          {errors.facultyMentorDepartment}
+                        </p>
+                      )}
+                    </div>
+                  </>
+                )}
               </div>
             </div>
 

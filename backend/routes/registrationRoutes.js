@@ -30,6 +30,37 @@ function isValidEmail(email) {
   return SECE_EMAIL_REGEX.test(email.trim())
 }
 
+
+
+// Middleware checking for admin authorization
+async function checkAdmin(req, res, next) {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, message: 'Authentication required.' });
+    }
+    const token = authHeader.split(' ')[1];
+    const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
+    if (authErr || !user) {
+      return res.status(401).json({ success: false, message: 'Invalid or expired session.' });
+    }
+
+    const { data: profile, error } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (error || !profile || profile.role !== 'admin') {
+      return res.status(403).json({ success: false, message: 'Access denied. Administrator privileges required.' });
+    }
+    req.user = user;
+    next();
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Authorization error: ' + err.message });
+  }
+}
+
 // GET /api/server-time
 // Public endpoint to retrieve the authoritative server time
 router.get('/server-time', (req, res) => {
@@ -169,6 +200,7 @@ router.post('/registrations', (req, res) => {
         name: getVal(['facultyMentorName', 'mentor_name', 'mentorName', 'facultyMentor[name]']),
         department: getVal(['facultyMentorDepartment', 'mentor_department', 'mentorDepartment', 'facultyMentor[department]']),
       }
+
 
       const innovationDomain = getVal(['innovationDomain', 'innovation_domain'])
 
@@ -378,6 +410,9 @@ router.post('/registrations', (req, res) => {
         return res.status(400).json({ success: false, message: `Faculty mentor department "${mentorDept}" is invalid.` })
       }
 
+      // Resolve mentor_id (reverted mentor mapping visibility feature)
+      const resolvedMentorId = null;
+
       // Insert row into Supabase PostgreSQL (only actual existing database columns)
       const recordToInsert = {
         team_name: teamName,
@@ -395,6 +430,7 @@ router.post('/registrations', (req, res) => {
         member3_department: member3.department,
         mentor_name: mentor.name,
         mentor_department: mentor.department,
+        mentor_id: resolvedMentorId,
         innovation_domain: innovationDomain,
         sdg_goals: sdgGoals,
         trl_level: trlLevel,
@@ -991,15 +1027,12 @@ router.get('/my-submissions', async (req, res) => {
       return res.status(400).json({ success: false, message: 'User email not found in session.' });
     }
 
-    const { data: regs, error: regsErr } = await supabase
+    const { data: studentRegs, error: regsErr } = await supabase
       .from('registrations')
       .select('*')
       .or(`leader_email.ilike."${userEmail}",member2_email.ilike."${userEmail}",member3_email.ilike."${userEmail}"`);
-
-    if (regsErr) {
-      console.error('[MySubmissions] Fetch registrations error:', regsErr);
-      return res.status(500).json({ success: false, message: 'Failed to retrieve team registrations: ' + regsErr.message });
-    }
+    if (regsErr) throw regsErr;
+    const regs = studentRegs || [];
 
     if (!regs || regs.length === 0) {
       return res.status(200).json({ success: true, submissions: [] });
@@ -1071,6 +1104,344 @@ router.get('/my-submissions', async (req, res) => {
     return res.status(200).json({ success: true, submissions });
   } catch (err) {
     console.error('[MySubmissions] Unexpected error:', err.message || err);
+    return res.status(500).json({ success: false, message: 'Internal server error.' });
+  }
+});
+
+// -------------------------------------------------------------
+// ADMIN MENTOR MAPPING API ENDPOINTS
+// -------------------------------------------------------------
+
+// GET all canonical mentors
+router.get('/admin/mentors', checkAdmin, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('mentors')
+      .select('*')
+      .order('name', { ascending: true });
+    if (error) throw error;
+    return res.status(200).json({ success: true, mentors: data || [] });
+  } catch (err) {
+    console.error('[Admin Get Mentors Error]:', err.message);
+    // Graceful fallback if tables are not created yet
+    return res.status(200).json({ success: true, mentors: [], warning: 'Mentors table not initialized yet.' });
+  }
+});
+
+// POST create new canonical mentor
+router.post('/admin/mentors', checkAdmin, async (req, res) => {
+  try {
+    const { name, email, department } = req.body;
+    if (!name || !email || !department) {
+      return res.status(400).json({ success: false, message: 'Name, email, and department are required.' });
+    }
+    const { data, error } = await supabase
+      .from('mentors')
+      .insert({
+        name: name.trim(),
+        email: email.trim().toLowerCase(),
+        department: department.trim()
+      })
+      .select('*')
+      .single();
+    if (error) throw error;
+    return res.status(200).json({ success: true, mentor: data });
+  } catch (err) {
+    console.error('[Admin Create Mentor Error]:', err.message);
+    return res.status(500).json({ success: false, message: 'Failed to create canonical mentor: ' + err.message });
+  }
+});
+
+// GET all unique unresolved mentor names from registrations
+router.get('/admin/unresolved-mentors', checkAdmin, async (req, res) => {
+  try {
+    const { data: regs, error } = await supabase
+      .from('registrations')
+      .select('mentor_name, mentor_department')
+      .is('mentor_id', null);
+    if (error) throw error;
+
+    // Group by mentor_name (case-insensitive key for unique list)
+    const map = new Map();
+    (regs || []).forEach(r => {
+      const name = (r.mentor_name || '').trim();
+      const dept = (r.mentor_department || '').trim();
+      if (!name) return;
+      const key = name.toLowerCase();
+      if (!map.has(key)) {
+        map.set(key, { name, department: dept, count: 0 });
+      }
+      map.get(key).count++;
+    });
+
+    const unresolved = Array.from(map.values()).sort((a, b) => b.count - a.count);
+    return res.status(200).json({ success: true, unresolved });
+  } catch (err) {
+    console.error('[Admin Get Unresolved Error]:', err.message);
+    return res.status(200).json({ success: true, unresolved: [] });
+  }
+});
+
+// POST map an alias to a canonical mentor
+router.post('/admin/mentor-alias', checkAdmin, async (req, res) => {
+  try {
+    const { alias, mentorId } = req.body;
+    if (!alias || !mentorId) {
+      return res.status(400).json({ success: false, message: 'Alias and mentorId are required.' });
+    }
+
+    const normAlias = alias.toLowerCase().trim();
+
+    // 1. Insert into mentor_aliases
+    const { error: aliasErr } = await supabase
+      .from('mentor_aliases')
+      .insert({
+        mentor_id: mentorId,
+        alias: alias.trim(),
+        normalized_alias: normAlias
+      });
+
+    if (aliasErr && !aliasErr.message.includes('duplicate key')) {
+      throw aliasErr;
+    }
+
+    // 2. Update registrations having this exact mentor_name
+    const { error: updErr } = await supabase
+      .from('registrations')
+      .update({ mentor_id: mentorId })
+      .eq('mentor_name', alias.trim());
+
+    if (updErr) throw updErr;
+
+    // 3. Auto-resolve other registrations matching the normalized alias (case-insensitive)
+    const { data: allRegs, error: fetchErr } = await supabase
+      .from('registrations')
+      .select('id, mentor_name')
+      .is('mentor_id', null);
+
+    if (!fetchErr && allRegs) {
+      for (const reg of allRegs) {
+        if ((reg.mentor_name || '').toLowerCase().trim() === normAlias) {
+          await supabase
+            .from('registrations')
+            .update({ mentor_id: mentorId })
+            .eq('id', reg.id);
+        }
+      }
+    }
+
+    return res.status(200).json({ success: true, message: `Alias "${alias}" mapped successfully.` });
+  } catch (err) {
+    console.error('[Admin Map Alias Error]:', err.message);
+    return res.status(500).json({ success: false, message: 'Failed to map mentor alias: ' + err.message });
+  }
+});
+
+// POST run one-time auto-resolve scan
+router.post('/admin/resolve-existing-registrations', checkAdmin, async (req, res) => {
+  try {
+    // 1. Fetch all canonical mentors
+    const { data: mentors, error: mentorsErr } = await supabase
+      .from('mentors')
+      .select('*');
+    if (mentorsErr) throw mentorsErr;
+
+    // 2. Fetch all mentor aliases
+    const { data: aliases, error: aliasesErr } = await supabase
+      .from('mentor_aliases')
+      .select('*');
+    if (aliasesErr) throw aliasesErr;
+
+    // 3. Fetch registrations where mentor_id is null
+    const { data: regs, error: regsErr } = await supabase
+      .from('registrations')
+      .select('id, mentor_name')
+      .is('mentor_id', null);
+    if (regsErr) throw regsErr;
+
+    let resolvedCount = 0;
+
+    for (const reg of regs) {
+      const nameRaw = (reg.mentor_name || '').trim();
+      if (!nameRaw) continue;
+
+      // A. Check if there is an exact confirmed alias
+      const matchedAlias = aliases.find(a => a.alias.toLowerCase().trim() === nameRaw.toLowerCase().trim());
+      if (matchedAlias) {
+        await supabase
+          .from('registrations')
+          .update({ mentor_id: matchedAlias.mentor_id })
+          .eq('id', reg.id);
+        resolvedCount++;
+        continue;
+      }
+
+      // B. Unambiguous canonical matching
+      const candidates = [];
+      for (const m of mentors) {
+        if (matchesMentorEmail(nameRaw, m.email)) {
+          candidates.push(m);
+        }
+      }
+
+      if (candidates.length === 1) {
+        await supabase
+          .from('registrations')
+          .update({ mentor_id: candidates[0].id })
+          .eq('id', reg.id);
+        resolvedCount++;
+      }
+    }
+
+    return res.status(200).json({ success: true, message: `Successfully resolved ${resolvedCount} registrations.` });
+  } catch (err) {
+    console.error('[Admin Auto-Resolve Error]:', err.message);
+    return res.status(500).json({ success: false, message: 'Failed to auto-resolve registrations: ' + err.message });
+  }
+});
+
+// PUT /api/registrations/:registrationId
+// Update team/project details for a registration
+router.put('/registrations/:registrationId', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, message: 'Authentication required. Authorization header is missing.' });
+    }
+    const token = authHeader.split(' ')[1];
+    const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
+    if (authErr || !user) {
+      return res.status(401).json({ success: false, message: 'Invalid or expired authentication session.' });
+    }
+    const userEmail = (user.email || '').trim().toLowerCase();
+    if (!userEmail) {
+      return res.status(400).json({ success: false, message: 'User email not found in session.' });
+    }
+
+    const { registrationId } = req.params;
+
+    // 1. Fetch the target registration to check permissions
+    const { data: reg, error: fetchErr } = await supabase
+      .from('registrations')
+      .select('*')
+      .eq('registration_id', registrationId)
+      .maybeSingle();
+
+    if (fetchErr) {
+      console.error(`[EditRegistration] Error fetching registration ${registrationId}:`, fetchErr.message);
+      return res.status(500).json({ success: false, message: 'Internal server error fetching registration details.' });
+    }
+
+    if (!reg) {
+      return res.status(404).json({ success: false, message: 'Registration not found.' });
+    }
+
+    // 2. Authorization check: Only the Team Leader is allowed to edit team/project details
+    const isLeader = (reg.leader_email || '').trim().toLowerCase() === userEmail;
+    if (!isLeader) {
+      return res.status(403).json({ success: false, message: 'Access Denied: Only the Team Leader is authorized to edit team details.' });
+    }
+
+    // 3. Validation
+    const { projectTitle, problemArea, proposedSolution, expectedImpact, innovationDomain, sdgGoals } = req.body;
+
+    if (!projectTitle || typeof projectTitle !== 'string' || projectTitle.trim().length === 0) {
+      return res.status(400).json({ success: false, message: 'Project Title is required.' });
+    }
+    if (!problemArea || typeof problemArea !== 'string' || problemArea.trim().length === 0) {
+      return res.status(400).json({ success: false, message: 'Problem Area is required.' });
+    }
+    if (!proposedSolution || typeof proposedSolution !== 'string' || proposedSolution.trim().length === 0) {
+      return res.status(400).json({ success: false, message: 'Proposed Solution is required.' });
+    }
+    if (!expectedImpact || typeof expectedImpact !== 'string' || expectedImpact.trim().length === 0) {
+      return res.status(400).json({ success: false, message: 'Expected Impact is required.' });
+    }
+    if (!innovationDomain || typeof innovationDomain !== 'string' || innovationDomain.trim().length === 0) {
+      return res.status(400).json({ success: false, message: 'Innovation Domain is required.' });
+    }
+
+    // Process SDG goals
+    let parsedSdgGoals = [];
+    if (Array.isArray(sdgGoals)) {
+      parsedSdgGoals = sdgGoals;
+    } else if (typeof sdgGoals === 'string') {
+      try {
+        parsedSdgGoals = JSON.parse(sdgGoals);
+      } catch (e) {
+        parsedSdgGoals = [sdgGoals];
+      }
+    }
+
+    // Limit lengths to avoid abuse
+    if (projectTitle.length > 300) {
+      return res.status(400).json({ success: false, message: 'Project Title exceeds maximum length.' });
+    }
+    if (problemArea.length > 5000) {
+      return res.status(400).json({ success: false, message: 'Problem Area exceeds maximum length.' });
+    }
+    if (proposedSolution.length > 5000) {
+      return res.status(400).json({ success: false, message: 'Proposed Solution exceeds maximum length.' });
+    }
+    if (expectedImpact.length > 5000) {
+      return res.status(400).json({ success: false, message: 'Expected Impact exceeds maximum length.' });
+    }
+
+    // 4. Update the registrations table
+    const { error: updateRegErr } = await supabase
+      .from('registrations')
+      .update({
+        project_title: projectTitle.trim(),
+        problem_area: problemArea.trim(),
+        proposed_solution: proposedSolution.trim(),
+        expected_impact: expectedImpact.trim(),
+        innovation_domain: innovationDomain.trim(),
+        sdg_goals: parsedSdgGoals,
+        updated_at: new Date().toISOString()
+      })
+      .eq('registration_id', registrationId);
+
+    if (updateRegErr) {
+      console.error(`[EditRegistration] Error updating registrations table:`, updateRegErr.message);
+      return res.status(500).json({ success: false, message: 'Failed to update registration record in database.' });
+    }
+
+    // 5. Update the products table if a record exists
+    const { data: prod, error: fetchProdErr } = await supabase
+      .from('products')
+      .select('id')
+      .eq('legacy_registration_id', registrationId)
+      .maybeSingle();
+
+    if (fetchProdErr) {
+      console.error(`[EditRegistration] Error checking products:`, fetchProdErr.message);
+    }
+
+    if (prod) {
+      const { error: updateProdErr } = await supabase
+        .from('products')
+        .update({
+          product_title: projectTitle.trim(),
+          problem_area: problemArea.trim(),
+          proposed_solution: proposedSolution.trim(),
+          expected_impact: expectedImpact.trim(),
+          innovation_domain: innovationDomain.trim(),
+          sdg_goals: parsedSdgGoals,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', prod.id);
+
+      if (updateProdErr) {
+        console.error(`[EditRegistration] Error updating products table:`, updateProdErr.message);
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Team details updated successfully.'
+    });
+  } catch (err) {
+    console.error('[EditRegistration Error]:', err.message || err);
     return res.status(500).json({ success: false, message: 'Internal server error.' });
   }
 });

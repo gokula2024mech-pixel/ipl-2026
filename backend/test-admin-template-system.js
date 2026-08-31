@@ -10,19 +10,30 @@ dotenv.config({ path: path.join(__dirname, '.env') })
 // Environment checks
 const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL
 const key = process.env.GOOGLE_PRIVATE_KEY
+const clientId = process.env.GOOGLE_CLIENT_ID
+const clientSecret = process.env.GOOGLE_CLIENT_SECRET
+const refreshToken = process.env.GOOGLE_REFRESH_TOKEN
 
-if (!email || !key) {
-  console.error('ERROR: Google Service Account credentials missing.')
+let driveClient = null
+
+if (clientId && clientSecret && refreshToken) {
+  console.log('[Test System] Initializing via OAuth2 client...')
+  const oauth2Client = new google.auth.OAuth2(clientId, clientSecret)
+  oauth2Client.setCredentials({ refresh_token: refreshToken })
+  driveClient = google.drive({ version: 'v3', auth: oauth2Client })
+} else if (email && key) {
+  console.log('[Test System] Initializing via Service Account JWT...')
+  const formattedKey = key.replace(/\\n/g, '\n')
+  const driveAuth = new google.auth.JWT({
+    email: email,
+    key: formattedKey,
+    scopes: ['https://www.googleapis.com/auth/drive']
+  })
+  driveClient = google.drive({ version: 'v3', auth: driveAuth })
+} else {
+  console.error('ERROR: No valid Google Drive credentials (OAuth2 or Service Account) found.')
   process.exit(1)
 }
-
-const formattedKey = key.replace(/\\n/g, '\n')
-const driveAuth = new google.auth.JWT({
-  email: email,
-  key: formattedKey,
-  scopes: ['https://www.googleapis.com/auth/drive']
-})
-const driveClient = google.drive({ version: 'v3', auth: driveAuth })
 
 const adminEmail = 'gokul.a2024mech@sece.ac.in'
 const studentEmail = 'abinivesh.m2024lcse@sece.ac.in'
