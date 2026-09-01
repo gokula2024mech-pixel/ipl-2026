@@ -1,0 +1,167 @@
+<svg viewBox="0 0 240 270" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Clock Outer Shell Gradients (3D Metallic Coral/Orange-Red) -->
+    <radialGradient id="clockBezel" cx="35%" cy="30%" r="70%">
+      <stop offset="0%" stop-color="#FB923C"/>
+      <stop offset="35%" stop-color="#F97316"/>
+      <stop offset="70%" stop-color="#EA580C"/>
+      <stop offset="100%" stop-color="#9A3412"/>
+    </radialGradient>
+    <radialGradient id="clockFaceGrad" cx="45%" cy="40%" r="60%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="75%" stop-color="#FFFBEB"/>
+      <stop offset="100%" stop-color="#FEF3C7"/>
+    </radialGradient>
+    <linearGradient id="bellGoldLeft" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FEF08A"/>
+      <stop offset="30%" stop-color="#FBBF24"/>
+      <stop offset="70%" stop-color="#D97706"/>
+      <stop offset="100%" stop-color="#78350F"/>
+    </linearGradient>
+    <linearGradient id="bellGoldRight" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FEF08A"/>
+      <stop offset="30%" stop-color="#FBBF24"/>
+      <stop offset="70%" stop-color="#D97706"/>
+      <stop offset="100%" stop-color="#78350F"/>
+    </linearGradient>
+    <linearGradient id="metalPeg" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#FDE68A"/>
+      <stop offset="50%" stop-color="#D97706"/>
+      <stop offset="100%" stop-color="#78350F"/>
+    </linearGradient>
+    <linearGradient id="gloveGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#E2E8F0"/>
+    </linearGradient>
+    <linearGradient id="shoeGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#475569"/>
+      <stop offset="100%" stop-color="#1E293B"/>
+    </linearGradient>
+    <filter id="softShadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="4" stdDeviation="3" flood-opacity="0.15" flood-color="#0F172A"/>
+    </filter>
+  </defs>
+
+  <!-- Ground Shadow -->
+  <ellipse cx="120" cy="256" rx="64" ry="7" fill="#CBD5E1" opacity="0.6"/>
+
+  <!-- Left Leg & Shoe -->
+  <g id="leftLeg">
+    <path d="M82 208 L72 238 Q66 248 50 246 Q42 242 46 230 L66 208 Z" fill="url(#shoeGrad)" stroke="#0F172A" stroke-width="2.5" stroke-linejoin="round"/>
+    <!-- Sole -->
+    <path d="M46 238 Q50 248 68 245 L72 238 Q66 244 50 244 Z" fill="#FFFFFF" stroke="#0F172A" stroke-width="1.5"/>
+  </g>
+
+  <!-- Right Leg & Shoe -->
+  <g id="rightLeg">
+    <path d="M158 208 L168 238 Q174 248 190 246 Q198 242 194 230 L174 208 Z" fill="url(#shoeGrad)" stroke="#0F172A" stroke-width="2.5" stroke-linejoin="round"/>
+    <!-- Sole -->
+    <path d="M194 238 Q190 248 172 245 L168 238 Q174 244 190 244 Z" fill="#FFFFFF" stroke="#0F172A" stroke-width="1.5"/>
+  </g>
+
+  <!-- Clock Base Pegs -->
+  <path d="M72 202 L54 224" stroke="url(#metalPeg)" stroke-width="7" stroke-linecap="round"/>
+  <path d="M168 202 L186 224" stroke="url(#metalPeg)" stroke-width="7" stroke-linecap="round"/>
+
+  <!-- Top Handle Arch -->
+  <path d="M98 42 C98 18 142 18 142 42" fill="none" stroke="url(#bellGoldLeft)" stroke-width="5.5" stroke-linecap="round"/>
+
+  <!-- Center Bell Striker Hammer -->
+  <path d="M120 48 L120 25" stroke="#78350F" stroke-width="4.5" stroke-linecap="round"/>
+  <circle cx="120" cy="22" r="6.5" fill="url(#bellGoldLeft)" stroke="#78350F" stroke-width="2"/>
+
+  <!-- Left Bell -->
+  <g id="leftBell" transform="rotate(-18 58 52)">
+    <path d="M30 52 C30 28 62 14 82 38 Z" fill="url(#bellGoldLeft)" stroke="#78350F" stroke-width="3"/>
+    <path d="M36 44 C38 32 60 22 72 34" stroke="#FFFBEB" stroke-width="2.5" stroke-linecap="round" fill="none" opacity="0.8"/>
+  </g>
+
+  <!-- Right Bell -->
+  <g id="rightBell" transform="rotate(18 182 52)">
+    <path d="M210 52 C210 28 178 14 158 38 Z" fill="url(#bellGoldRight)" stroke="#78350F" stroke-width="3"/>
+    <path d="M204 44 C202 32 180 22 168 34" stroke="#FFFBEB" stroke-width="2.5" stroke-linecap="round" fill="none" opacity="0.8"/>
+  </g>
+
+  <!-- Left Arm (Relaxed at side / hip) -->
+  <g id="leftArm">
+    <path d="M46 135 C18 152 28 184 48 174" fill="none" stroke="#EA580C" stroke-width="8" stroke-linecap="round"/>
+    <g transform="translate(42, 168)">
+      <circle cx="6" cy="6" r="8" fill="url(#gloveGrad)" stroke="#1E293B" stroke-width="2"/>
+      <path d="M3 3 C5 1 9 1 11 4" stroke="#94A3B8" stroke-width="1.5" fill="none"/>
+    </g>
+  </g>
+
+  <!-- Right Arm (Raised high with pointing index finger) -->
+  <g id="rightArm">
+    <path d="M194 135 C222 105 210 65 198 38" fill="none" stroke="#EA580C" stroke-width="8" stroke-linecap="round"/>
+    <!-- Glove & Pointing Finger -->
+    <g transform="translate(186, 12)">
+      <!-- Palm -->
+      <circle cx="12" cy="24" r="10" fill="url(#gloveGrad)" stroke="#1E293B" stroke-width="2.2"/>
+      <!-- Index Finger Pointing Up -->
+      <path d="M9 22 L9 5 Q9 0 13.5 0 Q18 0 18 5 L18 22" fill="url(#gloveGrad)" stroke="#1E293B" stroke-width="2.2" stroke-linejoin="round"/>
+      <!-- Thumb Fold -->
+      <path d="M4 22 Q1 18 5 14 Q9 12 12 17" fill="url(#gloveGrad)" stroke="#1E293B" stroke-width="2"/>
+      <!-- Glove Details / Creases -->
+      <path d="M10 28 C12 30 16 30 18 28" stroke="#94A3B8" stroke-width="1.5" fill="none"/>
+      <!-- Motion / Action sparkles near pointing finger -->
+      <path d="M26 -4 L32 -8" stroke="#F59E0B" stroke-width="2" stroke-linecap="round"/>
+      <path d="M30 4 L37 4" stroke="#F59E0B" stroke-width="2" stroke-linecap="round"/>
+      <path d="M6 -5 L0 -9" stroke="#F59E0B" stroke-width="2" stroke-linecap="round"/>
+    </g>
+  </g>
+
+  <!-- Main Clock Body (Outer Shell) -->
+  <circle cx="120" cy="140" r="76" fill="url(#clockBezel)" stroke="#7C2D12" stroke-width="5" filter="url(#softShadow)"/>
+  
+  <!-- Outer Bezel Specular Highlight Arc -->
+  <path d="M62 100 A68 68 0 0 1 178 100" stroke="#FDBA74" stroke-width="3" stroke-linecap="round" fill="none" opacity="0.75"/>
+
+  <!-- Inner Rim Step -->
+  <circle cx="120" cy="140" r="69" fill="#EA580C" stroke="#C2410C" stroke-width="1.5"/>
+
+  <!-- Clock Dial Face -->
+  <circle cx="120" cy="140" r="62" fill="url(#clockFaceGrad)" stroke="#FDE68A" stroke-width="2.5"/>
+
+  <!-- Hour Tick Marks -->
+  <circle cx="120" cy="86" r="2.5" fill="#64748B"/>
+  <circle cx="174" cy="140" r="2.5" fill="#64748B"/>
+  <circle cx="120" cy="194" r="2.5" fill="#64748B"/>
+  <circle cx="66" cy="140" r="2.5" fill="#64748B"/>
+  
+  <circle cx="158" cy="102" r="1.8" fill="#94A3B8"/>
+  <circle cx="158" cy="178" r="1.8" fill="#94A3B8"/>
+  <circle cx="82" cy="178" r="1.8" fill="#94A3B8"/>
+  <circle cx="82" cy="102" r="1.8" fill="#94A3B8"/>
+
+  <!-- Clock Hands (Subtle behind shades) -->
+  <path d="M120 140 L108 120" stroke="#64748B" stroke-width="3.5" stroke-linecap="round"/>
+  <path d="M120 140 L142 122" stroke="#64748B" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="120" cy="140" r="4" fill="#334155"/>
+
+  <!-- Black Stylish Sunglasses -->
+  <g id="sunglasses" filter="url(#softShadow)">
+    <!-- Bridge -->
+    <path d="M102 118 Q120 113 138 118" stroke="#0F172A" stroke-width="5.5" stroke-linecap="round"/>
+    
+    <!-- Left Lens -->
+    <path d="M68 115 C68 103 100 103 103 115 C106 131 88 138 73 132 C68 129 67 121 68 115 Z" fill="#0F172A" stroke="#1E293B" stroke-width="2.5"/>
+    <!-- Left Lens Dual Gloss Streak -->
+    <path d="M74 110 L92 128 M80 108 L97 125" stroke="#FFFFFF" stroke-width="2.8" stroke-linecap="round" opacity="0.85"/>
+
+    <!-- Right Lens -->
+    <path d="M137 115 C140 103 172 103 172 115 C173 121 172 129 167 132 C152 138 134 131 137 115 Z" fill="#0F172A" stroke="#1E293B" stroke-width="2.5"/>
+    <!-- Right Lens Dual Gloss Streak -->
+    <path d="M143 110 L161 128 M149 108 L166 125" stroke="#FFFFFF" stroke-width="2.8" stroke-linecap="round" opacity="0.85"/>
+  </g>
+
+  <!-- Open Cheerful Laughing/Confident Mouth -->
+  <g id="mouth">
+    <path d="M98 152 Q120 174 142 152 Q120 162 98 152 Z" fill="#881337" stroke="#7C2D12" stroke-width="2.5" stroke-linejoin="round"/>
+    <!-- Tongue -->
+    <path d="M108 160 Q120 156 132 160 Q120 172 108 160 Z" fill="#FB7185"/>
+    <!-- Cheek Dimple -->
+    <path d="M143 148 Q147 151 148 155" stroke="#9A3412" stroke-width="3" stroke-linecap="round" fill="none"/>
+    <path d="M97 148 Q93 151 92 155" stroke="#9A3412" stroke-width="3" stroke-linecap="round" fill="none"/>
+  </g>
+</svg>

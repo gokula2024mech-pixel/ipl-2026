@@ -1,151 +1,130 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { X, Sparkles, Clock, Rocket, Zap, Lightbulb, Coffee } from 'lucide-react'
+import { X } from 'lucide-react'
+import megaphoneIllustration from '../assets/registration-closed-megaphone.png'
 
-const FUNNY_QUOTES = [
-  {
-    quote: "Time's up, champ! Even lightning takes a break. ⚡😎",
-    sub: "Great ideas never expire, but deadlines do! Catch you in the next edition.",
-    icon: Zap
-  },
-  {
-    quote: "The innovation rocket has launched! 🚀😉",
-    sub: "Looks like you missed the countdown, but keep building for the next launch!",
-    icon: Rocket
-  },
-  {
-    quote: "Innovation never sleeps, but registrations do! 🧠💡",
-    sub: "Our intake gates are resting. Rest your eyes and refine your next breakthrough!",
-    icon: Lightbulb
-  },
-  {
-    quote: "Better luck next time, future innovator! 🏆✌️",
-    sub: "The stadium gates are locked for this round. Keep that inventor spirit roaring!",
-    icon: Sparkles
-  },
-  {
-    quote: "Deadline missed? Don't worry, your next big idea is waiting! 😄",
-    sub: "Every master innovator has missed a train. Next stop: IPL 2027!",
-    icon: Coffee
-  },
-  {
-    quote: "Looks like you missed the innovation train! 🚂💨",
-    sub: "The whistle blew and the wheels are rolling. Stay tuned for phase updates!",
-    icon: Clock
-  }
+const SHORT_QUOTES = [
+  "Great ideas deserve great timing. ⏰",
+  "Your idea arrived… the deadline didn't wait! 😴",
+  "Too late this time, innovator! 🚀",
+  "The deadline won this round. 😅",
+  "Save that brilliant idea for the next round! 💡",
+  "Your innovation is ready. The window isn't! ⏰",
+  "Missed the deadline, not the opportunity! 🚀",
+  "Next round. Bigger idea. Better timing. 😎"
 ]
 
 export default function RegistrationClosedModal({ isOpen, onClose }) {
-  const [activeItem, setActiveItem] = useState(FUNNY_QUOTES[0])
+  const [quoteIndex, setQuoteIndex] = useState(0)
+  const openCountRef = useRef(0)
 
   useEffect(() => {
     if (isOpen) {
-      const randomIndex = Math.floor(Math.random() * FUNNY_QUOTES.length)
-      setActiveItem(FUNNY_QUOTES[randomIndex])
+      setQuoteIndex(openCountRef.current % SHORT_QUOTES.length)
+      openCountRef.current += 1
     }
   }, [isOpen])
 
   if (!isOpen) return null
 
-  const IconComponent = activeItem.icon
+  const currentQuote = SHORT_QUOTES[quoteIndex] || SHORT_QUOTES[0]
 
   return (
     <AnimatePresence>
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 overflow-y-auto">
-        {/* Backdrop */}
+      <div 
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="reg-closed-title"
+        className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 overflow-y-auto"
+      >
+        {/* Dark semi-transparent background overlay with subtle blur (45-60% opacity) */}
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           onClick={onClose}
-          className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm transition-opacity"
+          className="fixed inset-0 bg-slate-900/55 backdrop-blur-xs transition-opacity"
         />
 
-        {/* Modal Dialog Card */}
+        {/* Modal Dialog Card (Desktop: 680-740px, Mobile: calc(100% - 24px)) */}
         <motion.div
-          initial={{ opacity: 0, scale: 0.92, y: 20 }}
+          initial={{ opacity: 0, scale: 0.93, y: 16 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.92, y: 20 }}
-          transition={{ type: 'spring', damping: 25, stiffness: 350 }}
-          className="relative w-full max-w-md bg-white rounded-3xl shadow-2xl border border-slate-100 overflow-hidden z-10 my-auto text-center"
+          exit={{ opacity: 0, scale: 0.93, y: 16 }}
+          transition={{ type: 'spring', damping: 26, stiffness: 360 }}
+          className="relative w-[calc(100%-24px)] sm:w-full max-w-[700px] bg-white rounded-[22px] shadow-2xl border border-slate-100 p-5 sm:p-8 z-10 text-left overflow-hidden select-none my-auto"
         >
-          {/* Header Banner Background */}
-          <div className="relative bg-gradient-to-br from-amber-500 via-orange-500 to-amber-600 px-6 pt-10 pb-16 text-white overflow-hidden">
-            {/* Background Decorative Rings */}
-            <div className="absolute -top-12 -right-12 w-40 h-40 rounded-full bg-white/10 blur-xl pointer-events-none" />
-            <div className="absolute -bottom-10 -left-10 w-36 h-36 rounded-full bg-black/10 blur-xl pointer-events-none" />
+          {/* Top-Right "×" Close Button */}
+          <button
+            type="button"
+            onClick={onClose}
+            className="absolute top-3.5 right-3.5 sm:top-4 sm:right-4 p-1.5 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer z-20"
+            aria-label="Close"
+          >
+            <X size={20} />
+          </button>
 
-            {/* Close Button */}
-            <button
-              type="button"
-              onClick={onClose}
-              className="absolute top-4 right-4 p-2 rounded-full bg-white/20 hover:bg-white/30 text-white transition cursor-pointer"
-              aria-label="Close"
-            >
-              <X size={18} />
-            </button>
-
-            {/* Playful Floating Character Icon Container */}
-            <motion.div
-              animate={{
-                y: [0, -6, 0],
-                rotate: [0, 4, -4, 0]
-              }}
-              transition={{
-                duration: 4,
-                repeat: Infinity,
-                ease: 'easeInOut'
-              }}
-              className="w-20 h-20 mx-auto rounded-2xl bg-white shadow-xl flex items-center justify-center text-amber-500 relative border-2 border-white/80"
-            >
-              <span className="text-4xl select-none" role="img" aria-label="Sleepy Clock">
-                😴
-              </span>
-              <div className="absolute -bottom-2 -right-2 w-7 h-7 rounded-full bg-slate-900 text-amber-400 flex items-center justify-center shadow-md">
-                <Clock size={14} />
-              </div>
-            </motion.div>
-
-            <h3 className="text-xl sm:text-2xl font-black mt-4 tracking-tight">
-              Oops! Registration is Closed! 😴
-            </h3>
-            <p className="text-xs font-semibold text-amber-100 mt-1">
-              IPL 2026 Team Intake Period Has Ended
-            </p>
-          </div>
-
-          {/* Body Content */}
-          <div className="px-6 py-6 sm:px-8 sm:py-7 -mt-6 bg-white rounded-t-3xl relative space-y-5">
-            {/* Highlighted Quote Bubble */}
-            <div className="p-4 bg-slate-50 border border-slate-200/80 rounded-2xl space-y-2 shadow-2xs">
-              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 border border-amber-200">
-                <IconComponent size={12} className="shrink-0" />
-                <span>Notice</span>
-              </div>
-              <p className="text-sm sm:text-base font-black text-slate-800 leading-snug">
-                "{activeItem.quote}"
-              </p>
-              <p className="text-xs text-slate-500 font-medium leading-relaxed">
-                {activeItem.sub}
-              </p>
+          {/* Main Layout: Left Illustration (45-50%) & Right Content (50-55%) */}
+          <div className="flex flex-col sm:flex-row items-center gap-5 sm:gap-8 pt-1">
+            {/* Left Side: Hero Megaphone/Team Illustration */}
+            <div className="w-full sm:w-[48%] shrink-0 flex items-center justify-center">
+              <motion.div
+                animate={{
+                  y: [0, -4, 0]
+                }}
+                transition={{
+                  duration: 2.8,
+                  repeat: Infinity,
+                  ease: 'easeInOut'
+                }}
+                className="w-full flex items-center justify-center"
+              >
+                <img
+                  src={megaphoneIllustration}
+                  alt="Team announcement with megaphone illustration"
+                  className="w-[75%] sm:w-full h-auto max-h-[170px] sm:max-h-[270px] object-contain drop-shadow-sm select-none pointer-events-none"
+                />
+              </motion.div>
             </div>
 
-            {/* Cheerful Informative Note */}
-            <div className="text-xs text-slate-500 font-medium space-y-1">
-              <p>Great ideas don't wait, but registrations do! 😉</p>
-              <p className="text-[11px] text-slate-400">
-                If the organizers reopen the window, the register button will activate automatically.
-              </p>
-            </div>
+            {/* Right Side: Clean, Spacious Information Content */}
+            <div className="w-full sm:w-[52%] flex flex-col justify-center space-y-3 sm:space-y-4 text-center sm:text-left pr-0 sm:pr-2">
+              {/* Small Label */}
+              <div className="self-center sm:self-start">
+                <span className="text-[11px] font-black text-red-600 uppercase tracking-widest block">
+                  REGISTRATION CLOSED
+                </span>
+              </div>
 
-            {/* Action Button */}
-            <button
-              type="button"
-              onClick={onClose}
-              className="w-full py-3.5 px-6 rounded-2xl bg-slate-900 hover:bg-slate-800 active:scale-[0.98] text-white font-bold text-sm transition-all shadow-md cursor-pointer select-none"
-            >
-              Got it
-            </button>
+              {/* Main Heading */}
+              <h3 
+                id="reg-closed-title"
+                className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight leading-tight"
+              >
+                Oops… Too Late! 😴
+              </h3>
+
+              {/* Prominent Rotating Quote (No quotation marks, 18-20px font-semibold, line-height 1.4) */}
+              <p className="text-base sm:text-lg lg:text-[19px] font-semibold text-slate-800 leading-snug sm:leading-snug max-w-[330px] mx-auto sm:mx-0 py-0.5">
+                {currentQuote}
+              </p>
+
+              {/* Final Message */}
+              <p className="text-xs sm:text-sm font-bold text-accent tracking-wide pt-0.5">
+                See you in the IPL 2027!
+              </p>
+
+              {/* Action Button */}
+              <div className="pt-2 sm:pt-3 flex justify-center sm:justify-start">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="w-full sm:w-auto min-w-[140px] py-2.5 sm:py-3 px-8 rounded-full bg-red-600 hover:bg-red-700 active:scale-95 text-white font-bold text-sm tracking-wide shadow-md hover:shadow-lg transition-all duration-150 cursor-pointer text-center"
+                >
+                  Got it!
+                </button>
+              </div>
+            </div>
           </div>
         </motion.div>
       </div>

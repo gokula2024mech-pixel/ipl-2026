@@ -897,47 +897,33 @@ export default function Hero({ onRegisterClick, timeLeft, profile: _profile, onM
             ))}
           </div>
 
-          {/* CTA Buttons */}
-          {(() => {
-            const isRegistrationOpen = timeLeft &&
-              timeLeft.label === 'Registration Open' &&
-              (timeLeft.status === 'running' || timeLeft.status === 'paused')
+          {/* CTA Buttons - Register Now is ALWAYS visible */}
+          <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row w-full px-4">
+            <a
+              href={REGISTRATION_FORM_URL}
+              onClick={handleRegister}
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-full bg-accent px-8 py-3.5 text-base font-semibold text-white shadow-lg transition-all hover:-translate-y-0.5 hover:bg-amber-600 hover:shadow-xl cursor-pointer"
+            >
+              Register Now
+              <ArrowRight size={18} aria-hidden="true" />
+            </a>
 
-            return (
-              <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row w-full px-4">
-                {isRegistrationOpen && (
-                  <a
-                    href={REGISTRATION_FORM_URL}
-                    onClick={handleRegister}
-                    className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-full bg-accent px-8 py-3.5 text-base font-semibold text-white shadow-lg transition-all hover:-translate-y-0.5 hover:bg-amber-600 hover:shadow-xl cursor-pointer"
-                  >
-                    Registration Now
-                    <ArrowRight size={18} aria-hidden="true" />
-                  </a>
-                )}
+            <button
+              type="button"
+              onClick={onMySubmissionsClick}
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-full px-8 py-3.5 text-base font-semibold text-white shadow-lg transition-all hover:-translate-y-0.5 hover:shadow-xl cursor-pointer border-2 border-white/30 bg-white/10 hover:border-white/50 hover:bg-white/20 backdrop-blur-sm"
+            >
+              My Submissions
+              <ArrowRight size={18} aria-hidden="true" />
+            </button>
 
-                <button
-                  type="button"
-                  onClick={onMySubmissionsClick}
-                  className={`w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-full px-8 py-3.5 text-base font-semibold text-white shadow-lg transition-all hover:-translate-y-0.5 hover:shadow-xl cursor-pointer ${
-                    isRegistrationOpen
-                      ? 'border-2 border-white/30 bg-white/10 hover:border-white/50 hover:bg-white/20 backdrop-blur-sm'
-                      : 'bg-accent hover:bg-amber-600'
-                  }`}
-                >
-                  My Submissions
-                  <ArrowRight size={18} aria-hidden="true" />
-                </button>
-
-                <a
-                  href="#about"
-                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-full border-2 border-white/30 bg-white/10 px-8 py-3.5 text-base font-semibold text-white backdrop-blur-sm transition-all hover:-translate-y-0.5 hover:border-white/50 hover:bg-white/20 shrink-0"
-                >
-                  Explore the Program
-                </a>
-              </div>
-            )
-          })()}
+            <a
+              href="#about"
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-full border-2 border-white/30 bg-white/10 px-8 py-3.5 text-base font-semibold text-white backdrop-blur-sm transition-all hover:-translate-y-0.5 hover:border-white/50 hover:bg-white/20 shrink-0"
+            >
+              Explore the Program
+            </a>
+          </div>
         </motion.div>
       </div>
 

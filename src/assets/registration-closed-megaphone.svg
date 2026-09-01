@@ -1,0 +1,158 @@
+<svg viewBox="0 0 260 300" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="skinTone" cx="40%" cy="35%" r="65%">
+      <stop offset="0%" stop-color="#FFEDD5"/>
+      <stop offset="70%" stop-color="#FED7AA"/>
+      <stop offset="100%" stop-color="#FDBA74"/>
+    </radialGradient>
+    <linearGradient id="jacketGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0284C7"/>
+      <stop offset="50%" stop-color="#0369A1"/>
+      <stop offset="100%" stop-color="#075985"/>
+    </linearGradient>
+    <linearGradient id="megaRed" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#EF4444"/>
+      <stop offset="50%" stop-color="#DC2626"/>
+      <stop offset="100%" stop-color="#991B1B"/>
+    </linearGradient>
+    <linearGradient id="megaWhite" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#E2E8F0"/>
+    </linearGradient>
+    <linearGradient id="hairGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#374151"/>
+      <stop offset="100%" stop-color="#111827"/>
+    </linearGradient>
+    <linearGradient id="pantsGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#334155"/>
+      <stop offset="100%" stop-color="#1E293B"/>
+    </linearGradient>
+    <filter id="megaShadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="4" stdDeviation="3" flood-opacity="0.16" flood-color="#0F172A"/>
+    </filter>
+  </defs>
+
+  <!-- Ground Shadow -->
+  <ellipse cx="125" cy="290" rx="65" ry="7" fill="#CBD5E1" opacity="0.6"/>
+
+  <!-- Left Sneaker & Leg -->
+  <g id="leftLeg">
+    <path d="M92 215 L88 268 L68 274 Q58 278 58 284 Q58 288 72 288 L104 286 Q108 282 104 270 L106 215 Z" fill="url(#pantsGrad)" stroke="#0F172A" stroke-width="1.8"/>
+    <!-- Sneaker -->
+    <path d="M66 272 L92 270 Q104 270 102 286 L62 286 Q56 286 59 278 Z" fill="#FFFFFF" stroke="#0F172A" stroke-width="1.5"/>
+    <path d="M60 282 L102 282" stroke="#DC2626" stroke-width="2.5"/>
+  </g>
+
+  <!-- Right Sneaker & Leg -->
+  <g id="rightLeg">
+    <path d="M145 215 L148 268 Q144 282 148 286 L178 288 Q192 288 192 284 Q192 278 182 274 L164 268 L158 215 Z" fill="url(#pantsGrad)" stroke="#0F172A" stroke-width="1.8"/>
+    <!-- Sneaker -->
+    <path d="M158 270 L184 272 Q194 278 190 286 L148 286 Q147 270 158 270 Z" fill="#FFFFFF" stroke="#0F172A" stroke-width="1.5"/>
+    <path d="M148 282 L190 282" stroke="#DC2626" stroke-width="2.5"/>
+  </g>
+
+  <!-- Backpack (Behind Body) -->
+  <rect x="68" y="105" width="105" height="100" rx="18" fill="#1E293B" stroke="#0F172A" stroke-width="2"/>
+
+  <!-- Torso & Jacket -->
+  <g id="torso">
+    <path d="M74 116 Q122 110 166 116 L162 222 Q120 226 78 222 Z" fill="url(#jacketGrad)" stroke="#0C4A6E" stroke-width="2"/>
+    <!-- Inner White Shirt -->
+    <path d="M104 112 Q120 124 136 112 Z" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="1.5"/>
+    <!-- Jacket Zipper / Center Line -->
+    <path d="M120 124 L120 224" stroke="#0C4A6E" stroke-width="2" stroke-dasharray="6 3"/>
+    <!-- Shoulder Straps -->
+    <path d="M84 116 L88 175" stroke="#0F172A" stroke-width="5.5" stroke-linecap="round"/>
+    <path d="M156 116 L152 175" stroke="#0F172A" stroke-width="5.5" stroke-linecap="round"/>
+  </g>
+
+  <!-- Left Arm (Resting at Side) -->
+  <g id="leftArm">
+    <path d="M78 120 C54 140 50 170 64 190" fill="none" stroke="url(#jacketGrad)" stroke-width="14" stroke-linecap="round"/>
+    <path d="M78 120 C54 140 50 170 64 190" fill="none" stroke="#0C4A6E" stroke-width="1.5" stroke-linecap="round"/>
+    <!-- Left Hand -->
+    <circle cx="64" cy="190" r="7" fill="url(#skinTone)" stroke="#EA580C" stroke-width="1.5"/>
+  </g>
+
+  <!-- Neck -->
+  <path d="M110 98 L110 118 Q120 124 130 118 L130 98 Z" fill="url(#skinTone)" stroke="#FDBA74" stroke-width="1"/>
+
+  <!-- Head -->
+  <g id="head">
+    <!-- Ears -->
+    <circle cx="76" cy="74" r="8" fill="url(#skinTone)" stroke="#FDBA74" stroke-width="1.5"/>
+    <circle cx="164" cy="74" r="8" fill="url(#skinTone)" stroke="#FDBA74" stroke-width="1.5"/>
+
+    <!-- Face Shape -->
+    <ellipse cx="120" cy="74" rx="42" ry="44" fill="url(#skinTone)" stroke="#FDBA74" stroke-width="1.5"/>
+
+    <!-- Cheeks Blush -->
+    <ellipse cx="90" cy="84" rx="6" ry="3.5" fill="#FDA4AF" opacity="0.65"/>
+    <ellipse cx="150" cy="84" rx="6" ry="3.5" fill="#FDA4AF" opacity="0.65"/>
+
+    <!-- Eyes (Enthusiastic / Announcing Expression) -->
+    <ellipse cx="102" cy="68" rx="8" ry="9.5" fill="#FFFFFF" stroke="#1E293B" stroke-width="1.5"/>
+    <ellipse cx="103" cy="68" rx="4.8" ry="6" fill="#1E293B"/>
+    <circle cx="101" cy="65" r="1.8" fill="#FFFFFF"/>
+
+    <ellipse cx="138" cy="68" rx="8" ry="9.5" fill="#FFFFFF" stroke="#1E293B" stroke-width="1.5"/>
+    <ellipse cx="137" cy="68" rx="4.8" ry="6" fill="#1E293B"/>
+    <circle cx="135" cy="65" r="1.8" fill="#FFFFFF"/>
+
+    <!-- Eyebrows -->
+    <path d="M94 57 Q104 52 112 56" stroke="#374151" stroke-width="2.8" stroke-linecap="round" fill="none"/>
+    <path d="M128 56 Q136 52 146 57" stroke="#374151" stroke-width="2.8" stroke-linecap="round" fill="none"/>
+
+    <!-- Nose -->
+    <path d="M120 70 Q123 77 118 79" stroke="#EA580C" stroke-width="2" stroke-linecap="round" fill="none"/>
+
+    <!-- Open Cheerful / Announcing Mouth -->
+    <path d="M106 88 Q120 102 134 88 Q120 94 106 88 Z" fill="#881337" stroke="#7C2D12" stroke-width="2" stroke-linejoin="round"/>
+    <path d="M112 94 Q120 91 128 94 Q120 101 112 94 Z" fill="#FB7185"/>
+
+    <!-- Modern Textured Hair -->
+    <path d="M76 66 C72 40 95 24 120 24 C145 24 168 40 164 66 C158 54 148 46 138 48 C128 50 120 42 112 44 C98 46 90 54 76 66 Z" fill="url(#hairGrad)" stroke="#111827" stroke-width="2"/>
+    <path d="M86 46 Q108 36 134 42" stroke="#4B5563" stroke-width="2" stroke-linecap="round" fill="none"/>
+  </g>
+
+  <!-- Right Arm (Holding Megaphone Up) -->
+  <g id="rightArm">
+    <path d="M162 120 C186 136 200 148 190 168" fill="none" stroke="url(#jacketGrad)" stroke-width="15" stroke-linecap="round"/>
+    <path d="M162 120 C186 136 200 148 190 168" fill="none" stroke="#0C4A6E" stroke-width="1.5" stroke-linecap="round"/>
+    <!-- Right Hand Wrapping Around Megaphone Handle -->
+    <g transform="translate(182, 160)">
+      <circle cx="8" cy="8" r="7.5" fill="url(#skinTone)" stroke="#EA580C" stroke-width="1.5"/>
+      <path d="M5 4 Q2 8 4 12" stroke="#FDBA74" stroke-width="1.5" fill="none"/>
+    </g>
+  </g>
+
+  <!-- Megaphone (Prominent, High-Gloss Modern Cartoon Megaphone) -->
+  <g id="megaphone" filter="url(#megaShadow)" transform="rotate(-16 195 155)">
+    <!-- Handle -->
+    <path d="M190 162 L190 190 Q190 195 185 195 Q180 195 180 190 L180 162 Z" fill="#334155" stroke="#0F172A" stroke-width="2"/>
+    
+    <!-- Megaphone Cone (White with Red Accent Ring) -->
+    <path d="M175 142 L245 118 L245 178 L175 154 Z" fill="url(#megaWhite)" stroke="#0F172A" stroke-width="2.5" stroke-linejoin="round"/>
+    <!-- Red Outer Bell Trim -->
+    <path d="M232 122 L245 118 L245 178 L232 174 Z" fill="url(#megaRed)" stroke="#0F172A" stroke-width="2"/>
+    <!-- Speaker Opening Rim -->
+    <ellipse cx="245" cy="148" rx="6" ry="30" fill="url(#megaRed)" stroke="#0F172A" stroke-width="2.5"/>
+    <ellipse cx="245" cy="148" rx="3.5" ry="24" fill="#7F1D1D"/>
+
+    <!-- Megaphone Back Housing / Motor (Red Gloss) -->
+    <path d="M152 140 L175 142 L175 154 L152 156 Z" fill="url(#megaRed)" stroke="#0F172A" stroke-width="2"/>
+    <!-- Back Cap -->
+    <ellipse cx="152" cy="148" rx="5" ry="8" fill="#B91C1C" stroke="#0F172A" stroke-width="2"/>
+
+    <!-- Megaphone Specular Gloss Lines -->
+    <path d="M182 144 L235 126" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" opacity="0.8"/>
+    <path d="M190 148 L230 134" stroke="#FFFFFF" stroke-width="1.8" stroke-linecap="round" opacity="0.6"/>
+  </g>
+
+  <!-- Sound Broadcast Wave Lines (Announcing "Party is over!") -->
+  <g id="soundWaves" transform="translate(15, 0)">
+    <path d="M228 108 Q242 122 238 136" stroke="#F59E0B" stroke-width="3" stroke-linecap="round" fill="none" opacity="0.85"/>
+    <path d="M236 98 Q254 122 248 144" stroke="#EF4444" stroke-width="3.5" stroke-linecap="round" fill="none" opacity="0.85"/>
+    <path d="M244 88 Q268 122 258 152" stroke="#F59E0B" stroke-width="3" stroke-linecap="round" fill="none" opacity="0.75"/>
+  </g>
+</svg>

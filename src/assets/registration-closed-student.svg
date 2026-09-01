@@ -1,0 +1,166 @@
+<svg viewBox="0 0 240 320" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="skinGrad" cx="40%" cy="35%" r="65%">
+      <stop offset="0%" stop-color="#FFEDD5"/>
+      <stop offset="70%" stop-color="#FED7AA"/>
+      <stop offset="100%" stop-color="#FDBA74"/>
+    </radialGradient>
+    <linearGradient id="hoodieGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0284C7"/>
+      <stop offset="50%" stop-color="#0369A1"/>
+      <stop offset="100%" stop-color="#075985"/>
+    </linearGradient>
+    <linearGradient id="jeansGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#334155"/>
+      <stop offset="100%" stop-color="#1E293B"/>
+    </linearGradient>
+    <linearGradient id="hairGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#374151"/>
+      <stop offset="100%" stop-color="#1F2937"/>
+    </linearGradient>
+    <linearGradient id="signGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#EF4444"/>
+      <stop offset="50%" stop-color="#DC2626"/>
+      <stop offset="100%" stop-color="#B91C1C"/>
+    </linearGradient>
+    <filter id="softShadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="3" stdDeviation="2.5" flood-opacity="0.18" flood-color="#0F172A"/>
+    </filter>
+  </defs>
+
+  <!-- Ground Shadow -->
+  <ellipse cx="120" cy="308" rx="58" ry="6.5" fill="#CBD5E1" opacity="0.6"/>
+
+  <!-- Left Sneaker & Leg -->
+  <g id="leftLeg">
+    <path d="M85 240 L80 286 L62 292 Q52 296 52 302 Q52 306 66 306 L95 304 Q100 300 96 288 L98 240 Z" fill="url(#jeansGrad)" stroke="#0F172A" stroke-width="1.8"/>
+    <!-- Left Sneaker -->
+    <path d="M60 290 L85 288 Q96 288 95 304 L56 304 Q50 304 53 296 Z" fill="#FFFFFF" stroke="#0F172A" stroke-width="1.5"/>
+    <path d="M54 300 L95 300" stroke="#0284C7" stroke-width="2.5"/>
+    <path d="M52 304 L96 304" stroke="#E2E8F0" stroke-width="2.5"/>
+  </g>
+
+  <!-- Right Sneaker & Leg -->
+  <g id="rightLeg">
+    <path d="M142 240 L144 288 Q140 300 145 304 L174 306 Q188 306 188 302 Q188 296 178 292 L160 286 L155 240 Z" fill="url(#jeansGrad)" stroke="#0F172A" stroke-width="1.8"/>
+    <!-- Right Sneaker -->
+    <path d="M155 288 L180 290 Q190 296 187 304 L145 304 Q144 288 155 288 Z" fill="#FFFFFF" stroke="#0F172A" stroke-width="1.5"/>
+    <path d="M145 300 L186 300" stroke="#0284C7" stroke-width="2.5"/>
+    <path d="M144 304 L188 304" stroke="#E2E8F0" stroke-width="2.5"/>
+  </g>
+
+  <!-- Backpack (Behind Torso) -->
+  <g id="backpack">
+    <rect x="68" y="112" width="104" height="110" rx="20" fill="#334155" stroke="#1E293B" stroke-width="2"/>
+    <path d="M96 108 Q120 102 144 108" stroke="#1E293B" stroke-width="4" stroke-linecap="round"/>
+  </g>
+
+  <!-- Hoodie Torso -->
+  <g id="torso">
+    <path d="M72 125 Q120 120 168 125 L164 246 Q120 250 76 246 Z" fill="url(#hoodieGrad)" stroke="#0C4A6E" stroke-width="2"/>
+    <!-- Inner Shirt Collar -->
+    <path d="M102 122 Q120 134 138 122 Z" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+    <!-- Hoodie Pocket / Seam Details -->
+    <path d="M84 212 Q120 220 156 212 L150 240 Q120 244 90 240 Z" fill="#0369A1" stroke="#075985" stroke-width="1.5"/>
+    <!-- Hoodie Drawstrings -->
+    <path d="M110 128 L108 155" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round"/>
+    <circle cx="108" cy="156" r="2" fill="#E2E8F0"/>
+    <path d="M130 128 L132 155" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round"/>
+    <circle cx="132" cy="156" r="2" fill="#E2E8F0"/>
+    <!-- Backpack Straps Over Shoulders -->
+    <path d="M82 125 L88 190" stroke="#1E293B" stroke-width="6" stroke-linecap="round"/>
+    <path d="M158 125 L152 190" stroke="#1E293B" stroke-width="6" stroke-linecap="round"/>
+  </g>
+
+  <!-- Neck -->
+  <path d="M108 108 L108 126 Q120 132 132 126 L132 108 Z" fill="url(#skinGrad)" stroke="#FDBA74" stroke-width="1"/>
+
+  <!-- Head & Hair Base -->
+  <g id="headGroup">
+    <!-- Ears -->
+    <circle cx="70" cy="80" r="10" fill="url(#skinGrad)" stroke="#FDBA74" stroke-width="1.5"/>
+    <path d="M68 76 Q72 80 68 84" stroke="#EA580C" stroke-width="1.2" fill="none" opacity="0.6"/>
+    <circle cx="170" cy="80" r="10" fill="url(#skinGrad)" stroke="#FDBA74" stroke-width="1.5"/>
+    <path d="M172 76 Q168 80 172 84" stroke="#EA580C" stroke-width="1.2" fill="none" opacity="0.6"/>
+
+    <!-- Head Shape -->
+    <ellipse cx="120" cy="78" rx="44" ry="46" fill="url(#skinGrad)" stroke="#FDBA74" stroke-width="1.5"/>
+
+    <!-- Cheek Blush -->
+    <ellipse cx="88" cy="90" rx="7" ry="4" fill="#FDA4AF" opacity="0.6"/>
+    <ellipse cx="152" cy="90" rx="7" ry="4" fill="#FDA4AF" opacity="0.6"/>
+
+    <!-- Eyes (Big, Expressive, Slightly Surprised/Disappointed "Oops" Look) -->
+    <!-- Left Eye -->
+    <ellipse cx="98" cy="74" rx="8.5" ry="10.5" fill="#FFFFFF" stroke="#1E293B" stroke-width="1.5"/>
+    <ellipse cx="100" cy="74" rx="5" ry="6.5" fill="#1E293B"/>
+    <circle cx="98" cy="71" r="2" fill="#FFFFFF"/>
+    <circle cx="102" cy="76" r="1" fill="#FFFFFF"/>
+
+    <!-- Right Eye -->
+    <ellipse cx="142" cy="74" rx="8.5" ry="10.5" fill="#FFFFFF" stroke="#1E293B" stroke-width="1.5"/>
+    <ellipse cx="140" cy="74" rx="5" ry="6.5" fill="#1E293B"/>
+    <circle cx="138" cy="71" r="2" fill="#FFFFFF"/>
+    <circle cx="142" cy="76" r="1" fill="#FFFFFF"/>
+
+    <!-- Eyebrows (Slightly tilted up in center - sympathetic "oops" expression) -->
+    <path d="M88 62 Q98 57 108 61" stroke="#374151" stroke-width="3" stroke-linecap="round" fill="none"/>
+    <path d="M132 61 Q142 57 152 62" stroke="#374151" stroke-width="3" stroke-linecap="round" fill="none"/>
+
+    <!-- Nose -->
+    <path d="M120 74 Q123 83 118 85" stroke="#EA580C" stroke-width="2" stroke-linecap="round" fill="none"/>
+
+    <!-- Sheepish Smiling / Oops Mouth -->
+    <path d="M106 95 Q120 106 134 95" stroke="#9A3412" stroke-width="3" stroke-linecap="round" fill="none"/>
+    <!-- Dimple -->
+    <path d="M134 94 Q136 96 137 98" stroke="#9A3412" stroke-width="2" stroke-linecap="round" fill="none"/>
+
+    <!-- "Oops" Sweat Drop on Temple -->
+    <g transform="translate(156, 52)">
+      <path d="M6 0 C6 0 0 7 0 11 C0 14.3 2.7 17 6 17 C9.3 17 12 14.3 12 11 C12 7 6 0 6 0 Z" fill="#38BDF8" stroke="#0284C7" stroke-width="1"/>
+      <path d="M4 10 Q4 13 6 14" stroke="#FFFFFF" stroke-width="1.2" stroke-linecap="round" fill="none"/>
+    </g>
+
+    <!-- Modern Stylish Haircut (Textured Tufts on Top) -->
+    <path d="M72 70 C68 45 92 28 120 28 C148 28 172 45 168 70 C162 58 152 48 140 50 C130 52 122 44 112 46 C98 48 88 56 72 70 Z" fill="url(#hairGrad)" stroke="#1F2937" stroke-width="2"/>
+    <path d="M80 50 Q105 38 135 44" stroke="#4B5563" stroke-width="2" stroke-linecap="round" fill="none"/>
+  </g>
+
+  <!-- Left Arm (Holding Left Side of Sign) -->
+  <g id="leftArmHolding">
+    <path d="M72 130 Q52 165 65 195" fill="none" stroke="url(#hoodieGrad)" stroke-width="16" stroke-linecap="round"/>
+    <path d="M72 130 Q52 165 65 195" fill="none" stroke="#0C4A6E" stroke-width="2" stroke-linecap="round"/>
+    <!-- Left Hand / Fingers around Sign Border -->
+    <g transform="translate(56, 185)">
+      <circle cx="10" cy="10" r="7" fill="url(#skinGrad)" stroke="#EA580C" stroke-width="1.5"/>
+      <path d="M12 4 Q18 7 17 14" stroke="#FDBA74" stroke-width="1.5" fill="none"/>
+    </g>
+  </g>
+
+  <!-- Right Arm (Holding Right Side of Sign) -->
+  <g id="rightArmHolding">
+    <path d="M168 130 Q188 165 175 195" fill="none" stroke="url(#hoodieGrad)" stroke-width="16" stroke-linecap="round"/>
+    <path d="M168 130 Q188 165 175 195" fill="none" stroke="#0C4A6E" stroke-width="2" stroke-linecap="round"/>
+    <!-- Right Hand / Fingers around Sign Border -->
+    <g transform="translate(164, 185)">
+      <circle cx="10" cy="10" r="7" fill="url(#skinGrad)" stroke="#EA580C" stroke-width="1.5"/>
+      <path d="M8 4 Q2 7 3 14" stroke="#FDBA74" stroke-width="1.5" fill="none"/>
+    </g>
+  </g>
+
+  <!-- "REGISTRATION CLOSED" Sign Board (Safely Held with Both Hands) -->
+  <g id="signBoard" filter="url(#softShadow)">
+    <!-- Outer Sign Frame -->
+    <rect x="52" y="160" width="136" height="54" rx="12" fill="url(#signGrad)" stroke="#F59E0B" stroke-width="3"/>
+    <!-- Inner Inset Line -->
+    <rect x="56" y="164" width="128" height="46" rx="9" fill="none" stroke="#FBBF24" stroke-width="1.2" stroke-dasharray="4 2" opacity="0.75"/>
+
+    <!-- Sign Text (Bold, High Contrast, Ultra Crisp) -->
+    <text x="120" y="181" text-anchor="middle" fill="#FEF2F2" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-weight="900" font-size="11.5" letter-spacing="1.2">
+      REGISTRATION
+    </text>
+    <text x="120" y="201" text-anchor="middle" fill="#FEF08A" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-weight="900" font-size="15" letter-spacing="1.8">
+      CLOSED
+    </text>
+  </g>
+</svg>
