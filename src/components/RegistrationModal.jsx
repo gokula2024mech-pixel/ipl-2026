@@ -73,7 +73,7 @@ const API_BASE_URL = rawApiUrl.endsWith('/api') ? rawApiUrl.slice(0, -4) : rawAp
 const SECE_EMAIL_REGEX = /^[A-Za-z0-9._%+-]+@sece\.ac\.in$/i
 const INDIAN_MOBILE_REGEX = /^[6-9]\d{9}$/
 
-export default function RegistrationModal({ isOpen, onClose }) {
+export default function RegistrationModal({ isOpen, onClose, onRegistrationClosed }) {
   const [formData, setFormData] = useState({
     email: '',
     teamName: '',
@@ -683,6 +683,19 @@ export default function RegistrationModal({ isOpen, onClose }) {
           data.registrationId ||
           (rawMsg.match(/(IPL26-\d{4})/i) || [])[1] ||
           null
+
+        // Detect REGISTRATION_CLOSED (HTTP 403 / 409 or code)
+        if (
+          data.code === 'REGISTRATION_CLOSED' ||
+          rawMsg.includes('REGISTRATION_CLOSED') ||
+          rawMsg.toLowerCase().includes('registration is currently closed')
+        ) {
+          console.log('[Registration] Registration closed detected from server')
+          setActivePopup(null)
+          if (onClose) onClose()
+          if (onRegistrationClosed) onRegistrationClosed()
+          return
+        }
 
         if (
           data.code === 'MEMBER_ALREADY_REGISTERED' ||

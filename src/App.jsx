@@ -4,6 +4,7 @@ import AdminDashboard from './components/AdminDashboard'
 import Navbar from './components/Navbar'
 import Hero from './components/Hero'
 import RegistrationModal from './components/RegistrationModal'
+import RegistrationClosedModal from './components/RegistrationClosedModal'
 import MySubmissionsModal from './components/MySubmissionsModal'
 import MySubmissionsPage from './components/MySubmissionsPage'
 import EntryCountdown from './components/EntryCountdown'
@@ -39,6 +40,7 @@ export default function App() {
   const [loading, setLoading] = useState(true)
   const [loginError, setLoginError] = useState('')
   const [isRegistrationOpen, setIsRegistrationOpen] = useState(false)
+  const [isRegistrationClosedModalOpen, setIsRegistrationClosedModalOpen] = useState(false)
   const [isMySubmissionsOpen, setIsMySubmissionsOpen] = useState(false)
   const [viewMode, setViewMode] = useState("public")
   const [selectedPhase, setSelectedPhase] = useState('my_submissions')
@@ -290,7 +292,23 @@ export default function App() {
   const authGenerationRef = useRef(0)
 
   const handleOpenRegistration = () => {
-    setIsRegistrationOpen(true)
+    // Check if registration is actively open according to authoritative regTimer state
+    const isRunning = regTimer?.timer_status === 'running'
+    const now = Date.now() + (serverOffset || 0)
+    const start = regTimer?.scheduled_start_at ? new Date(regTimer.scheduled_start_at).getTime() : null
+    const end = regTimer?.scheduled_end_at ? new Date(regTimer.scheduled_end_at).getTime() : null
+
+    let isOpen = isRunning
+    if (isRunning) {
+      if (start && now < start) isOpen = false
+      if (end && now > end) isOpen = false
+    }
+
+    if (isOpen) {
+      setIsRegistrationOpen(true)
+    } else {
+      setIsRegistrationClosedModalOpen(true)
+    }
   }
 
   const handleCloseRegistration = async () => {
@@ -535,6 +553,8 @@ export default function App() {
             onBackToHome={() => setViewMode("public")}
             selectedPhase={selectedPhase}
             setSelectedPhase={setSelectedPhase}
+            session={session}
+            user={session?.user}
           />
         ) : isLeaderboardPage ? (
           <Suspense fallback={
@@ -583,6 +603,12 @@ export default function App() {
       <RegistrationModal
         isOpen={isRegistrationOpen}
         onClose={handleCloseRegistration}
+        onRegistrationClosed={() => setIsRegistrationClosedModalOpen(true)}
+      />
+
+      <RegistrationClosedModal
+        isOpen={isRegistrationClosedModalOpen}
+        onClose={() => setIsRegistrationClosedModalOpen(false)}
       />
 
       <MySubmissionsModal

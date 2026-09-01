@@ -155,10 +155,11 @@ function normalizeMentorDepartment(val) {
   return val;
 }
 
-export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_submissions', setSelectedPhase }) {
+export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_submissions', setSelectedPhase, session: initialSession, user: initialUser }) {
   const [submissions, setSubmissions] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [authExpired, setAuthExpired] = useState(false)
   const [userEmail, setUserEmail] = useState('')
   const [phasesList, setPhasesList] = useState([])
 
@@ -187,6 +188,20 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
   const [isSaving, setIsSaving] = useState(false)
   const [saveSuccessMsg, setSaveSuccessMsg] = useState('')
   const [saveErrorMsg, setSaveErrorMsg] = useState('')
+
+  const getToken = async () => {
+    const { data: { session } } = await supabase.auth.getSession()
+    return session?.access_token || initialSession?.access_token || null
+  }
+
+  const handleSignOutAndReload = async () => {
+    try {
+      await supabase.auth.signOut()
+    } catch (e) {
+      // ignore
+    }
+    window.location.reload()
+  }
 
   useEffect(() => {
     setIsEditing(false)
@@ -230,8 +245,7 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
     setSaveSuccessMsg('')
 
     try {
-      const { data: { session } } = await supabase.auth.getSession()
-      const token = session?.access_token
+      const token = await getToken()
       if (!token) throw new Error('Authentication session expired. Please log in again.')
 
       const regId = currentPage.team.registrationId
@@ -271,31 +285,46 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
 
   useEffect(() => {
     fetchSubmissions()
-  }, [])
+  }, [initialSession])
 
   const fetchSubmissions = async () => {
     setLoading(true)
     setError('')
+    setAuthExpired(false)
     try {
-      const { data: { session } } = await supabase.auth.getSession()
-      const token = session?.access_token
+      const token = await getToken()
       if (!token) {
-        throw new Error('Authentication required. Please log in.')
+        setError('Authentication session not found. Please sign in.')
+        setAuthExpired(true)
+        setSubmissions([])
+        setLoading(false)
+        return
       }
 
-      setUserEmail(session?.user?.email || '')
+      const { data: { session } } = await supabase.auth.getSession()
+      setUserEmail(session?.user?.email || initialUser?.email || '')
 
       const response = await fetch(`${API_BASE_URL}/api/my-submissions`, {
         headers: { 'Authorization': `Bearer ${token}` }
       })
 
+      if (response.status === 401) {
+        setError('Invalid or expired authentication session. Please sign in again.')
+        setAuthExpired(true)
+        setSubmissions([])
+        setLoading(false)
+        return
+      }
+
       if (!response.ok) {
-        throw new Error('Unable to retrieve submissions.')
+        const errJson = await response.json().catch(() => ({}))
+        throw new Error(errJson.message || `Unable to retrieve submissions (HTTP ${response.status}).`)
       }
 
       const data = await response.json()
       if (data.success) {
         setSubmissions(data.submissions || [])
+        setError('')
       } else {
         throw new Error(data.message || 'Unable to retrieve submissions.')
       }
@@ -417,8 +446,7 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
   const handleDownloadTemplate = async (templateId, filename) => {
     try {
       setDownloadingTemplateDocType(templateId)
-      const { data: { session } } = await supabase.auth.getSession()
-      const token = session?.access_token
+      const token = await getToken()
       const response = await fetch(`${API_BASE_URL}/api/patents/templates/${templateId}`, {
         headers: token ? { 'Authorization': `Bearer ${token}` } : {}
       })
@@ -441,8 +469,7 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
 
   const handleDownload = async (fileId, originalName) => {
     try {
-      const { data: { session } } = await supabase.auth.getSession()
-      const token = session?.access_token
+      const token = await getToken()
       if (!token) return
       const response = await fetch(`${API_BASE_URL}/api/patents/file/${fileId}`, {
         headers: { 'Authorization': `Bearer ${token}` }
@@ -475,8 +502,7 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
     setClassificationError('')
     setUploadingDocId(template.id)
     try {
-      const { data: { session } } = await supabase.auth.getSession()
-      const token = session?.access_token
+      const token = await getToken()
       if (!token) throw new Error('Authentication required.')
 
       const formData = new FormData()
@@ -702,13 +728,23 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-16 flex flex-col items-center text-center gap-3 text-red-500 border-red-100">
               <AlertCircle size={36} />
               <p className="text-base font-semibold">{error}</p>
-              <button
-                type="button"
-                onClick={fetchSubmissions}
-                className="mt-2 rounded-xl bg-red-600 px-5 py-2.5 text-xs font-bold text-white hover:bg-red-700 transition cursor-pointer"
-              >
-                Retry Load
-              </button>
+              {authExpired ? (
+                <button
+                  type="button"
+                  onClick={handleSignOutAndReload}
+                  className="mt-2 rounded-xl bg-accent px-5 py-2.5 text-xs font-bold text-white hover:bg-amber-600 transition cursor-pointer shadow-xs"
+                >
+                  Sign In Again
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={fetchSubmissions}
+                  className="mt-2 rounded-xl bg-red-600 px-5 py-2.5 text-xs font-bold text-white hover:bg-red-700 transition cursor-pointer"
+                >
+                  Retry Load
+                </button>
+              )}
             </div>
           ) : selectedPhase === 'my_submissions' ? (
             /* ==================== MY SUBMISSIONS PAGE ==================== */
@@ -936,6 +972,15 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
             </div>
           ) : selectedPhase === 'phase_1' ? (
             /* ==================== PHASE 1 WORKSTATION ==================== */
+            totalPages === 0 ? (
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-16 flex flex-col items-center text-center gap-4 text-slate-400">
+                <Users size={48} className="text-slate-300" />
+                <div>
+                  <p className="text-sm font-semibold text-slate-800">No team submissions found.</p>
+                  <p className="text-xs text-slate-500 mt-1">You are not listed in any team registrations.</p>
+                </div>
+              </div>
+            ) : (
             <div className="space-y-6">
 
               {/* Step 1: Patent Classification Card */}
@@ -1200,6 +1245,7 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
                 )}
               </div>
             </div>
+            )
           ) : selectedPhase === 'phase_2' ? (
             /* ==================== PHASE 2 PAGE ==================== */
             <div className="space-y-6">

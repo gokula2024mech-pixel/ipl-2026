@@ -126,6 +126,55 @@ router.get('/health', async (req, res) => {
   }
 })
 
+/**
+ * Authoritative check if registration window is currently open
+ */
+async function checkRegistrationWindow() {
+  console.log('[Registration] Checking registration window...')
+  try {
+    const { data: regTimer, error: timerErr } = await supabase
+      .from('registration_timer')
+      .select('*')
+      .maybeSingle()
+
+    const now = new Date()
+    const nowTime = now.getTime()
+
+    if (timerErr || !regTimer) {
+      console.warn('[Registration] Warning: Could not read registration_timer, rejecting registration:', timerErr?.message)
+      return { isOpen: false, status: 'error', reason: 'Database error reading timer' }
+    }
+
+    const start = regTimer.scheduled_start_at ? new Date(regTimer.scheduled_start_at).getTime() : null
+    const end = regTimer.scheduled_end_at ? new Date(regTimer.scheduled_end_at).getTime() : null
+    const status = regTimer.timer_status
+
+    console.log(`[Registration] Current time: ${now.toISOString()}`)
+    console.log(`[Registration] Start time: ${regTimer.scheduled_start_at || 'None'}`)
+    console.log(`[Registration] End time: ${regTimer.scheduled_end_at || 'None'}`)
+    console.log(`[Registration] Status: ${status}`)
+
+    if (status === 'running') {
+      if (start && nowTime < start) {
+        console.log('[Registration] Registration rejected: REGISTRATION_CLOSED (before start time)')
+        return { isOpen: false, status }
+      }
+      if (end && nowTime > end) {
+        console.log('[Registration] Registration rejected: REGISTRATION_CLOSED (after end time)')
+        return { isOpen: false, status }
+      }
+      console.log('[Registration] Status: OPEN')
+      return { isOpen: true, status }
+    }
+
+    console.log(`[Registration] Registration rejected: REGISTRATION_CLOSED (status is ${status})`)
+    return { isOpen: false, status }
+  } catch (err) {
+    console.error('[Registration] Error in checkRegistrationWindow:', err.message || err)
+    return { isOpen: false, status: 'error', reason: err.message }
+  }
+}
+
 // -------------------------------------------------------------
 // POST /api/registrations
 // Handles multipart/form-data registration submission
@@ -147,6 +196,16 @@ router.post('/registrations', (req, res) => {
     }
 
     try {
+      // 1. Authoritative check if registration window is currently open
+      const windowCheck = await checkRegistrationWindow()
+      if (!windowCheck.isOpen) {
+        return res.status(403).json({
+          success: false,
+          code: 'REGISTRATION_CLOSED',
+          message: 'Registration is currently closed.',
+        })
+      }
+
       const body = req.body || {}
       let parsedData = body
 
@@ -410,9 +469,6 @@ router.post('/registrations', (req, res) => {
         return res.status(400).json({ success: false, message: `Faculty mentor department "${mentorDept}" is invalid.` })
       }
 
-      // Resolve mentor_id (reverted mentor mapping visibility feature)
-      const resolvedMentorId = null;
-
       // Insert row into Supabase PostgreSQL (only actual existing database columns)
       const recordToInsert = {
         team_name: teamName,
@@ -430,7 +486,6 @@ router.post('/registrations', (req, res) => {
         member3_department: member3.department,
         mentor_name: mentor.name,
         mentor_department: mentor.department,
-        mentor_id: resolvedMentorId,
         innovation_domain: innovationDomain,
         sdg_goals: sdgGoals,
         trl_level: trlLevel,
@@ -806,6 +861,16 @@ router.get('/check-team/:teamName', async (req, res) => {
 
 router.post('/submit-new-idea', async (req, res) => {
   try {
+    // 0. Authoritative check if registration window is currently open
+    const windowCheck = await checkRegistrationWindow()
+    if (!windowCheck.isOpen) {
+      return res.status(403).json({
+        success: false,
+        code: 'REGISTRATION_CLOSED',
+        message: 'Registration is currently closed.',
+      })
+    }
+
     const {
       teamId,
       projectTitle,

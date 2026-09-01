@@ -110,7 +110,7 @@ export default function Footer() {
         </div>
 
         <div className="mt-12 border-t border-slate-800 pt-8 text-center text-xs text-slate-500">
-          © 2026 IPL – Innovative Product League. All Rights Reserved.
+          Department of Mechanical Engineering, Sri Eshwar College of Engineering, Coimbatore.
         </div>
       </div>
     </footer>
