@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { ArrowRight } from "lucide-react";
 import { supabase } from "../supabaseClient";
+import { getEventState, formatTimelineDate } from "../utils/eventTimeline";
 
 // Clean, modern 12-tooth mechanical gear component
 const GearSVG = ({ className }) => (
@@ -105,25 +106,6 @@ function OdometerBlock({ value, label }) {
   );
 }
 
-const formatDateTime = (dateStr) => {
-  if (!dateStr) return "";
-  const d = new Date(dateStr);
-  if (isNaN(d.getTime())) return "";
-  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  const pad = (n) => String(n).padStart(2, "0");
-
-  const day = d.getDate();
-  const month = months[d.getMonth()];
-  const year = d.getFullYear();
-  let hours = d.getHours();
-  const minutes = pad(d.getMinutes());
-  const ampm = hours >= 12 ? "PM" : "AM";
-  hours = hours % 12;
-  hours = hours ? hours : 12;
-
-  return `${day} ${month} ${year}, ${hours}:${minutes} ${ampm}`;
-};
-
 export default function EntryCountdown({ onEnter, serverOffset }) {
   const [regTimer, setRegTimer] = useState(null);
   const [dbPhases, setDbPhases] = useState([]);
@@ -132,7 +114,10 @@ export default function EntryCountdown({ onEnter, serverOffset }) {
     hours: 0,
     minutes: 0,
     seconds: 0,
-    label: "Loading...",
+    label: "COUNTDOWN",
+    statusBadge: "LOADING...",
+    statusDotColor: "bg-slate-400",
+    timelineTitle: "TIMELINE",
     status: "loading",
   });
   const [reducedMotion, setReducedMotion] = useState(false);
@@ -196,125 +181,27 @@ export default function EntryCountdown({ onEnter, serverOffset }) {
     };
   }, []);
 
-  // Calculate countdown
+  // Calculate dynamic authoritative event state and countdown
   useEffect(() => {
-    const getActiveConfig = () => {
-      if (!regTimer) return null;
-
-      // 1. Check if Registration is running/paused
-      if (
-        regTimer.timer_status === "running" ||
-        regTimer.timer_status === "paused"
-      ) {
-        return {
-          label: "REGISTRATION TIMER",
-          status: regTimer.timer_status,
-          paused: regTimer.is_timer_paused,
-          remaining_seconds: regTimer.remaining_seconds,
-          scheduled_start_at: regTimer.scheduled_start_at,
-          scheduled_end_at: regTimer.scheduled_end_at,
-        };
-      }
-
-      // 2. Check for active/paused phases
-      const activePhase = dbPhases.find(
-        (p) => p.timer_status === "running" || p.timer_status === "paused",
-      );
-      if (activePhase) {
-        return {
-          label: activePhase.name,
-          status: activePhase.timer_status,
-          paused: activePhase.is_timer_paused,
-          remaining_seconds: activePhase.remaining_seconds,
-          scheduled_start_at: activePhase.scheduled_start_at,
-          scheduled_end_at: activePhase.scheduled_end_at,
-        };
-      }
-
-      // 3. Check for upcoming registration
-      if (regTimer.timer_status === "upcoming") {
-        return {
-          label: "UPCOMING REGISTRATION",
-          status: "upcoming",
-          paused: false,
-          remaining_seconds: null,
-          scheduled_start_at: regTimer.scheduled_start_at,
-          scheduled_end_at: regTimer.scheduled_end_at,
-        };
-      }
-
-      const upcomingPhase = dbPhases.find((p) => p.timer_status === "upcoming");
-      if (upcomingPhase) {
-        return {
-          label: upcomingPhase.name,
-          status: upcomingPhase.timer_status,
-          paused: false,
-          remaining_seconds: null,
-          scheduled_start_at: upcomingPhase.scheduled_start_at,
-          scheduled_end_at: upcomingPhase.scheduled_end_at,
-        };
-      }
-
-      // 4. Closed/completed - fallback to the registration timer dates, or the last phase's dates
-      if (regTimer.scheduled_start_at && regTimer.scheduled_end_at) {
-        return {
-          label: "REGISTRATION CLOSED",
-          status: "closed",
-          paused: false,
-          remaining_seconds: 0,
-          scheduled_start_at: regTimer.scheduled_start_at,
-          scheduled_end_at: regTimer.scheduled_end_at,
-        };
-      }
-
-      const lastPhase = dbPhases[dbPhases.length - 1];
-      if (lastPhase) {
-        return {
-          label: "REGISTRATION CLOSED",
-          status: "closed",
-          paused: false,
-          remaining_seconds: 0,
-          scheduled_start_at: lastPhase.scheduled_start_at,
-          scheduled_end_at: lastPhase.scheduled_end_at,
-        };
-      }
-
-      return {
-        label: "REGISTRATION CLOSED",
-        status: "closed",
-        paused: false,
-        remaining_seconds: 0,
-        scheduled_start_at: null,
-        scheduled_end_at: null,
-      };
-    };
-
     const interval = setInterval(() => {
-      const config = getActiveConfig();
+      const currentServerTime = Date.now() + (serverOffset || 0);
+      const config = getEventState(regTimer, dbPhases, currentServerTime);
       if (!config) return;
 
       let diff = 0;
-      const currentServerTime = Date.now() + serverOffset;
 
-      if (config.status === "running") {
-        const end = new Date(config.scheduled_end_at).getTime();
-        diff = end - currentServerTime;
-        if (config.paused && config.remaining_seconds) {
-          diff = Number(config.remaining_seconds) * 1000;
+      if (config.isPaused) {
+        if (config.remainingSeconds) {
+          diff = Number(config.remainingSeconds) * 1000;
+        } else if (config.targetTimeMs) {
+          diff = Math.max(0, config.targetTimeMs - currentServerTime);
         }
+      } else if (config.targetTimeMs) {
+        diff = config.targetTimeMs - currentServerTime;
         if (diff <= 0) {
           diff = 0;
           fetchTimer();
         }
-      } else if (config.status === "upcoming") {
-        const start = new Date(config.scheduled_start_at).getTime();
-        diff = start - currentServerTime;
-        if (diff <= 0) {
-          diff = 0;
-          fetchTimer();
-        }
-      } else if (config.status === "paused") {
-        diff = Number(config.remaining_seconds || 0) * 1000;
       }
 
       const seconds = Math.max(0, Math.floor((diff / 1000) % 60));
@@ -327,18 +214,19 @@ export default function EntryCountdown({ onEnter, serverOffset }) {
         hours,
         minutes,
         seconds,
-        label: config.label,
-        status: config.status,
-        paused: config.paused,
-        scheduled_start_at: config.scheduled_start_at,
-        scheduled_end_at: config.scheduled_end_at,
+        label: config.countdownLabel,
+        statusBadge: config.statusBadge,
+        statusDotColor: config.statusDotColor,
+        timelineTitle: config.timelineTitle,
+        status: config.statusKey,
+        paused: config.isPaused,
+        scheduled_start_at: config.scheduledStartAt,
+        scheduled_end_at: config.scheduledEndAt,
       });
     }, 1000);
 
     return () => clearInterval(interval);
   }, [regTimer, dbPhases, serverOffset]);
-
-
 
   // Pre-calculate circular dial markings
   const angles = Array.from({ length: 24 }, (_, i) => i * 15);
@@ -654,21 +542,29 @@ export default function EntryCountdown({ onEnter, serverOffset }) {
               <circle cx="250" cy="250" r="2.5" fill="#F59E0B" />
             </svg>
 
-            {/* ODOMETER TIMER REELS GRID */}
-            <div className="relative z-10 flex items-center gap-0.5 xs:gap-1 sm:gap-2 w-full max-w-[calc(100vw-24px)] justify-center px-1">
-              <OdometerBlock value={timeLeft.days} label="DAYS" />
-              <span className="text-[#F59E0B] font-mono text-base xs:text-xl md:text-3xl font-black -mt-3 sm:-mt-6 select-none animate-pulse">
-                :
-              </span>
-              <OdometerBlock value={timeLeft.hours} label="HOURS" />
-              <span className="text-[#F59E0B] font-mono text-base xs:text-xl md:text-3xl font-black -mt-3 sm:-mt-6 select-none animate-pulse">
-                :
-              </span>
-              <OdometerBlock value={timeLeft.minutes} label="MINUTES" />
-              <span className="text-[#F59E0B] font-mono text-base xs:text-xl md:text-3xl font-black -mt-3 sm:-mt-6 select-none animate-pulse">
-                :
-              </span>
-              <OdometerBlock value={timeLeft.seconds} label="SECONDS" />
+            {/* ODOMETER TIMER REELS GRID & DYNAMIC COUNTDOWN LABEL */}
+            <div className="relative z-10 flex flex-col items-center justify-center w-full max-w-[calc(100vw-24px)] px-1">
+              {/* Dynamic Countdown Header Label */}
+              <div className="text-[10px] sm:text-xs font-sans font-bold tracking-[0.2em] text-[#F59E0B] uppercase text-center mb-2.5">
+                {timeLeft.label}
+              </div>
+
+              {/* Reels */}
+              <div className="flex items-center gap-0.5 xs:gap-1 sm:gap-2 justify-center">
+                <OdometerBlock value={timeLeft.days} label="DAYS" />
+                <span className="text-[#F59E0B] font-mono text-base xs:text-xl md:text-3xl font-black -mt-3 sm:-mt-6 select-none animate-pulse">
+                  :
+                </span>
+                <OdometerBlock value={timeLeft.hours} label="HOURS" />
+                <span className="text-[#F59E0B] font-mono text-base xs:text-xl md:text-3xl font-black -mt-3 sm:-mt-6 select-none animate-pulse">
+                  :
+                </span>
+                <OdometerBlock value={timeLeft.minutes} label="MINUTES" />
+                <span className="text-[#F59E0B] font-mono text-base xs:text-xl md:text-3xl font-black -mt-3 sm:-mt-6 select-none animate-pulse">
+                  :
+                </span>
+                <OdometerBlock value={timeLeft.seconds} label="SECONDS" />
+              </div>
             </div>
           </div>
         </div>
@@ -678,47 +574,22 @@ export default function EntryCountdown({ onEnter, serverOffset }) {
           {/* STATE INDICATOR CHASSIS */}
           {timeLeft.status !== "loading" && (
             <div className="inline-flex items-center gap-2 border border-white/10 bg-[#0f1b2a]/60 px-4 py-1.5 rounded text-[10px] font-sans font-bold tracking-widest text-slate-300 uppercase mb-1">
-              <span
-                className={`w-2 h-2 rounded-full ${
-                  timeLeft.status === "paused"
-                    ? "bg-[#F59E0B]"
-                    : timeLeft.status === "closed"
-                      ? "bg-red-600"
-                      : timeLeft.status === "upcoming"
-                        ? "bg-[#F59E0B]"
-                        : "bg-green-500 animate-pulse"
-                }`}
-              />
-              {timeLeft.status === "paused"
-                ? "● REGISTRATION PAUSED"
-                : timeLeft.status === "closed"
-                  ? "● REGISTRATION CLOSED"
-                  : timeLeft.status === "upcoming"
-                    ? "● REGISTRATION UPCOMING"
-                    : "● REGISTRATION OPEN"}
+              <span className={`w-2 h-2 rounded-full ${timeLeft.statusDotColor}`} />
+              <span>{timeLeft.statusBadge}</span>
             </div>
           )}
 
           {/* DATES PANEL */}
           {timeLeft.status !== "loading" && timeLeft.scheduled_start_at && timeLeft.scheduled_end_at && (
             <div className="text-center font-sans mt-1 mb-2">
-              {timeLeft.status === 'upcoming' ? (
-                <div className="flex flex-col items-center gap-1">
-                  <span className="text-[9px] font-extrabold tracking-widest text-[#F59E0B] uppercase">STARTS</span>
-                  <span className="text-sm font-bold text-slate-200">{formatDateTime(timeLeft.scheduled_start_at)}</span>
-                  <span className="text-[9px] font-extrabold tracking-widest text-[#F59E0B] uppercase mt-1">ENDS</span>
-                  <span className="text-sm font-bold text-slate-200">{formatDateTime(timeLeft.scheduled_end_at)}</span>
+              <div className="flex flex-col items-center gap-1">
+                <span className="text-[9px] font-extrabold tracking-widest text-slate-400 uppercase">{timeLeft.timelineTitle}</span>
+                <div className="flex items-center gap-2 text-xs md:text-sm font-bold text-slate-200">
+                  <span>{formatTimelineDate(timeLeft.scheduled_start_at)}</span>
+                  <span className="text-[#F59E0B]">→</span>
+                  <span>{formatTimelineDate(timeLeft.scheduled_end_at)}</span>
                 </div>
-              ) : (
-                <div className="flex flex-col items-center gap-1">
-                  <span className="text-[9px] font-extrabold tracking-widest text-slate-400 uppercase">TIMELINE</span>
-                  <div className="flex items-center gap-2 text-xs md:text-sm font-bold text-slate-200">
-                    <span>{formatDateTime(timeLeft.scheduled_start_at)}</span>
-                    <span className="text-[#F59E0B]">→</span>
-                    <span>{formatDateTime(timeLeft.scheduled_end_at)}</span>
-                  </div>
-                </div>
-              )}
+              </div>
             </div>
           )}
 

@@ -10,6 +10,7 @@ import MySubmissionsPage from './components/MySubmissionsPage'
 import EntryCountdown from './components/EntryCountdown'
 import MechanicalLoader from './components/MechanicalLoader'
 import { supabase } from './supabaseClient'
+import { getEventState } from './utils/eventTimeline'
 
 const About = lazy(() => import('./components/About'))
 const ProgramHighlights = lazy(() => import('./components/ProgramHighlights'))
@@ -123,118 +124,24 @@ export default function App() {
 
   // Authoritative global countdown timer interval
   useEffect(() => {
-    const getActiveConfig = () => {
-      if (!regTimer) return null
-
-      // 1. If Registration is running or paused
-      if (regTimer.timer_status === 'running' || regTimer.timer_status === 'paused') {
-        return {
-          label: 'Registration Open',
-          status: regTimer.timer_status,
-          paused: regTimer.is_timer_paused,
-          remaining_seconds: regTimer.remaining_seconds,
-          scheduled_start_at: regTimer.scheduled_start_at,
-          scheduled_end_at: regTimer.scheduled_end_at
-        }
-      }
-
-      // 2. Find a running or paused phase
-      const activePhase = dbPhases.find(p => p.timer_status === 'running' || p.timer_status === 'paused')
-      if (activePhase) {
-        return {
-          label: activePhase.name,
-          status: activePhase.timer_status,
-          paused: activePhase.is_timer_paused,
-          remaining_seconds: activePhase.remaining_seconds,
-          scheduled_start_at: activePhase.scheduled_start_at,
-          scheduled_end_at: activePhase.scheduled_end_at
-        }
-      }
-
-      // 3. Find next upcoming phase or registration
-      if (regTimer.timer_status === 'upcoming') {
-        return {
-          label: 'Registration',
-          status: regTimer.timer_status,
-          paused: false,
-          remaining_seconds: null,
-          scheduled_start_at: regTimer.scheduled_start_at,
-          scheduled_end_at: regTimer.scheduled_end_at
-        }
-      }
-
-      const upcomingPhase = dbPhases.find(p => p.timer_status === 'upcoming')
-      if (upcomingPhase) {
-        return {
-          label: upcomingPhase.name,
-          status: upcomingPhase.timer_status,
-          paused: false,
-          remaining_seconds: null,
-          scheduled_start_at: upcomingPhase.scheduled_start_at,
-          scheduled_end_at: upcomingPhase.scheduled_end_at
-        }
-      }
-
-      // 4. Closed/completed - fallback to the registration timer dates, or the last phase's dates
-      if (regTimer.scheduled_start_at && regTimer.scheduled_end_at) {
-        return {
-          label: 'Registration Closed',
-          status: 'closed',
-          paused: false,
-          remaining_seconds: 0,
-          scheduled_start_at: regTimer.scheduled_start_at,
-          scheduled_end_at: regTimer.scheduled_end_at
-        }
-      }
-
-      const lastPhase = dbPhases[dbPhases.length - 1]
-      if (lastPhase) {
-        return {
-          label: 'Registration Closed',
-          status: 'closed',
-          paused: false,
-          remaining_seconds: 0,
-          scheduled_start_at: lastPhase.scheduled_start_at,
-          scheduled_end_at: lastPhase.scheduled_end_at
-        }
-      }
-
-      return {
-        label: 'Registration Closed',
-        status: 'closed',
-        paused: false,
-        remaining_seconds: 0,
-        scheduled_start_at: null,
-        scheduled_end_at: null
-      }
-    }
-
     const timer = setInterval(() => {
-      const config = getActiveConfig()
+      const currentServerTime = Date.now() + (serverOffset || 0)
+      const config = getEventState(regTimer, dbPhases, currentServerTime)
       if (!config) return
 
       let diff = 0
-      const currentServerTime = Date.now() + serverOffset
-
-      if (config.status === 'running') {
-        const end = new Date(config.scheduled_end_at).getTime()
-        diff = end - currentServerTime
-        if (config.paused && config.remaining_seconds) {
-          diff = Number(config.remaining_seconds) * 1000
+      if (config.isPaused) {
+        if (config.remainingSeconds) {
+          diff = Number(config.remainingSeconds) * 1000
+        } else if (config.targetTimeMs) {
+          diff = Math.max(0, config.targetTimeMs - currentServerTime)
         }
+      } else if (config.targetTimeMs) {
+        diff = config.targetTimeMs - currentServerTime
         if (diff <= 0) {
           diff = 0
           fetchTimerData()
         }
-      } else if (config.status === 'upcoming') {
-        const start = new Date(config.scheduled_start_at).getTime()
-        diff = start - currentServerTime
-        if (diff <= 0) {
-          diff = 0
-          fetchTimerData()
-        }
-      } else if (config.status === 'paused') {
-        diff = Number(config.remaining_seconds || 0) * 1000
       }
 
       const seconds = Math.max(0, Math.floor((diff / 1000) % 60))
@@ -247,11 +154,16 @@ export default function App() {
         hours,
         minutes,
         seconds,
-        label: config.label,
-        status: config.status,
-        paused: config.paused,
-        scheduled_start_at: config.scheduled_start_at,
-        scheduled_end_at: config.scheduled_end_at
+        label: config.countdownLabel,
+        phaseName: config.phaseName,
+        statusBadge: config.statusBadge,
+        statusDotColor: config.statusDotColor,
+        timelineTitle: config.timelineTitle,
+        status: config.statusKey,
+        isRegistrationOpen: config.isRegistrationOpen,
+        paused: config.isPaused,
+        scheduled_start_at: config.scheduledStartAt,
+        scheduled_end_at: config.scheduledEndAt
       })
     }, 1000)
 

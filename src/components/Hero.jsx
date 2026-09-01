@@ -3,6 +3,7 @@ import { motion } from 'framer-motion'
 import { ArrowRight, Sparkles, X } from 'lucide-react'
 import { TAGLINE, SUB_TAGLINE, REGISTRATION_FORM_URL } from '../data/content'
 import { supabase } from '../supabaseClient'
+import { getEventState, formatTimelineDate } from '../utils/eventTimeline'
 
 const STATS = [
   '3 Phases',
@@ -180,81 +181,6 @@ function HeroTimer({
     }
   }
 
-  const getActiveTimerConfig = () => {
-    if (!regTimer || dbPhases.length === 0) return null
-
-    if (regTimer.timer_status === 'running' || regTimer.timer_status === 'paused') {
-      return {
-        label: 'Registration Open',
-        status: regTimer.timer_status,
-        paused: regTimer.is_timer_paused,
-        remaining_seconds: regTimer.remaining_seconds,
-        scheduled_start_at: regTimer.scheduled_start_at,
-        scheduled_end_at: regTimer.scheduled_end_at
-      }
-    }
-
-    const activePhase = dbPhases.find(p => p.timer_status === 'running' || p.timer_status === 'paused')
-    if (activePhase) {
-      return {
-        label: activePhase.name,
-        status: activePhase.timer_status,
-        paused: activePhase.is_timer_paused,
-        remaining_seconds: activePhase.remaining_seconds,
-        scheduled_start_at: activePhase.scheduled_start_at,
-        scheduled_end_at: activePhase.scheduled_end_at
-      }
-    }
-
-    if (regTimer.timer_status === 'upcoming') {
-      return {
-        label: 'Registration',
-        status: regTimer.timer_status,
-        paused: false,
-        remaining_seconds: null,
-        scheduled_start_at: regTimer.scheduled_start_at,
-        scheduled_end_at: regTimer.scheduled_end_at
-      }
-    }
-
-    const upcomingPhase = dbPhases.find(p => p.timer_status === 'upcoming')
-    if (upcomingPhase) {
-      return {
-        label: upcomingPhase.name,
-        status: upcomingPhase.timer_status,
-        paused: false,
-        remaining_seconds: null,
-        scheduled_start_at: upcomingPhase.scheduled_start_at,
-        scheduled_end_at: upcomingPhase.scheduled_end_at
-      }
-    }
-
-    if (regTimer.scheduled_start_at && regTimer.scheduled_end_at) {
-      return {
-        label: 'Registration Closed',
-        status: 'closed',
-        paused: false,
-        remaining_seconds: 0,
-        scheduled_start_at: regTimer.scheduled_start_at,
-        scheduled_end_at: regTimer.scheduled_end_at
-      }
-    }
-
-    const lastPhase = dbPhases[dbPhases.length - 1]
-    if (lastPhase) {
-      return {
-        label: 'Registration Closed',
-        status: 'closed',
-        paused: false,
-        remaining_seconds: 0,
-        scheduled_start_at: lastPhase.scheduled_start_at,
-        scheduled_end_at: lastPhase.scheduled_end_at
-      }
-    }
-
-    return null
-  }
-
   useEffect(() => {
     fetchTimerData()
 
@@ -280,47 +206,45 @@ function HeroTimer({
 
   useEffect(() => {
     const timer = setInterval(() => {
-      const config = getActiveTimerConfig()
+      const config = getEventState(regTimer, dbPhases, Date.now())
       if (!config) return
 
       let diff = 0
       let needsRefresh = false
 
-      if (config.status === 'running') {
-        const end = new Date(config.scheduled_end_at).getTime()
-        diff = end - Date.now()
-        if (config.paused && config.remaining_seconds) {
-          diff = Number(config.remaining_seconds) * 1000
+      if (config.isPaused) {
+        if (config.remainingSeconds) {
+          diff = Number(config.remainingSeconds) * 1000
+        } else if (config.targetTimeMs) {
+          diff = Math.max(0, config.targetTimeMs - Date.now())
         }
+      } else if (config.targetTimeMs) {
+        diff = config.targetTimeMs - Date.now()
         if (diff <= 0) {
           diff = 0
           needsRefresh = true
         }
-      } else if (config.status === 'upcoming') {
-        const start = new Date(config.scheduled_start_at).getTime()
-        diff = start - Date.now()
-        if (diff <= 0) {
-          diff = 0
-          needsRefresh = true
-        }
-      } else if (config.status === 'paused') {
-        diff = Number(config.remaining_seconds || 0) * 1000
       }
 
-      const seconds = Math.floor((diff / 1000) % 60)
-      const minutes = Math.floor((diff / 1000 / 60) % 60)
-      const hours = Math.floor((diff / (1000 * 60 * 60)) % 24)
-      const days = Math.floor(diff / (1000 * 60 * 60 * 24))
+      const seconds = Math.max(0, Math.floor((diff / 1000) % 60))
+      const minutes = Math.max(0, Math.floor((diff / 1000 / 60) % 60))
+      const hours = Math.max(0, Math.floor((diff / (1000 * 60 * 60)) % 24))
+      const days = Math.max(0, Math.floor(diff / (1000 * 60 * 60 * 24)))
 
       setLocalTimeLeft({
         days,
         hours,
         minutes,
         seconds,
-        label: config.label,
-        status: config.status,
-        scheduled_start_at: config.scheduled_start_at,
-        scheduled_end_at: config.scheduled_end_at
+        label: config.countdownLabel,
+        phaseName: config.phaseName,
+        statusBadge: config.statusBadge,
+        statusDotColor: config.statusDotColor,
+        timelineTitle: config.timelineTitle,
+        status: config.statusKey,
+        isRegistrationOpen: config.isRegistrationOpen,
+        scheduled_start_at: config.scheduledStartAt,
+        scheduled_end_at: config.scheduledEndAt
       })
 
       if (needsRefresh) {
@@ -329,7 +253,6 @@ function HeroTimer({
     }, 1000)
 
     return () => clearInterval(timer)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dbPhases, regTimer])
 
   // Auto-collapse on scroll ONLY on mobile (widths < 768px)
