@@ -551,7 +551,7 @@ export default function App() {
               timeLeft={timeLeft}
               profile={profile}
               onMySubmissionsClick={() => {
-                setSelectedPhase('phase_1')
+                setSelectedPhase('my_submissions')
                 setViewMode("submissions")
               }}
             />

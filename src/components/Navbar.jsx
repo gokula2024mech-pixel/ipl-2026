@@ -350,45 +350,9 @@ export default function Navbar({ onRegisterClick, user, profile, onProfileUpdate
                                     onMySubmissionsClick('my_submissions')
                                   }
                                 }}
-                                className="w-full rounded-lg border border-slate-300 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                                className="w-full rounded-lg bg-accent text-white py-2.5 text-xs font-bold hover:bg-amber-600 cursor-pointer shadow-xs transition"
                               >
                                 My Submissions
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setProfileDropdownOpen(false)
-                                  if (onMySubmissionsClick) {
-                                    onMySubmissionsClick('phase_1')
-                                  }
-                                }}
-                                className="w-full rounded-lg border border-slate-300 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
-                              >
-                                Phase 1
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setProfileDropdownOpen(false)
-                                  if (onMySubmissionsClick) {
-                                    onMySubmissionsClick('phase_2')
-                                  }
-                                }}
-                                className="w-full rounded-lg border border-slate-300 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
-                              >
-                                Phase 2
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setProfileDropdownOpen(false)
-                                  if (onMySubmissionsClick) {
-                                    onMySubmissionsClick('phase_3')
-                                  }
-                                }}
-                                className="w-full rounded-lg border border-slate-300 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
-                              >
-                                Phase 3
                               </button>
                             </div>
                             <div className="flex gap-2 pt-2 border-t border-slate-100">
@@ -404,7 +368,7 @@ export default function Navbar({ onRegisterClick, user, profile, onProfileUpdate
                               <button
                                 type="button"
                                 onClick={handleLogout}
-                                className={`${profile?.name_confirmed ? 'w-full' : 'w-1/2'} rounded-lg bg-accent py-2 text-xs font-bold text-white shadow-sm hover:bg-amber-600 cursor-pointer`}
+                                className={`${profile?.name_confirmed ? 'w-full' : 'w-1/2'} rounded-lg border border-slate-200 bg-slate-50 py-2 text-xs font-bold text-slate-600 hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition cursor-pointer`}
                               >
                                 Logout
                               </button>
@@ -610,45 +574,9 @@ export default function Navbar({ onRegisterClick, user, profile, onProfileUpdate
                             onMySubmissionsClick('my_submissions')
                           }
                         }}
-                        className="w-full rounded-lg border border-slate-300 py-2 text-center text-sm font-bold text-slate-700 hover:bg-slate-50 cursor-pointer bg-white"
+                        className="w-full rounded-xl bg-accent py-2.5 text-center text-sm font-bold text-white shadow-xs hover:bg-amber-600 cursor-pointer transition"
                       >
                         My Submissions
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setMobileOpen(false)
-                          if (onMySubmissionsClick) {
-                            onMySubmissionsClick('phase_1')
-                          }
-                        }}
-                        className="w-full rounded-lg border border-slate-300 py-2 text-center text-sm font-bold text-slate-700 hover:bg-slate-50 cursor-pointer bg-white"
-                      >
-                        Phase 1
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setMobileOpen(false)
-                          if (onMySubmissionsClick) {
-                            onMySubmissionsClick('phase_2')
-                          }
-                        }}
-                        className="w-full rounded-lg border border-slate-300 py-2 text-center text-sm font-bold text-slate-700 hover:bg-slate-50 cursor-pointer bg-white"
-                      >
-                        Phase 2
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setMobileOpen(false)
-                          if (onMySubmissionsClick) {
-                            onMySubmissionsClick('phase_3')
-                          }
-                        }}
-                        className="w-full rounded-lg border border-slate-300 py-2 text-center text-sm font-bold text-slate-700 hover:bg-slate-50 cursor-pointer bg-white"
-                      >
-                        Phase 3
                       </button>
                     </div>
                   )}
@@ -666,7 +594,7 @@ export default function Navbar({ onRegisterClick, user, profile, onProfileUpdate
                   <button
                     type="button"
                     onClick={handleLogout}
-                    className="w-full rounded-full border border-slate-300 bg-white py-2.5 text-center text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 text-center text-sm font-semibold text-slate-600 hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors cursor-pointer"
                   >
                     Logout
                   </button>

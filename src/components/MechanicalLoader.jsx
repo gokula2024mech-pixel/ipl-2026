@@ -1,33 +1,35 @@
 import React from 'react'
 
-export default function MechanicalLoader({ size = 50, className = 'text-accent', ...props }) {
-  // Generate a mathematically perfect gear path with a center cutout (using evenodd fill-rule)
+/**
+ * MechanicalLoader
+ * Precision mechanical interlocking gears loading animation.
+ * Features 3 synchronized interlocking gears rotating smoothly with CSS keyframes.
+ */
+export default function MechanicalLoader({ size = 48, className = 'text-accent', ...props }) {
+  // Generate a mathematically crisp gear path with a center axle hole
   const getGearPath = (cx, cy, rOut, rIn, teethCount, holeRadius) => {
     const points = []
     const angleStep = (Math.PI * 2) / teethCount
-    
+
     for (let i = 0; i < teethCount; i++) {
       const angle = i * angleStep
-      // Draw a trapezoidal tooth profile
       const a1 = angle
       const a2 = angle + angleStep * 0.25
       const a3 = angle + angleStep * 0.5
       const a4 = angle + angleStep * 0.75
-      
+
       points.push(`${(cx + rIn * Math.cos(a1)).toFixed(2)},${(cy + rIn * Math.sin(a1)).toFixed(2)}`)
       points.push(`${(cx + rOut * Math.cos(a2)).toFixed(2)},${(cy + rOut * Math.sin(a2)).toFixed(2)}`)
       points.push(`${(cx + rOut * Math.cos(a3)).toFixed(2)},${(cy + rOut * Math.sin(a3)).toFixed(2)}`)
       points.push(`${(cx + rIn * Math.cos(a4)).toFixed(2)},${(cy + rIn * Math.sin(a4)).toFixed(2)}`)
     }
-    
+
     const gearOutline = `M ${points.join(' L ')} Z`
-    // Punch a hole in the center of the gear using evenodd rule
     const centerHole = `M ${cx} ${cy} m -${holeRadius} 0 a ${holeRadius} ${holeRadius} 0 1 0 ${holeRadius * 2} 0 a ${holeRadius} ${holeRadius} 0 1 0 -${holeRadius * 2} 0`
-    
+
     return `${gearOutline} ${centerHole}`
   }
 
-  // Gear properties scaled up by 30% and designed to mesh perfectly
   const gears = [
     {
       id: 'g1',
@@ -38,7 +40,8 @@ export default function MechanicalLoader({ size = 50, className = 'text-accent',
       teeth: 16,
       circleHole: 5.85,
       initialRotation: 0,
-      animClass: 'mech-loader-g1'
+      animClass: 'mech-gear-cw-main',
+      opacity: '1'
     },
     {
       id: 'g2',
@@ -49,7 +52,8 @@ export default function MechanicalLoader({ size = 50, className = 'text-accent',
       teeth: 12,
       circleHole: 4.55,
       initialRotation: 15,
-      animClass: 'mech-loader-g2'
+      animClass: 'mech-gear-ccw-sec',
+      opacity: '0.85'
     },
     {
       id: 'g3',
@@ -60,11 +64,11 @@ export default function MechanicalLoader({ size = 50, className = 'text-accent',
       teeth: 8,
       circleHole: 2.86,
       initialRotation: 25,
-      animClass: 'mech-loader-g3'
+      animClass: 'mech-gear-cw-tri',
+      opacity: '0.7'
     }
   ]
 
-  // Proportional height based on the new viewBox coordinates (83 width to 89 height)
   const height = Math.round(size * 1.07)
 
   return (
@@ -81,30 +85,30 @@ export default function MechanicalLoader({ size = 50, className = 'text-accent',
         className="overflow-visible"
       >
         <style dangerouslySetInnerHTML={{ __html: `
-          @keyframes mech-rotate-cw {
+          @keyframes mech-gear-spin-cw {
             from { transform: rotate(0deg); }
             to { transform: rotate(360deg); }
           }
-          @keyframes mech-rotate-ccw {
+          @keyframes mech-gear-spin-ccw {
             from { transform: rotate(0deg); }
             to { transform: rotate(-360deg); }
           }
-          .mech-loader-g1 {
-            animation: mech-rotate-cw 4s linear infinite;
+          .mech-gear-cw-main {
+            animation: mech-gear-spin-cw 4s linear infinite;
           }
-          .mech-loader-g2 {
-            animation: mech-rotate-ccw 3s linear infinite;
+          .mech-gear-ccw-sec {
+            animation: mech-gear-spin-ccw 3s linear infinite;
           }
-          .mech-loader-g3 {
-            animation: mech-rotate-cw 2s linear infinite;
+          .mech-gear-cw-tri {
+            animation: mech-gear-spin-cw 2s linear infinite;
           }
           @media (prefers-reduced-motion: reduce) {
-            .mech-loader-g1, .mech-loader-g2, .mech-loader-g3 {
+            .mech-gear-cw-main, .mech-gear-ccw-sec, .mech-gear-cw-tri {
               animation: none !important;
             }
           }
         `}} />
-        
+
         {gears.map((g) => (
           <g
             key={g.id}
@@ -117,8 +121,8 @@ export default function MechanicalLoader({ size = 50, className = 'text-accent',
               d={getGearPath(g.cx, g.cy, g.rOut, g.rIn, g.teeth, g.circleHole)}
               fill="currentColor"
               fillRule="evenodd"
+              opacity={g.opacity}
               transform={`rotate(${g.initialRotation}, ${g.cx}, ${g.cy})`}
-              className="transition-all duration-300"
             />
           </g>
         ))}

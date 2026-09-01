@@ -925,7 +925,7 @@ export default function Hero({ onRegisterClick, timeLeft, profile: _profile, onM
                       : 'bg-accent hover:bg-amber-600'
                   }`}
                 >
-                  Phase 1
+                  My Submissions
                   <ArrowRight size={18} aria-hidden="true" />
                 </button>
 

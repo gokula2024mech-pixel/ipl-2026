@@ -3,6 +3,7 @@ const router = express.Router()
 const multer = require('multer')
 const path = require('path')
 const googleDriveService = require('../services/googleDriveService')
+const { supabase } = require('../supabaseClient')
 
 // Configure Multer for in-memory file handling (max 15MB)
 const upload = multer({
@@ -16,29 +17,71 @@ const upload = multer({
 const ALLOWED_EXTENSIONS = ['.pdf', '.png', '.jpg', '.jpeg', '.doc', '.docx']
 
 /**
+ * Standard department normalizer to match authoritative Google Drive department folders
+ */
+function normalizeOfficialDepartment(deptInput) {
+  if (!deptInput) return 'Mechanical Engineering'
+  const s = deptInput.trim().toLowerCase().replace(/\s+/g, ' ')
+
+  if (s.includes('aiml') || s.includes('machine learning') || s.includes('ai & ml') || s.includes('ai/ml') || s.includes('ai and ml')) {
+    return 'Artificial Intelligence and Machine Learning'
+  }
+  if (s.includes('aids') || s.includes('data science') || s.includes('ai & ds') || s.includes('ai/ds') || s.includes('ai and ds')) {
+    return 'Artificial Intelligence and Data Science'
+  }
+  if (s.includes('csbs') || s.includes('business system')) {
+    return 'Computer Science and Business System'
+  }
+  if (s.includes('cyber')) {
+    return 'Cyber Security'
+  }
+  if (s.includes('cce') || s.includes('computer and communication') || s.includes('computer & communication')) {
+    return 'Computer and Communication Engineering'
+  }
+  if (s.includes('ece') || s.includes('electronics and communication') || s.includes('electronics & communication') || s.includes('electrical and communication')) {
+    return 'Electronics and Communication Engineering'
+  }
+  if (s.includes('eee') || s.includes('electrical and electronics') || s.includes('electrical & electronics') || s.includes('electrical and electronic')) {
+    return 'Electrical and Electronics Engineering'
+  }
+  if (s.includes('cse') || s.includes('computer science') || s.includes('computer and engineering')) {
+    return 'Computer Science and Engineering'
+  }
+  if (s.includes('information technology') || /\bit\b/.test(s)) {
+    return 'Information Technology'
+  }
+  if (s.includes('mech') || s.includes('mechanical')) {
+    return 'Mechanical Engineering'
+  }
+  return deptInput.trim()
+}
+
+/**
  * GET /api/patents/templates
- * Dynamically list all official templates from the Google Drive 'templetes' folder
+ * Dynamically list official templates, optionally filtered by patentType ('Utility Patent' or 'Design Patent')
  */
 router.get('/templates', async (req, res) => {
   try {
-    const templates = await googleDriveService.listTemplates()
+    const { patentType } = req.query
+    const templates = await googleDriveService.listTemplates(patentType)
     return res.status(200).json({
       success: true,
       count: templates.length,
+      patentType: patentType || null,
       templates
     })
   } catch (err) {
     console.error('[PatentRoutes] Error listing templates:', err.message)
     return res.status(500).json({
       success: false,
-      message: 'Failed to retrieve templates from Google Drive: ' + err.message
+      message: 'Failed to retrieve templates: ' + err.message
     })
   }
 })
 
 /**
  * GET /api/patents/templates/:templateId
- * Download/stream official template file directly from Google Drive
+ * Download/stream official template file
  */
 router.get('/templates/:templateId', async (req, res) => {
   try {
@@ -48,7 +91,7 @@ router.get('/templates/:templateId', async (req, res) => {
     if (!template) {
       return res.status(404).json({
         success: false,
-        message: 'Template not found in Google Drive templates folder.'
+        message: 'Template not found.'
       })
     }
 
@@ -65,7 +108,62 @@ router.get('/templates/:templateId', async (req, res) => {
     console.error('[PatentRoutes] Error streaming template:', err.message)
     return res.status(500).json({
       success: false,
-      message: 'Failed to download template from Google Drive: ' + err.message
+      message: 'Failed to download template: ' + err.message
+    })
+  }
+})
+
+/**
+ * GET /api/patents/submissions
+ * List all uploaded files in a team's patent folder
+ */
+router.get('/submissions', async (req, res) => {
+  try {
+    let { phase = 'phase 1', department, category, patentType, teamId } = req.query
+
+    if (!teamId || !category || !patentType) {
+      return res.status(400).json({
+        success: false,
+        message: 'teamId, category, and patentType query parameters are required.'
+      })
+    }
+
+    const cleanTeamId = teamId.trim()
+    let cleanDept = (department || '').trim()
+
+    // Authoritative team department resolution
+    const { data: reg } = await supabase
+      .from('registrations')
+      .select('leader_department')
+      .eq('registration_id', cleanTeamId)
+      .maybeSingle()
+
+    if (reg && reg.leader_department) {
+      cleanDept = normalizeOfficialDepartment(reg.leader_department)
+    } else if (cleanDept) {
+      cleanDept = normalizeOfficialDepartment(cleanDept)
+    } else {
+      cleanDept = 'Mechanical Engineering'
+    }
+
+    const files = await googleDriveService.listTeamSubmissions({
+      phase,
+      department: cleanDept,
+      category: category.trim(),
+      patentType: patentType.trim(),
+      teamId: cleanTeamId
+    })
+
+    return res.status(200).json({
+      success: true,
+      count: files.length,
+      submissions: files
+    })
+  } catch (err) {
+    console.error('[PatentRoutes] Error querying team submissions:', err.message)
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to query submissions: ' + err.message
     })
   }
 })
@@ -98,14 +196,14 @@ router.get('/structure', async (req, res) => {
     console.error('[PatentRoutes] Error fetching structure:', err.message)
     return res.status(500).json({
       success: false,
-      message: 'Failed to discover Drive hierarchy: ' + err.message
+      message: 'Failed to discover structure: ' + err.message
     })
   }
 })
 
 /**
  * POST /api/patents/upload
- * Upload a completed patent document to the dynamic destination folder
+ * Upload a completed patent document to the authoritative destination folder
  * Expected fields: phase, department, category, patentType, teamId, templateId, file
  */
 router.post('/upload', upload.single('file'), async (req, res) => {
@@ -122,9 +220,6 @@ router.post('/upload', upload.single('file'), async (req, res) => {
     const file = req.file
 
     // 1. Validate required fields
-    if (!department || !department.trim()) {
-      return res.status(400).json({ success: false, message: 'Department is required.' })
-    }
     if (!category || !category.trim()) {
       return res.status(400).json({ success: false, message: 'Category (Hardware or Software) is required.' })
     }
@@ -142,11 +237,57 @@ router.post('/upload', upload.single('file'), async (req, res) => {
     }
 
     const cleanTeamId = teamId.trim()
-    const cleanDept = department.trim()
     const cleanCat = category.trim()
     const cleanPatentType = patentType.trim()
 
-    // 2. Validate file extension
+    if (!['Hardware', 'Software'].includes(cleanCat)) {
+      return res.status(400).json({ success: false, message: 'Invalid Category. Must be Hardware or Software.' })
+    }
+
+    if (!['Design Patent', 'Utility Patent'].includes(cleanPatentType)) {
+      return res.status(400).json({ success: false, message: 'Invalid Patent Type. Must be Design Patent or Utility Patent.' })
+    }
+
+    // 2. Authoritative Team Department & Membership Resolution from Supabase
+    const { data: reg, error: regErr } = await supabase
+      .from('registrations')
+      .select('registration_id, team_name, leader_department, leader_email, member2_email, member3_email')
+      .eq('registration_id', cleanTeamId)
+      .maybeSingle()
+
+    let authoritativeDept = (department || '').trim()
+    if (reg && reg.leader_department) {
+      authoritativeDept = normalizeOfficialDepartment(reg.leader_department)
+    } else if (authoritativeDept) {
+      authoritativeDept = normalizeOfficialDepartment(authoritativeDept)
+    } else {
+      authoritativeDept = 'Mechanical Engineering'
+    }
+
+    // 3. Security: Check that uploader is an authorized member of the team
+    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+      try {
+        const token = req.headers.authorization.split(' ')[1]
+        const { data: { user } } = await supabase.auth.getUser(token)
+        if (user && user.email && reg) {
+          const uEmail = user.email.toLowerCase().trim()
+          const teamEmails = [reg.leader_email, reg.member2_email, reg.member3_email]
+            .filter(Boolean)
+            .map(e => e.toLowerCase().trim())
+
+          if (!teamEmails.includes(uEmail)) {
+            return res.status(403).json({
+              success: false,
+              message: 'Access Denied: You are not an enrolled member of this team.'
+            })
+          }
+        }
+      } catch (authErr) {
+        console.warn('[PatentRoutes] Auth token validation warning:', authErr.message)
+      }
+    }
+
+    // 4. Validate file extension
     const ext = path.extname(file.originalname).toLowerCase()
     if (!ALLOWED_EXTENSIONS.includes(ext)) {
       return res.status(400).json({
@@ -155,22 +296,20 @@ router.post('/upload', upload.single('file'), async (req, res) => {
       })
     }
 
-    // 3. Validate template exists in dynamic templates folder
+    // 5. Validate template exists
     const template = await googleDriveService.validateTemplate(templateId)
     if (!template) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid templateId: Template does not exist in the official Drive templetes folder.'
+        message: 'Invalid template: Template does not exist in the official templates directory.'
       })
     }
 
-    // 4. Validate filename format: Must follow `<teamId>_<templateName>` or `<teamId>-<templateName>`
-    // E.g. TEAM123_Abstract for Product.docx
+    // 6. Validate filename format: Must follow `<teamId>_<templateName>` or `<teamId>-<templateName>`
     const uploadedOriginalName = file.originalname.trim()
     const expectedBaseName = `${cleanTeamId}_${template.name}`
     const expectedAltBaseName = `${cleanTeamId}-${template.name}`
 
-    // Case-insensitive filename validation
     const uploadedLower = uploadedOriginalName.toLowerCase()
     const expectedLower = expectedBaseName.toLowerCase()
     const expectedAltLower = expectedAltBaseName.toLowerCase()
@@ -182,55 +321,23 @@ router.post('/upload', upload.single('file'), async (req, res) => {
       })
     }
 
-    // Standardize destination filename
     const destinationFileName = uploadedOriginalName
 
-    // 5. Navigate / Discover Destination Hierarchy
-    // Phase Folder
-    let phaseFolder
-    try {
-      phaseFolder = await googleDriveService.getPhaseFolder(phase)
-    } catch (e) {
-      return res.status(404).json({ success: false, message: e.message })
-    }
-
-    // Department Folder
-    let deptFolder
-    try {
-      deptFolder = await googleDriveService.getDepartmentFolder(phaseFolder.id, cleanDept)
-    } catch (e) {
-      return res.status(404).json({ success: false, message: e.message })
-    }
-
-    // Category Folder (Hardware / Software)
-    let catFolder
-    try {
-      catFolder = await googleDriveService.getCategoryFolder(deptFolder.id, cleanCat)
-    } catch (e) {
-      return res.status(404).json({ success: false, message: e.message })
-    }
-
-    // Patent Type Folder (Design Patent / Utility Patent)
-    let patentFolder
-    try {
-      patentFolder = await googleDriveService.getPatentTypeFolder(catFolder.id, cleanPatentType)
-    } catch (e) {
-      return res.status(404).json({ success: false, message: e.message })
-    }
-
-    // Team ID Folder (Find existing or create new)
+    // 7. Discover Destination Hierarchy using Authoritative Team Department
+    const phaseFolder = await googleDriveService.getPhaseFolder(phase)
+    const deptFolder = await googleDriveService.getDepartmentFolder(phaseFolder.id, authoritativeDept)
+    const catFolder = await googleDriveService.getCategoryFolder(deptFolder.id, cleanCat)
+    const patentFolder = await googleDriveService.getPatentTypeFolder(catFolder.id, cleanPatentType)
     const teamFolderResult = await googleDriveService.getOrCreateTeamFolder(patentFolder.id, cleanTeamId)
     const targetFolderId = teamFolderResult.id
 
-    // 6. Upload file with duplicate protection
+    // 8. Upload file with duplicate protection
     try {
       const uploadedFile = await googleDriveService.uploadFileToFolder(targetFolderId, file, destinationFileName)
 
-      const fullPathString = `${phaseFolder.name} / ${deptFolder.name} / ${catFolder.name} / ${patentFolder.name} / ${cleanTeamId}`
-
       return res.status(200).json({
         success: true,
-        message: 'Patent document uploaded successfully.',
+        message: 'Patent document submitted successfully.',
         data: {
           fileId: uploadedFile.id,
           fileName: uploadedFile.name,
@@ -238,8 +345,6 @@ router.post('/upload', upload.single('file'), async (req, res) => {
           department: deptFolder.name,
           category: catFolder.name,
           patentType: patentFolder.name,
-          folderId: targetFolderId,
-          path: fullPathString,
           webViewLink: uploadedFile.webViewLink,
           isNewFolder: teamFolderResult.isNew
         }
@@ -249,7 +354,7 @@ router.post('/upload', upload.single('file'), async (req, res) => {
         return res.status(409).json({
           success: false,
           code: 'FILE_EXISTS',
-          message: 'This document has already been uploaded.',
+          message: 'This document has already been uploaded for this team.',
           fileId: uploadErr.fileId
         })
       }
@@ -260,14 +365,14 @@ router.post('/upload', upload.single('file'), async (req, res) => {
     console.error('[PatentRoutes] Upload Error:', err.message)
     return res.status(500).json({
       success: false,
-      message: 'Google Drive upload failed: ' + err.message
+      message: 'Document submission failed: ' + err.message
     })
   }
 })
 
 /**
  * GET /api/patents/file/:fileId
- * Download/stream any uploaded document from Google Drive
+ * Download/stream any uploaded document
  */
 router.get('/file/:fileId', async (req, res) => {
   try {
@@ -285,7 +390,7 @@ router.get('/file/:fileId', async (req, res) => {
     console.error('[PatentRoutes] Error streaming document:', err.message)
     return res.status(500).json({
       success: false,
-      message: 'Failed to retrieve document from Google Drive: ' + err.message
+      message: 'Failed to retrieve document: ' + err.message
     })
   }
 })

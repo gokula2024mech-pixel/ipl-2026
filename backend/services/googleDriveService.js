@@ -226,38 +226,115 @@ async function getOrCreateTeamFolder(patentTypeFolderId, teamId) {
 }
 
 /**
- * Dynamically list all official templates from the 'templetes' folder
+ * Dynamically list official templates, optionally filtered by patentType ('Utility Patent' or 'Design Patent')
  */
-async function listTemplates() {
+async function listTemplates(patentType = null) {
   const drive = getDriveClient()
-  const folderId = TEMPLATES_FOLDER_ID
+  const rootTemplatesFolderId = TEMPLATES_FOLDER_ID
 
-  const response = await drive.files.list({
-    q: `'${folderId}' in parents and mimeType != 'application/vnd.google-apps.folder' and trashed = false`,
-    fields: 'files(id, name, mimeType, size, modifiedTime, webViewLink)',
+  let targetFolderIds = [rootTemplatesFolderId]
+
+  // Fetch all subfolders inside the templates folder
+  const subfoldersRes = await drive.files.list({
+    q: `'${rootTemplatesFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+    fields: 'files(id, name)',
     spaces: 'drive',
     includeItemsFromAllDrives: true,
     supportsAllDrives: true
   })
+  const subfolders = subfoldersRes.data.files || []
 
-  const files = response.data.files || []
-  return files.map(f => ({
-    id: f.id,
-    name: f.name,
-    mimeType: f.mimeType,
-    size: f.size ? parseInt(f.size, 10) : null,
-    modifiedTime: f.modifiedTime,
-    webViewLink: f.webViewLink
-  }))
+  if (patentType && patentType.trim()) {
+    const cleanType = patentType.trim().toLowerCase()
+    let matchedFolder = null
+    if (cleanType.includes('utility')) {
+      matchedFolder = subfolders.find(f => f.name.toLowerCase().includes('utility'))
+    } else if (cleanType.includes('design')) {
+      matchedFolder = subfolders.find(f => f.name.toLowerCase().includes('design'))
+    }
+
+    if (matchedFolder) {
+      targetFolderIds = [matchedFolder.id]
+    } else {
+      targetFolderIds = []
+    }
+  } else if (subfolders.length > 0) {
+    // If no specific patentType specified, include both root and all subfolders
+    targetFolderIds = [rootTemplatesFolderId, ...subfolders.map(f => f.id)]
+  }
+
+  const allFiles = []
+  for (const folderId of targetFolderIds) {
+    const response = await drive.files.list({
+      q: `'${folderId}' in parents and mimeType != 'application/vnd.google-apps.folder' and trashed = false`,
+      fields: 'files(id, name, mimeType, size, modifiedTime, webViewLink)',
+      spaces: 'drive',
+      includeItemsFromAllDrives: true,
+      supportsAllDrives: true
+    })
+    if (response.data.files) {
+      allFiles.push(...response.data.files)
+    }
+  }
+
+  // Deduplicate files by id
+  const uniqueFilesMap = new Map()
+  for (const f of allFiles) {
+    if (!uniqueFilesMap.has(f.id)) {
+      uniqueFilesMap.set(f.id, {
+        id: f.id,
+        name: f.name,
+        mimeType: f.mimeType,
+        size: f.size ? parseInt(f.size, 10) : null,
+        modifiedTime: f.modifiedTime,
+        webViewLink: f.webViewLink
+      })
+    }
+  }
+
+  return Array.from(uniqueFilesMap.values())
 }
 
 /**
- * Validate that a given templateId exists in the dynamic templates folder
+ * Validate that a given templateId exists
  */
 async function validateTemplate(templateId) {
   if (!templateId) return null
-  const templates = await listTemplates()
-  return templates.find(t => t.id === templateId) || null
+  try {
+    const file = await getFileMetadata(templateId)
+    return file && !file.trashed ? file : null
+  } catch (e) {
+    return null
+  }
+}
+
+/**
+ * List all uploaded files in a team folder
+ */
+async function listTeamSubmissions({ phase = 'phase 1', department, category, patentType, teamId }) {
+  if (!department || !category || !patentType || !teamId) return []
+
+  try {
+    const phaseFolder = await getPhaseFolder(phase)
+    const deptFolder = await getDepartmentFolder(phaseFolder.id, department)
+    const catFolder = await getCategoryFolder(deptFolder.id, category)
+    const patentFolder = await getPatentTypeFolder(catFolder.id, patentType)
+    const teamFolder = await findFolderByName(patentFolder.id, teamId)
+    if (!teamFolder) return []
+
+    const children = await listFolderChildren(teamFolder.id)
+    return children
+      .filter(f => f.mimeType !== 'application/vnd.google-apps.folder')
+      .map(f => ({
+        id: f.id,
+        name: f.name,
+        size: f.size ? parseInt(f.size, 10) : null,
+        modifiedTime: f.modifiedTime,
+        webViewLink: f.webViewLink
+      }))
+  } catch (err) {
+    return []
+  }
 }
 
 /**
@@ -346,6 +423,7 @@ module.exports = {
   getOrCreateTeamFolder,
   listTemplates,
   validateTemplate,
+  listTeamSubmissions,
   uploadFileToFolder,
   getFileMetadata,
   streamFile
