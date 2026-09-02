@@ -18,7 +18,9 @@ export default function Footer() {
   return (
     <footer className="bg-slate-900 text-slate-300">
       <div className="mx-auto max-w-7xl px-4 py-16 md:px-6 lg:px-8">
-        <div className="grid gap-10 md:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-10 md:grid-cols-2 lg:grid-cols-4">
+          
+          {/* Column 1: IPL 2026 Branding */}
           <div>
             <p className="font-heading text-xl font-bold text-white">
               IPL<span className="text-accent">2026</span>
@@ -31,6 +33,7 @@ export default function Footer() {
             </p>
           </div>
 
+          {/* Column 2: Quick Links */}
           <div>
             <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider text-white">Quick Links</h3>
             <ul className="grid grid-cols-2 gap-2">
@@ -44,12 +47,11 @@ export default function Footer() {
             </ul>
           </div>
 
-          <div id="contact" className="space-y-6">
-            <h3 className="mb-6 text-base font-bold uppercase tracking-wider text-white font-heading">Contact</h3>
-
+          {/* Column 3: Convener & Developed By */}
+          <div className="space-y-6">
             {/* Convener */}
             <div className="space-y-2">
-              <h4 className="text-sm font-extrabold uppercase tracking-wider text-accent">Convener</h4>
+              <h4 className="text-sm font-extrabold uppercase tracking-wider text-accent font-heading">Convener</h4>
               <hr className="border-slate-800" />
               <p className="text-base font-bold text-white mt-3">Dr. K. Suresh Kumar</p>
               <ul className="space-y-2 text-sm text-slate-300 mt-2">
@@ -59,11 +61,28 @@ export default function Footer() {
               </ul>
             </div>
 
-            {/* Faculty Coordinator */}
+            {/* Developed By (Under Convener) */}
             <div className="space-y-2 pt-2">
-              <h4 className="text-sm font-extrabold uppercase tracking-wider text-accent">Faculty Coordinator</h4>
+              <h4 className="text-sm font-extrabold uppercase tracking-wider text-accent font-heading">Developed By</h4>
               <hr className="border-slate-800" />
-              <p className="text-base font-bold text-white mt-3">Dr. S. Gowtham</p>
+              <p className="text-base font-bold text-white mt-3">Mr. S. Sangara narayanan</p>
+              <ul className="space-y-2 text-sm text-slate-300 mt-2">
+                <li>
+                  <span className="text-slate-400 font-medium">Department:</span> Mechanical Engineering
+                </li>
+              </ul>
+            </div>
+          </div>
+
+          {/* Column 4: Contact (Faculty & Student Coordinators) */}
+          <div id="contact" className="space-y-6">
+            <h3 className="mb-6 text-base font-bold uppercase tracking-wider text-white font-heading">Contact</h3>
+
+            {/* Faculty Coordinator */}
+            <div className="space-y-2">
+              <h4 className="text-sm font-extrabold uppercase tracking-wider text-accent font-heading">Faculty Coordinator</h4>
+              <hr className="border-slate-800" />
+              <p className="text-base font-bold text-white mt-3">Mr. S. Gowtham</p>
               <ul className="space-y-2 text-sm text-slate-300 mt-2">
                 <li>
                   <span className="text-slate-400 font-medium">Department:</span> Mechanical Engineering
@@ -85,9 +104,9 @@ export default function Footer() {
 
             {/* Student Coordinator */}
             <div className="space-y-2 pt-2">
-              <h4 className="text-sm font-extrabold uppercase tracking-wider text-accent">Student Coordinator</h4>
+              <h4 className="text-sm font-extrabold uppercase tracking-wider text-accent font-heading">Student Coordinator</h4>
               <hr className="border-slate-800" />
-              <p className="text-base font-bold text-white mt-3">A. Gokul</p>
+              <p className="text-base font-bold text-white mt-3">Mr. A. Gokul</p>
               <ul className="space-y-2 text-sm text-slate-300 mt-2">
                 <li>
                   <span className="text-slate-400 font-medium">Department:</span> Mechanical Engineering
@@ -107,8 +126,10 @@ export default function Footer() {
               </ul>
             </div>
           </div>
+
         </div>
 
+        {/* Bottom Center Institutional Line */}
         <div className="mt-12 border-t border-slate-800 pt-8 text-center text-xs text-slate-500">
           Department of Mechanical Engineering, Sri Eshwar College of Engineering, Coimbatore.
         </div>

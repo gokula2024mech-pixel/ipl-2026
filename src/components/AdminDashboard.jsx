@@ -256,15 +256,22 @@ function formatPhaseDate(dateStr) {
 
 
 function getStatusLabel(status) {
-  if (status === 'running' || status === 'paused') return 'ACTIVE';
-  if (status === 'upcoming') return 'UPCOMING';
-  if (status === 'closed' || status === 'completed') return 'COMPLETED';
-  return 'EXPIRED';
+  if (!status) return 'ACTIVE';
+  const s = String(status).toLowerCase();
+  if (s.includes('paused')) return 'PAUSED';
+  if (s.includes('active') || s.includes('open') || s === 'running') return 'ACTIVE';
+  if (s.includes('upcoming')) return 'UPCOMING';
+  if (s.includes('closed') || s.includes('completed') || s.includes('ended')) return 'COMPLETED';
+  if (s.includes('expired')) return 'EXPIRED';
+  return 'ACTIVE';
 }
 
 function getStatusColor(status) {
-  if (status === 'running' || status === 'paused') return 'text-emerald-600 bg-emerald-50 border-emerald-100';
-  if (status === 'upcoming') return 'text-blue-600 bg-blue-50 border-blue-100';
+  if (!status) return 'text-emerald-600 bg-emerald-50 border-emerald-100';
+  const s = String(status).toLowerCase();
+  if (s.includes('paused')) return 'text-amber-600 bg-amber-50 border-amber-100';
+  if (s.includes('active') || s.includes('open') || s === 'running') return 'text-emerald-600 bg-emerald-50 border-emerald-100';
+  if (s.includes('upcoming')) return 'text-blue-600 bg-blue-50 border-blue-100';
   return 'text-slate-500 bg-slate-50 border-slate-100';
 }
 

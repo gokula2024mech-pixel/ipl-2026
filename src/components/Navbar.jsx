@@ -166,37 +166,54 @@ export default function Navbar({ onRegisterClick, user, profile, onProfileUpdate
     }
   }
 
+  // Handle unified smooth navigation to section anchors with navbar offset
+  const scrollToTarget = (href) => {
+    if (!href || href === '#') {
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+      if (window.location.hash) {
+        history.pushState(null, '', window.location.pathname)
+      }
+      return
+    }
+
+    if (href === '#leaderboard') {
+      window.location.hash = href
+      window.dispatchEvent(new CustomEvent('refresh-leaderboard'))
+      return
+    }
+
+    const targetId = href.startsWith('#') ? href.slice(1) : href
+    const target = document.getElementById(targetId) || document.querySelector(href)
+
+    if (target) {
+      const navbarHeight = 80
+      const targetPosition = target.getBoundingClientRect().top + window.scrollY - navbarHeight
+      window.scrollTo({
+        top: Math.max(0, targetPosition),
+        behavior: 'smooth'
+      })
+      if (window.location.hash !== href) {
+        history.pushState(null, '', href)
+      }
+    } else {
+      window.location.hash = href
+    }
+  }
+
+  const handleDesktopNav = (e, href) => {
+    if (href.startsWith('#')) {
+      e.preventDefault()
+      scrollToTarget(href)
+    }
+  }
+
   // Handle navigation for mobile menu
   const handleMobileNav = (e, href) => {
     e.preventDefault()
-
-    // Close mobile menu first
     setMobileOpen(false)
-
-    // Set hash so routing logic triggers
-    window.location.hash = href
-
-    if (href === '#leaderboard') {
-      window.dispatchEvent(new CustomEvent('refresh-leaderboard'));
-    }
-
-    // Wait for menu closing before scrolling
     setTimeout(() => {
-      const target = document.querySelector(href)
-
-      if (target) {
-        const navbarHeight = 80
-        const targetPosition =
-          target.getBoundingClientRect().top +
-          window.scrollY -
-          navbarHeight
-
-        window.scrollTo({
-          top: targetPosition,
-          behavior: 'smooth',
-        })
-      }
-    }, 200)
+      scrollToTarget(href)
+    }, 150)
   }
 
   return (
@@ -206,7 +223,14 @@ export default function Navbar({ onRegisterClick, user, profile, onProfileUpdate
         aria-label="Main navigation"
       >
         {/* ==================== LOGO ==================== */}
-        <a href="#" className="flex shrink-0 items-center">
+        <a
+          href="#"
+          onClick={(e) => {
+            e.preventDefault()
+            scrollToTarget('#')
+          }}
+          className="flex shrink-0 items-center"
+        >
           <img
             src="/logo.png"
             alt="IPL 2026"
@@ -220,11 +244,7 @@ export default function Navbar({ onRegisterClick, user, profile, onProfileUpdate
             <li key={link.href}>
               <a
                 href={link.href}
-                onClick={() => {
-                  if (link.href === '#leaderboard') {
-                    window.dispatchEvent(new CustomEvent('refresh-leaderboard'));
-                  }
-                }}
+                onClick={(e) => handleDesktopNav(e, link.href)}
                 className="text-sm font-medium text-slate-700 transition-colors hover:text-accent"
               >
                 {link.label}

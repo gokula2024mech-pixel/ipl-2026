@@ -12,28 +12,25 @@ import MechanicalLoader from './components/MechanicalLoader'
 import { supabase } from './supabaseClient'
 import { getEventState } from './utils/eventTimeline'
 
-const About = lazy(() => import('./components/About'))
-const ProgramHighlights = lazy(() => import('./components/ProgramHighlights'))
-const Eligibility = lazy(() => import('./components/Eligibility'))
-const Domains = lazy(() => import('./components/Domains'))
-const WhatYouGain = lazy(() => import('./components/WhatYouGain'))
-const FeaturesBenefits = lazy(() => import('./components/FeaturesBenefits'))
-const Journey = lazy(() => import('./components/Journey'))
-const Judging = lazy(() => import('./components/Judging'))
-const Timeline = lazy(() => import('./components/Timeline'))
-const Leaderboard = lazy(() => import('./components/Leaderboard'))
-const ProgramFlow = lazy(() => import('./components/ProgramFlow'))
-const Commercialization = lazy(() => import('./components/Commercialization'))
-const IncubationSupport = lazy(() => import('./components/IncubationSupport'))
-const Vision = lazy(() => import('./components/Vision'))
-const Mindset = lazy(() => import('./components/Mindset'))
-const Registration = lazy(() => import('./components/Registration'))
-const CTABanner = lazy(() => import('./components/CTABanner'))
-const Footer = lazy(() => import('./components/Footer'))
+import About from './components/About'
+import ProgramHighlights from './components/ProgramHighlights'
+import Eligibility from './components/Eligibility'
+import Domains from './components/Domains'
+import WhatYouGain from './components/WhatYouGain'
+import FeaturesBenefits from './components/FeaturesBenefits'
+import Journey from './components/Journey'
+import Judging from './components/Judging'
+import Timeline from './components/Timeline'
+import ProgramFlow from './components/ProgramFlow'
+import Commercialization from './components/Commercialization'
+import IncubationSupport from './components/IncubationSupport'
+import Vision from './components/Vision'
+import Mindset from './components/Mindset'
+import Registration from './components/Registration'
+import CTABanner from './components/CTABanner'
+import Footer from './components/Footer'
 
-function SectionFallback() {
-  return <div className="py-20" aria-hidden="true" />
-}
+const Leaderboard = lazy(() => import('./components/Leaderboard'))
 
 export default function App() {
   const [session, setSession] = useState(null)
@@ -170,6 +167,15 @@ export default function App() {
     return () => clearInterval(timer)
   }, [dbPhases, regTimer, serverOffset])
 
+  const SCROLL_POS_KEY = 'ipl2026_home_scroll_position'
+
+  // Ensure browser native scroll restoration is active for natural tab-switching and navigation
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'scrollRestoration' in window.history) {
+      window.history.scrollRestoration = 'auto'
+    }
+  }, [])
+
   useEffect(() => {
     const handleHashChange = () => {
       setCurrentHash(window.location.hash)
@@ -180,26 +186,56 @@ export default function App() {
     }
   }, [])
 
+  // Passively save scroll position for page reloads
   useEffect(() => {
-    if (viewMode === 'public') {
-      const hash = window.location.hash
-      if (hash && hash !== '#leaderboard') {
+    if (viewMode !== 'public' || currentHash === '#leaderboard') return
+
+    let timeoutId = null
+    const handleScroll = () => {
+      if (timeoutId) clearTimeout(timeoutId)
+      timeoutId = setTimeout(() => {
+        if (typeof window !== 'undefined' && viewMode === 'public') {
+          localStorage.setItem(SCROLL_POS_KEY, String(window.scrollY))
+        }
+      }, 150)
+    }
+
+    window.addEventListener('scroll', handleScroll, { passive: true })
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId)
+      window.removeEventListener('scroll', handleScroll)
+    }
+  }, [viewMode, currentHash])
+
+  // Restore scroll position or scroll to initial URL hash on page load
+  useEffect(() => {
+    if (viewMode !== 'public' || currentHash === '#leaderboard' || loading) return
+
+    const hash = window.location.hash
+    if (hash && hash !== '#leaderboard') {
+      const targetId = hash.slice(1)
+      const target = document.getElementById(targetId) || document.querySelector(hash)
+      if (target) {
+        const navbarHeight = 80
+        const targetPosition = target.getBoundingClientRect().top + window.scrollY - navbarHeight
         setTimeout(() => {
-          const element = document.querySelector(hash)
-          if (element) {
-            const navbarHeight = 80
-            const targetPosition = element.getBoundingClientRect().top + window.scrollY - navbarHeight
-            window.scrollTo({
-              top: targetPosition,
-              behavior: 'smooth'
-            })
-          }
+          window.scrollTo({
+            top: Math.max(0, targetPosition),
+            behavior: 'smooth'
+          })
         }, 150)
-      } else if (hash === '#leaderboard') {
-        window.scrollTo({ top: 0, behavior: 'smooth' })
+        return
       }
     }
-  }, [currentHash, viewMode])
+
+    const saved = localStorage.getItem(SCROLL_POS_KEY)
+    if (saved && !hash) {
+      const targetY = parseFloat(saved)
+      if (targetY > 10) {
+        window.scrollTo({ top: targetY, behavior: 'instant' })
+      }
+    }
+  }, [loading, viewMode])
 
   const authGenerationRef = useRef(0)
 
@@ -487,30 +523,26 @@ export default function App() {
                 setViewMode("submissions")
               }}
             />
-            <Suspense fallback={<SectionFallback />}>
-              <About />
-              <ProgramHighlights />
-              <Eligibility />
-              <Domains />
-              <WhatYouGain />
-              <FeaturesBenefits />
-              <Journey />
-              <Judging />
-              <Timeline />
-              <ProgramFlow />
-              <Commercialization />
-              <IncubationSupport />
-              <Vision />
-              <Mindset />
-              <Registration onRegisterClick={handleOpenRegistration} />
-              <CTABanner onRegisterClick={handleOpenRegistration} />
-            </Suspense>
+            <About />
+            <ProgramHighlights />
+            <Eligibility />
+            <Domains />
+            <WhatYouGain />
+            <FeaturesBenefits />
+            <Journey />
+            <Judging />
+            <Timeline />
+            <ProgramFlow />
+            <Commercialization />
+            <IncubationSupport />
+            <Vision />
+            <Mindset />
+            <Registration onRegisterClick={handleOpenRegistration} />
+            <CTABanner onRegisterClick={handleOpenRegistration} />
           </>
         )}
       </main>
-      <Suspense fallback={null}>
-        <Footer />
-      </Suspense>
+      <Footer />
 
       <RegistrationModal
         isOpen={isRegistrationOpen}

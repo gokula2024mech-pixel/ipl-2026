@@ -32,16 +32,23 @@ const formatDateTime = (dateStr) => {
 }
 
 function getStatusLabel(status) {
-  if (status === 'running' || status === 'paused') return 'ACTIVE'
-  if (status === 'upcoming') return 'UPCOMING'
-  if (status === 'closed' || status === 'completed') return 'COMPLETED'
-  return 'EXPIRED'
+  if (!status) return 'ACTIVE'
+  const s = String(status).toLowerCase()
+  if (s.includes('paused')) return 'PAUSED'
+  if (s.includes('active') || s.includes('open') || s === 'running') return 'ACTIVE'
+  if (s.includes('upcoming')) return 'UPCOMING'
+  if (s.includes('closed') || s.includes('completed') || s.includes('ended')) return 'COMPLETED'
+  if (s.includes('expired')) return 'EXPIRED'
+  return 'ACTIVE'
 }
 
 // Mapped status color
 function getStatusColor(status) {
-  if (status === 'running' || status === 'paused') return 'text-emerald-400'
-  if (status === 'upcoming') return 'text-blue-400'
+  if (!status) return 'text-emerald-400'
+  const s = String(status).toLowerCase()
+  if (s.includes('paused')) return 'text-amber-400'
+  if (s.includes('active') || s.includes('open') || s === 'running') return 'text-emerald-400'
+  if (s.includes('upcoming')) return 'text-blue-400'
   return 'text-slate-400'
 }
 
@@ -475,7 +482,7 @@ function HeroTimer({
 
   const statusLabel = getStatusLabel(timeLeft.status)
   const statusColor = getStatusColor(timeLeft.status)
-  const phaseLabel = String(timeLeft.label || 'REGISTRATION').toUpperCase()
+  const phaseLabel = String(timeLeft.timelineTitle || timeLeft.phaseName || (timeLeft.phaseNumber ? `PHASE ${timeLeft.phaseNumber}` : timeLeft.label) || 'REGISTRATION').toUpperCase()
 
   const startFormatted = formatDateTime(timeLeft.scheduled_start_at)
   const endFormatted = formatDateTime(timeLeft.scheduled_end_at)
