@@ -13,8 +13,8 @@ const upload = multer({
   }
 })
 
-// Allowed document file extensions
-const ALLOWED_EXTENSIONS = ['.pdf', '.png', '.jpg', '.jpeg', '.doc', '.docx']
+// Allowed document file extensions (Word documents only)
+const ALLOWED_EXTENSIONS = ['.doc', '.docx']
 
 /**
  * Standard department normalizer to match authoritative Google Drive department folders
@@ -287,12 +287,13 @@ router.post('/upload', upload.single('file'), async (req, res) => {
       }
     }
 
-    // 4. Validate file extension
-    const ext = path.extname(file.originalname).toLowerCase()
-    if (!ALLOWED_EXTENSIONS.includes(ext)) {
+    // 4. Authoritative Word file validation
+    const userExt = path.extname(file.originalname).toLowerCase()
+    if (!ALLOWED_EXTENSIONS.includes(userExt)) {
       return res.status(400).json({
         success: false,
-        message: `Invalid file extension '${ext}'. Allowed types: ${ALLOWED_EXTENSIONS.join(', ')}`
+        code: 'INVALID_FILE_FORMAT',
+        message: `Invalid file format. Only Microsoft Word documents (.doc, .docx) are accepted. Your file: '${file.originalname}'`
       })
     }
 
@@ -305,23 +306,12 @@ router.post('/upload', upload.single('file'), async (req, res) => {
       })
     }
 
-    // 6. Validate filename format: Must follow `<teamId>_<templateName>` or `<teamId>-<templateName>`
-    const uploadedOriginalName = file.originalname.trim()
-    const expectedBaseName = `${cleanTeamId}_${template.name}`
-    const expectedAltBaseName = `${cleanTeamId}-${template.name}`
-
-    const uploadedLower = uploadedOriginalName.toLowerCase()
-    const expectedLower = expectedBaseName.toLowerCase()
-    const expectedAltLower = expectedAltBaseName.toLowerCase()
-
-    if (uploadedLower !== expectedLower && uploadedLower !== expectedAltLower) {
-      return res.status(400).json({
-        success: false,
-        message: `Uploaded filename '${uploadedOriginalName}' does not match the required naming convention. Expected: '${expectedBaseName}' (Format: <TeamID>_<TemplateName>)`
-      })
-    }
-
-    const destinationFileName = uploadedOriginalName
+    // 6. Generate canonical filename: <TeamID>_<OfficialDocumentName>.<extension>
+    // Note: The uploaded file's original name is completely ignored for naming purposes.
+    const rawTemplateName = template.name.replace(/\.[^/.]+$/, '').trim()
+    const normalizedTemplateName = rawTemplateName.replace(/\s+/g, '_')
+    const finalExt = userExt === '.doc' ? '.doc' : '.docx'
+    const canonicalFileName = `${cleanTeamId}_${normalizedTemplateName}${finalExt}`
 
     // 7. Discover Destination Hierarchy using Authoritative Team Department
     const phaseFolder = await googleDriveService.getPhaseFolder(phase)
@@ -331,33 +321,33 @@ router.post('/upload', upload.single('file'), async (req, res) => {
     const teamFolderResult = await googleDriveService.getOrCreateTeamFolder(patentFolder.id, cleanTeamId)
     const targetFolderId = teamFolderResult.id
 
-    // 8. Upload file with duplicate protection
+    // 8. Upload or Replace file (prevents duplicates and ensures exactly one file per slot)
     try {
-      const uploadedFile = await googleDriveService.uploadFileToFolder(targetFolderId, file, destinationFileName)
+      const uploadedFile = await googleDriveService.updateOrUploadFileToFolder(
+        targetFolderId,
+        file,
+        canonicalFileName,
+        normalizedTemplateName,
+        cleanTeamId
+      )
 
       return res.status(200).json({
         success: true,
-        message: 'Patent document submitted successfully.',
+        message: uploadedFile.isReplacement ? 'Document replaced successfully.' : 'Patent document submitted successfully.',
         data: {
           fileId: uploadedFile.id,
           fileName: uploadedFile.name,
+          canonicalName: canonicalFileName,
           teamId: cleanTeamId,
           department: deptFolder.name,
           category: catFolder.name,
           patentType: patentFolder.name,
           webViewLink: uploadedFile.webViewLink,
-          isNewFolder: teamFolderResult.isNew
+          isNewFolder: teamFolderResult.isNew,
+          isReplacement: !!uploadedFile.isReplacement
         }
       })
     } catch (uploadErr) {
-      if (uploadErr.code === 'FILE_EXISTS') {
-        return res.status(409).json({
-          success: false,
-          code: 'FILE_EXISTS',
-          message: 'This document has already been uploaded for this team.',
-          fileId: uploadErr.fileId
-        })
-      }
       throw uploadErr
     }
 
