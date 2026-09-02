@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { Menu, X } from 'lucide-react'
 import { REGISTRATION_FORM_URL } from '../data/content'
 import { supabase } from '../supabaseClient'
+import { clearSessionState } from '../utils/sessionNavigationState'
 
 const NAV_LINKS = [
   { label: 'About', href: '#about' },
@@ -27,7 +28,7 @@ const MOBILE_NAV_LINKS = [
   { label: 'Contact Us', href: '#contact' },
 ]
 
-export default function Navbar({ onRegisterClick, user, profile, onProfileUpdate, onMySubmissionsClick, timeLeft: _timeLeft, onReturnToAdmin }) {
+export default function Navbar({ onRegisterClick, user, profile, onProfileUpdate, onMySubmissionsClick, timeLeft: _timeLeft, onReturnToAdmin, onNavClick }) {
   const [mobileOpen, setMobileOpen] = useState(false)
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
@@ -157,6 +158,7 @@ export default function Navbar({ onRegisterClick, user, profile, onProfileUpdate
   const handleLogout = async () => {
     try {
       setMobileOpen(false)
+      clearSessionState()
       const { error } = await supabase.auth.signOut()
       if (error) {
         console.error('Logout error:', error.message)
@@ -168,6 +170,10 @@ export default function Navbar({ onRegisterClick, user, profile, onProfileUpdate
 
   // Handle unified smooth navigation to section anchors with navbar offset
   const scrollToTarget = (href) => {
+    if (onNavClick) {
+      onNavClick(href)
+    }
+
     if (!href || href === '#') {
       window.scrollTo({ top: 0, behavior: 'smooth' })
       if (window.location.hash) {

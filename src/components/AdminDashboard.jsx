@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import { supabase } from "../supabaseClient";
 import MechanicalLoader from "./MechanicalLoader";
+import { getSessionState, saveSessionState, saveViewScroll, getViewScroll } from "../utils/sessionNavigationState";
 import {
   Menu,
   LogOut,
@@ -538,7 +539,7 @@ function AdminMechanicalTimer({ timeLeft, isCollapsed, setIsCollapsed, position,
 export default function AdminDashboard({ user, profile, onViewPublicPortal, timeLeft }) {
   const [activeTab, setActiveTab] = useState(() => {
     try {
-      return localStorage.getItem('admin_active_tab') || 'overview';
+      return getSessionState()?.adminTab || sessionStorage.getItem('admin_active_tab') || 'overview';
     } catch (e) {
       return 'overview';
     }
@@ -597,14 +598,14 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
   // Teams search filter & Pagination
   const [teamsSearch, setTeamsSearch] = useState(() => {
     try {
-      return localStorage.getItem('admin_teams_search') || '';
+      return sessionStorage.getItem('admin_teams_search') || '';
     } catch (e) {
       return '';
     }
   });
   const [currentPage, setCurrentPage] = useState(() => {
     try {
-      return Number(localStorage.getItem('admin_current_page')) || 1;
+      return Number(sessionStorage.getItem('admin_current_page')) || 1;
     } catch (e) {
       return 1;
     }
@@ -613,21 +614,21 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
   // Filter States
   const [filterDepartment, setFilterDepartment] = useState(() => {
     try {
-      return localStorage.getItem('admin_filter_dept') || '';
+      return sessionStorage.getItem('admin_filter_dept') || '';
     } catch (e) {
       return '';
     }
   });
   const [filterDomain, setFilterDomain] = useState(() => {
     try {
-      return localStorage.getItem('admin_filter_domain') || '';
+      return sessionStorage.getItem('admin_filter_domain') || '';
     } catch (e) {
       return '';
     }
   });
   const [filterTrl, setFilterTrl] = useState(() => {
     try {
-      return localStorage.getItem('admin_filter_trl') || '';
+      return sessionStorage.getItem('admin_filter_trl') || '';
     } catch (e) {
       return '';
     }
@@ -636,7 +637,8 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
   // Persist State Changes
   useEffect(() => {
     try {
-      localStorage.setItem('admin_active_tab', activeTab);
+      sessionStorage.setItem('admin_active_tab', activeTab);
+      saveSessionState({ adminTab: activeTab });
     } catch (e) {}
     if (activeTab !== 'overview') {
       setIsAdminTimerCollapsed(true);
@@ -645,55 +647,66 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
 
   useEffect(() => {
     try {
-      localStorage.setItem('admin_teams_search', teamsSearch);
+      sessionStorage.setItem('admin_teams_search', teamsSearch);
+      saveSessionState({
+        adminFilters: {
+          search: teamsSearch,
+          page: currentPage,
+          department: filterDepartment,
+          domain: filterDomain,
+          trl: filterTrl,
+          phase1Filter
+        }
+      });
     } catch (e) {}
-  }, [teamsSearch]);
+  }, [teamsSearch, currentPage, filterDepartment, filterDomain, filterTrl, phase1Filter]);
 
   useEffect(() => {
     try {
-      localStorage.setItem('admin_current_page', currentPage);
+      sessionStorage.setItem('admin_current_page', currentPage);
     } catch (e) {}
   }, [currentPage]);
 
   useEffect(() => {
     try {
-      localStorage.setItem('admin_filter_dept', filterDepartment);
+      sessionStorage.setItem('admin_filter_dept', filterDepartment);
     } catch (e) {}
   }, [filterDepartment]);
 
   useEffect(() => {
     try {
-      localStorage.setItem('admin_filter_domain', filterDomain);
+      sessionStorage.setItem('admin_filter_domain', filterDomain);
     } catch (e) {}
   }, [filterDomain]);
 
   useEffect(() => {
     try {
-      localStorage.setItem('admin_filter_trl', filterTrl);
+      sessionStorage.setItem('admin_filter_trl', filterTrl);
     } catch (e) {}
   }, [filterTrl]);
 
   // Persist Scroll Position
   useEffect(() => {
     try {
-      const savedScroll = localStorage.getItem('admin_scroll_position');
-      if (savedScroll) {
+      const savedScroll = getViewScroll('admin') || sessionStorage.getItem('admin_scroll_position');
+      if (savedScroll && Number(savedScroll) > 10) {
         setTimeout(() => {
           window.scrollTo({
             top: Number(savedScroll),
-            behavior: 'auto'
+            behavior: 'instant'
           });
-        }, 150);
+        }, 100);
       }
     } catch (e) {}
 
     const handleScroll = () => {
       try {
-        localStorage.setItem('admin_scroll_position', window.scrollY);
+        saveViewScroll('admin', window.scrollY);
+        sessionStorage.setItem('admin_scroll_position', String(window.scrollY));
       } catch (e) {}
     };
 
-    window.addEventListener('scroll', handleScroll);
+    window.addEventListener('scroll', handleScroll, { passive: true });
     return () => window.removeEventListener('scroll', handleScroll);
   }, [activeTab]);
 

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Award, Lightbulb, Users, AlertCircle, Download, Upload, FileText, AlertTriangle, ArrowLeft, ArrowRight, Calendar, Edit3, Layers, Rocket, Wrench } from 'lucide-react'
 import MechanicalLoader from './MechanicalLoader'
 import { supabase } from '../supabaseClient'
+import { getSessionState, saveSessionState } from '../utils/sessionNavigationState'
 
 const rawApiUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000').trim().replace(/\/+$/, '')
 const API_BASE_URL = rawApiUrl.endsWith('/api') ? rawApiUrl.slice(0, -4) : rawApiUrl
@@ -172,7 +173,14 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
 
   const [uploadingDocId, setUploadingDocId] = useState(null)
   const [downloadingTemplateDocType, setDownloadingTemplateDocType] = useState(null)
-  const [currentPageIndex, setCurrentPageIndex] = useState(0)
+  const [currentPageIndex, setCurrentPageIndex] = useState(() => {
+    try {
+      const savedIndex = sessionStorage.getItem('ipl2026_submissions_page_index')
+      return savedIndex !== null ? Number(savedIndex) : (getSessionState()?.teamIndex || 0)
+    } catch (e) {
+      return 0
+    }
+  })
 
   const [selectedCategory, setSelectedCategory] = useState('')
   const [selectedPatentType, setSelectedPatentType] = useState('')
@@ -207,6 +215,10 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
     setIsEditing(false)
     setSaveSuccessMsg('')
     setSaveErrorMsg('')
+    try {
+      sessionStorage.setItem('ipl2026_submissions_page_index', String(currentPageIndex))
+      saveSessionState({ teamIndex: currentPageIndex })
+    } catch (e) {}
   }, [currentPageIndex])
 
   const startEditing = () => {

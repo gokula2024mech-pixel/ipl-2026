@@ -11,6 +11,7 @@ import EntryCountdown from './components/EntryCountdown'
 import MechanicalLoader from './components/MechanicalLoader'
 import { supabase } from './supabaseClient'
 import { getEventState } from './utils/eventTimeline'
+import { getSessionState, saveSessionState, saveViewScroll, getViewScroll, clearSessionState } from './utils/sessionNavigationState'
 
 import About from './components/About'
 import ProgramHighlights from './components/ProgramHighlights'
@@ -33,6 +34,7 @@ import Footer from './components/Footer'
 const Leaderboard = lazy(() => import('./components/Leaderboard'))
 
 export default function App() {
+  const initialSessionState = getSessionState()
   const [session, setSession] = useState(null)
   const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -40,9 +42,9 @@ export default function App() {
   const [isRegistrationOpen, setIsRegistrationOpen] = useState(false)
   const [isRegistrationClosedModalOpen, setIsRegistrationClosedModalOpen] = useState(false)
   const [isMySubmissionsOpen, setIsMySubmissionsOpen] = useState(false)
-  const [viewMode, setViewMode] = useState("public")
-  const [selectedPhase, setSelectedPhase] = useState('my_submissions')
-  const [currentHash, setCurrentHash] = useState(window.location.hash)
+  const [viewMode, setViewMode] = useState(() => initialSessionState?.viewMode || "public")
+  const [selectedPhase, setSelectedPhase] = useState(() => initialSessionState?.selectedPhase || 'my_submissions')
+  const [currentHash, setCurrentHash] = useState(() => window.location.hash || initialSessionState?.currentHash || '')
 
   // Authoritative Countdown States
   const [regTimer, setRegTimer] = useState(null)
@@ -167,8 +169,6 @@ export default function App() {
     return () => clearInterval(timer)
   }, [dbPhases, regTimer, serverOffset])
 
-  const SCROLL_POS_KEY = 'ipl2026_home_scroll_position'
-
   // Ensure browser native scroll restoration is active for natural tab-switching and navigation
   useEffect(() => {
     if (typeof window !== 'undefined' && 'scrollRestoration' in window.history) {
@@ -186,53 +186,95 @@ export default function App() {
     }
   }, [])
 
-  // Passively save scroll position for page reloads
+  // Sync state changes with session navigation state
   useEffect(() => {
-    if (viewMode !== 'public' || currentHash === '#leaderboard') return
+    saveSessionState({
+      viewMode,
+      selectedPhase,
+      currentHash: window.location.hash || currentHash
+    })
+  }, [viewMode, selectedPhase, currentHash])
 
+  // Track and passively save scroll position per active view
+  useEffect(() => {
     let timeoutId = null
     const handleScroll = () => {
       if (timeoutId) clearTimeout(timeoutId)
       timeoutId = setTimeout(() => {
-        if (typeof window !== 'undefined' && viewMode === 'public') {
-          localStorage.setItem(SCROLL_POS_KEY, String(window.scrollY))
+        if (typeof window !== 'undefined') {
+          saveViewScroll(viewMode, window.scrollY)
         }
       }, 150)
     }
 
-    window.addEventListener('scroll', handleScroll, { passive: true })
-    return () => {
-      if (timeoutId) clearTimeout(timeoutId)
-      window.removeEventListener('scroll', handleScroll)
-    }
-  }, [viewMode, currentHash])
-
-  // Restore scroll position or scroll to initial URL hash on page load
-  useEffect(() => {
-    if (viewMode !== 'public' || currentHash === '#leaderboard' || loading) return
-
-    const hash = window.location.hash
-    if (hash && hash !== '#leaderboard') {
-      const targetId = hash.slice(1)
-      const target = document.getElementById(targetId) || document.querySelector(hash)
-      if (target) {
-        const navbarHeight = 80
-        const targetPosition = target.getBoundingClientRect().top + window.scrollY - navbarHeight
-        setTimeout(() => {
-          window.scrollTo({
-            top: Math.max(0, targetPosition),
-            behavior: 'smooth'
-          })
-        }, 150)
-        return
+    const handleLifecycleSave = () => {
+      if (typeof window !== 'undefined') {
+        saveViewScroll(viewMode, window.scrollY)
+        saveSessionState({
+          viewMode,
+          selectedPhase,
+          currentHash: window.location.hash || currentHash
+        })
       }
     }
 
-    const saved = localStorage.getItem(SCROLL_POS_KEY)
-    if (saved && !hash) {
-      const targetY = parseFloat(saved)
-      if (targetY > 10) {
-        window.scrollTo({ top: targetY, behavior: 'instant' })
+    window.addEventListener('scroll', handleScroll, { passive: true })
+    window.addEventListener('visibilitychange', handleLifecycleSave)
+    window.addEventListener('pagehide', handleLifecycleSave)
+    window.addEventListener('beforeunload', handleLifecycleSave)
+    window.addEventListener('blur', handleLifecycleSave)
+
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId)
+      window.removeEventListener('scroll', handleScroll)
+      window.removeEventListener('visibilitychange', handleLifecycleSave)
+      window.removeEventListener('pagehide', handleLifecycleSave)
+      window.removeEventListener('beforeunload', handleLifecycleSave)
+      window.removeEventListener('blur', handleLifecycleSave)
+    }
+  }, [viewMode, selectedPhase, currentHash])
+
+  // Restore scroll position or scroll to initial URL hash on page load / view switch
+  useEffect(() => {
+    if (loading) return
+
+    if (viewMode === 'public') {
+      const hash = window.location.hash
+      if (hash && hash !== '#leaderboard') {
+        const targetId = hash.slice(1)
+        const target = document.getElementById(targetId) || document.querySelector(hash)
+        if (target) {
+          const navbarHeight = 80
+          const targetPosition = target.getBoundingClientRect().top + window.scrollY - navbarHeight
+          setTimeout(() => {
+            window.scrollTo({
+              top: Math.max(0, targetPosition),
+              behavior: 'smooth'
+            })
+          }, 150)
+          return
+        }
+      }
+
+      const savedScroll = getViewScroll('public')
+      if (savedScroll && savedScroll > 10 && !hash) {
+        window.scrollTo({ top: savedScroll, behavior: 'instant' })
+      }
+    } else if (viewMode === 'submissions') {
+      const savedScroll = getViewScroll('submissions')
+      if (savedScroll && savedScroll > 10) {
+        setTimeout(() => {
+          window.scrollTo({ top: savedScroll, behavior: 'instant' })
+        }, 80)
+      } else {
+        window.scrollTo({ top: 0, behavior: 'instant' })
+      }
+    } else if (viewMode === 'admin') {
+      const savedScroll = getViewScroll('admin')
+      if (savedScroll && savedScroll > 10) {
+        setTimeout(() => {
+          window.scrollTo({ top: savedScroll, behavior: 'instant' })
+        }, 80)
       }
     }
   }, [loading, viewMode])
@@ -320,6 +362,7 @@ export default function App() {
       setSession(null)
       setProfile(null)
       setViewMode("public")
+      clearSessionState()
       setLoading(false)
       return
     }
@@ -347,6 +390,7 @@ export default function App() {
           setSession(null)
           setProfile(null)
           setViewMode("public")
+          clearSessionState()
           await supabase.auth.signOut()
           setLoading(false)
         } else {
@@ -365,8 +409,37 @@ export default function App() {
         setSession(currentSession)
         setProfile(userProfile)
 
-        const finalViewMode = userProfile?.role === "admin" ? "admin" : "public"
+        const savedState = getSessionState()
+        let finalViewMode = "public"
+
+        // Account mismatch check: if stored state belongs to another user email, reset it
+        if (savedState?.userEmail && savedState.userEmail !== currentSession.user.email) {
+          clearSessionState()
+        }
+
+        // Role-safe restoration
+        if (savedState?.viewMode === "admin") {
+          finalViewMode = userProfile?.role === "admin" ? "admin" : "public"
+        } else if (savedState?.viewMode === "submissions") {
+          finalViewMode = "submissions"
+        } else if (savedState?.viewMode === "public") {
+          finalViewMode = "public"
+        } else {
+          // Default when no session state exists (e.g. fresh session start)
+          finalViewMode = userProfile?.role === "admin" ? "admin" : "public"
+        }
+
         setViewMode(finalViewMode)
+        if (savedState?.selectedPhase) {
+          setSelectedPhase(savedState.selectedPhase)
+        }
+
+        saveSessionState({
+          viewMode: finalViewMode,
+          selectedPhase: savedState?.selectedPhase || selectedPhase,
+          userEmail: currentSession.user.email
+        })
+
         console.log(`[AUTH] Setting viewMode to ${finalViewMode}`)
         setLoading(false)
 
@@ -491,6 +564,11 @@ export default function App() {
         onMySubmissionsClick={(phase = 'my_submissions') => {
           setSelectedPhase(phase)
           setViewMode("submissions")
+        }}
+        onNavClick={(href) => {
+          if (viewMode !== "public") {
+            setViewMode("public")
+          }
         }}
         timeLeft={timeLeft}
         onReturnToAdmin={() => setViewMode("admin")}
