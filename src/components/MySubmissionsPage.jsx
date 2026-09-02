@@ -274,14 +274,11 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
     setSaveSuccessMsg('')
 
     try {
-<<<<<<< HEAD
       const token = await getToken()
       if (!token) throw new Error('Authentication session expired. Please log in again.')
 
       const regId = currentPage.team.registrationId
 
-=======
->>>>>>> feature/phase-1-document-submission
       const response = await fetch(`${API_BASE_URL}/api/registrations/${regId}`, {
         method: 'PUT',
         headers: {
@@ -533,11 +530,7 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
       return
     }
 
-<<<<<<< HEAD
-    // Client-side Word validation for instant user feedback
-=======
     // Client-side Word format validation for instant feedback
->>>>>>> feature/phase-1-document-submission
     const fileName = file.name || ''
     const ext = fileName.slice((fileName.lastIndexOf(".") - 1 >>> 0) + 2).toLowerCase()
     if (ext !== 'doc' && ext !== 'docx') {
@@ -546,15 +539,12 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
       return
     }
 
-<<<<<<< HEAD
-=======
     // Ensure Software uses Utility Patent
     let finalPatentType = selectedPatentType
     if (selectedCategory === 'Software') {
       finalPatentType = 'Utility Patent'
     }
 
->>>>>>> feature/phase-1-document-submission
     setClassificationError('')
     setUploadingDocId(template.id)
     try {
@@ -580,14 +570,6 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
       if (!response.ok || !result.success) {
         if (result.code === 'INVALID_FILE_FORMAT') {
           setInvalidFileModal({ fileName: file.name })
-<<<<<<< HEAD
-=======
-          return
-        }
-        if (result.code === 'SOFTWARE_DESIGN_PATENT_NOT_ALLOWED') {
-          alert('Software submissions can only use Utility Patent.')
-          setSelectedPatentType('Utility Patent')
->>>>>>> feature/phase-1-document-submission
           return
         }
         throw new Error(result.message || 'File upload failed.')
