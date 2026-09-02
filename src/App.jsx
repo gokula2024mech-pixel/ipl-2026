@@ -46,6 +46,25 @@ export default function App() {
   const [selectedPhase, setSelectedPhase] = useState(() => initialSessionState?.selectedPhase || 'my_submissions')
   const [currentHash, setCurrentHash] = useState(() => window.location.hash || initialSessionState?.currentHash || '')
 
+  // Timer UI Panel Open/Close state (persists across session)
+  const [timerPanelOpen, setTimerPanelOpen] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem('ipl_timer_panel_open')
+      return saved !== null ? JSON.parse(saved) : true
+    } catch {
+      return true
+    }
+  })
+
+  const handleToggleTimerPanel = (isOpen) => {
+    setTimerPanelOpen(isOpen)
+    try {
+      sessionStorage.setItem('ipl_timer_panel_open', JSON.stringify(isOpen))
+    } catch (e) {
+      console.warn('Could not save timer panel state', e)
+    }
+  }
+
   // Authoritative Countdown States
   const [regTimer, setRegTimer] = useState(null)
   const [dbPhases, setDbPhases] = useState([])
@@ -537,6 +556,22 @@ export default function App() {
     )
   }
 
+  // Centralized Application Active View Source of Truth
+  const getActiveView = () => {
+    if (loading) return 'loading'
+    if (!session) return showAuth ? 'login' : 'entry'
+    if (profile?.role === 'admin' && viewMode === 'admin') return 'admin'
+    if (viewMode === 'submissions') return 'my_submissions'
+    if (isRegistrationOpen) return 'registration'
+    if (isRegistrationClosedModalOpen) return 'registration_closed'
+    if (isMySubmissionsOpen) return 'my_submissions_modal'
+    if (currentHash === '#leaderboard') return 'leaderboard'
+    return 'home'
+  }
+
+  const activeView = getActiveView()
+  const isHomeView = activeView === 'home'
+
   if (profile?.role === 'admin' && viewMode === 'admin') {
     return (
       <AdminDashboard
@@ -596,6 +631,9 @@ export default function App() {
               onRegisterClick={handleOpenRegistration}
               timeLeft={timeLeft}
               profile={profile}
+              showTimer={isHomeView}
+              timerPanelOpen={timerPanelOpen}
+              onTimerPanelToggle={handleToggleTimerPanel}
               onMySubmissionsClick={() => {
                 setSelectedPhase('my_submissions')
                 setViewMode("submissions")

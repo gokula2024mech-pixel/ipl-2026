@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
-import { ArrowRight, Sparkles, X } from 'lucide-react'
+import { ArrowRight, Sparkles, X, Timer } from 'lucide-react'
 import { TAGLINE, SUB_TAGLINE, REGISTRATION_FORM_URL } from '../data/content'
 import { supabase } from '../supabaseClient'
 import { getEventState, formatTimelineDate } from '../utils/eventTimeline'
@@ -113,8 +113,10 @@ function TimerGears({ className = 'text-accent/15', opacity = '0.08' }) {
 // Embedded Speedometer/Mechanical Timer Component
 function HeroTimer({
   timeLeft: propTimeLeft,
-  isCollapsed,
-  setIsCollapsed,
+  showTimer = true,
+  isOpen = true,
+  onClose,
+  onOpen,
   position,
   setPosition,
   heroContentRef,
@@ -138,36 +140,14 @@ function HeroTimer({
   const dragRef = useRef(null)
   const startDragPos = useRef({ x: 0, y: 0 })
 
-  const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' ? window.innerWidth < 768 : false)
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
-  const [isProfileOpen, setIsProfileOpen] = useState(false)
-  const [isPopupOpen, setIsPopupOpen] = useState(false)
+  const [mobilePopupOpen, setMobilePopupOpen] = useState(false)
 
+  // Reset mobile popup if navigating away from Home
   useEffect(() => {
-    const handleResize = () => {
-      setIsMobile(window.innerWidth < 768)
+    if (!showTimer) {
+      setMobilePopupOpen(false)
     }
-    window.addEventListener('resize', handleResize)
-    return () => window.removeEventListener('resize', handleResize)
-  }, [])
-
-  useEffect(() => {
-    const handleMenuState = (e) => {
-      setIsMobileMenuOpen(e.detail)
-    }
-    window.addEventListener('mobile-menu-state', handleMenuState)
-    return () => window.removeEventListener('mobile-menu-state', handleMenuState)
-  }, [])
-
-  useEffect(() => {
-    const handleProfileState = (e) => {
-      if (e.detail) {
-        setIsProfileOpen(!!e.detail.open)
-      }
-    }
-    window.addEventListener('profile-dropdown-state', handleProfileState)
-    return () => window.removeEventListener('profile-dropdown-state', handleProfileState)
-  }, [])
+  }, [showTimer])
 
   const fetchTimerData = async () => {
     try {
@@ -262,75 +242,6 @@ function HeroTimer({
     return () => clearInterval(timer)
   }, [dbPhases, regTimer])
 
-  // Auto-collapse on scroll ONLY on mobile (widths < 768px)
-  useEffect(() => {
-    const handleScroll = () => {
-      if (typeof window !== 'undefined' && window.innerWidth < 768 && window.scrollY > 10) {
-        setIsCollapsed(true)
-      }
-    }
-    window.addEventListener('scroll', handleScroll, { passive: true })
-    return () => window.removeEventListener('scroll', handleScroll)
-  }, [setIsCollapsed])
-
-  const [shouldHideTimer, setShouldHideTimer] = useState(false)
-  const timerAnchorRef = useRef(null)
-
-  const getNavbarBottom = () => {
-    const nav = document.querySelector('nav')
-    if (nav) {
-      return nav.getBoundingClientRect().bottom
-    }
-    return 80 // fallback
-  }
-
-  useEffect(() => {
-    if (isMobile) return
-
-    let rAFId = null
-    const update = () => {
-      if (timerAnchorRef.current) {
-        const anchorRect = timerAnchorRef.current.getBoundingClientRect()
-        const navBottom = getNavbarBottom()
-
-        // Hide when the top of the timer reaches/touches the bottom of the Navbar
-        const shouldHide = anchorRect.top <= navBottom + 5
-        setShouldHideTimer(shouldHide)
-      }
-    }
-
-    const onScrollOrResize = () => {
-      if (rAFId) cancelAnimationFrame(rAFId)
-      rAFId = requestAnimationFrame(update)
-    }
-
-    window.addEventListener('scroll', onScrollOrResize, { passive: true })
-    window.addEventListener('resize', onScrollOrResize)
-
-    // Initial check
-    update()
-
-    return () => {
-      window.removeEventListener('scroll', onScrollOrResize)
-      window.removeEventListener('resize', onScrollOrResize)
-      if (rAFId) cancelAnimationFrame(rAFId)
-    }
-  }, [isMobile])
-
-  // Keydown listener for ESC key to close popup
-  useEffect(() => {
-    if (!isPopupOpen) return
-
-    const handleKeyDown = (e) => {
-      if (e.key === 'Escape') {
-        setIsPopupOpen(false)
-      }
-    }
-
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [isPopupOpen])
-
   // Calculate safe initial placement based on screensize & overlap checking
   const calculateSafePosition = (timerWidth, timerHeight) => {
     if (!heroContainerRef.current) return { x: 0, y: 96 }
@@ -392,13 +303,13 @@ function HeroTimer({
 
   // Set initial safe position on mount
   useEffect(() => {
-    if (!isCollapsed && !position && dragRef.current) {
+    if (isOpen && !position && dragRef.current) {
       const rect = dragRef.current.getBoundingClientRect()
       const safePos = calculateSafePosition(rect.width, rect.height)
       setPosition(safePos)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isCollapsed, position])
+  }, [isOpen, position])
 
   // Dragging interaction events
   const handlePointerDown = (e) => {
@@ -489,140 +400,14 @@ function HeroTimer({
 
   const ariaLabel = `${phaseLabel} phase. ${days} days, ${hours} hours, ${minutes} minutes, ${seconds} seconds remaining. Starts ${startFormatted} and ends ${endFormatted}. Status: ${statusLabel}.`
 
-  // Render modal popup if open
-  const renderPopupModal = () => {
-    if (!isPopupOpen) return null
-    return (
-      <div
-        className="fixed inset-0 bg-slate-950/75 backdrop-blur-md z-[250] flex items-center justify-center p-4"
-        onClick={() => setIsPopupOpen(false)}
-      >
-        <div
-          className="relative bg-slate-900/90 border border-white/10 rounded-3xl p-6 text-white w-[92vw] max-w-[440px] shadow-2xl font-sans"
-          onClick={(e) => e.stopPropagation()}
-          style={{
-            boxShadow: '0 0 30px rgba(0, 0, 0, 0.5), 0 0 20px rgba(245, 158, 11, 0.15)',
-            border: '1px solid rgba(255, 255, 255, 0.08)'
-          }}
-        >
-          {/* Close button */}
-          <button
-            type="button"
-            onClick={() => setIsPopupOpen(false)}
-            className="absolute top-4 right-4 flex h-8 w-8 items-center justify-center rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-white transition-all cursor-pointer z-10"
-          >
-            <X size={16} />
-          </button>
-
-          {/* Header */}
-          <div className="flex items-center justify-between gap-3 mb-5 pr-8 border-b border-white/5 pb-3.5 w-full min-w-0">
-            <span className="text-xs sm:text-sm font-black tracking-wider text-accent uppercase min-w-0 shrink">
-              {phaseLabel}
-            </span>
-            <span className={`text-[10px] sm:text-[11px] font-black tracking-widest uppercase ${statusColor} shrink-0 px-2 py-0.5 bg-white/5 rounded border border-white/5`}>
-              {statusLabel}
-            </span>
-          </div>
-
-          {/* Center Gears and Time Countdown */}
-          <div className="relative flex flex-col items-center justify-center my-6 py-6 px-4 w-full bg-slate-955/65 border border-white/5 rounded-2xl overflow-hidden shadow-inner">
-            {/* Mesh of gears spinning behind */}
-            <TimerGears className="text-amber-500/10" opacity="0.15" />
-
-            {/* Digit Row */}
-            <div className="relative grid grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] items-center justify-items-center w-full max-w-[320px] font-mono leading-none select-none text-amber-400 drop-shadow-[0_0_8px_rgba(245,158,11,0.4)]">
-              <span className="text-4xl sm:text-5xl font-black">{daysStr}</span>
-              <span className="text-amber-500/60 text-2xl sm:text-3xl font-bold px-1 animate-pulse">:</span>
-              <span className="text-4xl sm:text-5xl font-black">{hoursStr}</span>
-              <span className="text-amber-500/60 text-2xl sm:text-3xl font-bold px-1 animate-pulse">:</span>
-              <span className="text-4xl sm:text-5xl font-black">{minutesStr}</span>
-              <span className="text-amber-500/60 text-2xl sm:text-3xl font-bold px-1 animate-pulse">:</span>
-              <span className="text-4xl sm:text-5xl font-black">{secondsStr}</span>
-            </div>
-
-            {/* Label Row */}
-            <div className="relative grid grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] justify-items-center w-full max-w-[320px] text-[10px] text-slate-400 font-black tracking-widest uppercase mt-3">
-              <span>DAY</span>
-              <span className="opacity-0 px-1">:</span>
-              <span>HR</span>
-              <span className="opacity-0 px-1">:</span>
-              <span>MIN</span>
-              <span className="opacity-0 px-1">:</span>
-              <span>SEC</span>
-            </div>
-          </div>
-
-          {/* Details dates */}
-          <div className="pt-3.5 border-t border-white/10 flex flex-col gap-2 text-[10px] sm:text-xs text-slate-350 font-semibold w-full">
-            <div className="grid grid-cols-[55px_1fr] items-center">
-              <span className="text-slate-500 uppercase font-black tracking-wider">START</span>
-              <span className="font-mono text-slate-200 text-right">{startFormatted || 'N/A'}</span>
-            </div>
-            <div className="grid grid-cols-[55px_1fr] items-center">
-              <span className="text-slate-500 uppercase font-black tracking-wider">END</span>
-              <span className="font-mono text-slate-200 text-right">{endFormatted || 'N/A'}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-    )
+  if (!showTimer) {
+    return null
   }
-
-  // Render floating clock button
-  const renderFloatingClock = () => {
-    if (isMobileMenuOpen || isProfileOpen) return null
-    return (
-      <button
-        type="button"
-        onClick={() => setIsPopupOpen(true)}
-        aria-label="Open timer details"
-        className={`fixed z-[200] flex items-center justify-center rounded-full bg-slate-900 border-2 border-amber-500 text-amber-500 hover:bg-slate-950 shadow-[0_0_15px_rgba(245,158,11,0.4)] hover:scale-105 transition-all focus:outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer overflow-hidden ${
-          isMobile
-            ? 'bottom-[20px] right-[20px] h-12 w-12'
-            : 'bottom-[24px] right-[24px] h-14 w-14'
-        }`}
-      >
-        <svg
-          viewBox="0 0 100 100"
-          className="w-7 h-7 text-amber-500 animate-[spin_8s_linear_infinite]"
-          style={{ transformOrigin: '50% 50%' }}
-        >
-          <path
-            d={getGearPath(50, 50, 48, 38, 12, 12)}
-            fill="currentColor"
-            fillRule="evenodd"
-          />
-        </svg>
-      </button>
-    )
-  }
-
-  const showFloatingClock = isMobile ? (!isProfileOpen && !isMobileMenuOpen) : (shouldHideTimer && !isProfileOpen)
-  const showFullTimerCard = !isMobile && !shouldHideTimer && !isCollapsed && !isProfileOpen
 
   return (
     <>
-      {/* Anchor element for desktop scroll tracking */}
-      {!isMobile && (
-        <div
-          ref={timerAnchorRef}
-          style={{
-            position: 'absolute',
-            left: '4%',
-            top: '58%',
-            width: '390px',
-            height: '190px',
-            visibility: 'hidden',
-            pointerEvents: 'none'
-          }}
-        />
-      )}
-
-      {/* Floating clock button (Desktop or Mobile) */}
-      {showFloatingClock && renderFloatingClock()}
-
-      {/* Full Timer Card inside Hero (Desktop only) */}
-      {showFullTimerCard && (
+      {/* DESKTOP TIMER VIEW (md: and above >= 768px) */}
+      {isOpen ? (
         <div
           ref={dragRef}
           onPointerDown={handlePointerDown}
@@ -634,10 +419,10 @@ function HeroTimer({
             top: position ? `${position.y}px` : '58%',
             right: 'auto',
             touchAction: 'none',
-            zIndex: 99,
+            zIndex: 30,
             width: 'min(calc(100vw - 24px), 390px)'
           }}
-          className={`select-none cursor-grab active:cursor-grabbing max-w-full md:-rotate-3 md:transform ${
+          className={`hidden md:block select-none cursor-grab active:cursor-grabbing max-w-full md:-rotate-3 md:transform ${
             isDragging ? 'cursor-grabbing' : ''
           }`}
         >
@@ -655,9 +440,10 @@ function HeroTimer({
               type="button"
               onClick={(e) => {
                 e.stopPropagation()
-                setIsCollapsed(true)
+                onClose?.()
               }}
               aria-label="Close timer"
+              title="Minimize timer"
               className="close-btn-class absolute top-4 right-4 flex h-6 w-6 items-center justify-center rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-white hover:text-white transition-all focus:outline-none cursor-pointer z-[101]"
             >
               <X size={12} />
@@ -675,7 +461,6 @@ function HeroTimer({
 
             {/* Main Countdown Display */}
             <div className="relative flex flex-col items-center justify-center my-3 py-4 px-3 w-full bg-slate-955/65 border border-white/5 rounded-2xl overflow-hidden shadow-inner">
-              {/* Gears rotating subtly behind the text */}
               <TimerGears className="text-amber-500/10" opacity="0.12" />
 
               {/* Digit Row */}
@@ -714,16 +499,123 @@ function HeroTimer({
             </div>
           </div>
         </div>
+      ) : (
+        /* Desktop Reopen Button (when minimized on desktop) */
+        <button
+          type="button"
+          onClick={onOpen}
+          aria-label="Reopen countdown timer"
+          title="View IPL 2026 Timer"
+          className="hidden md:flex fixed bottom-6 right-6 lg:bottom-8 lg:right-8 z-40 h-11 w-11 items-center justify-center rounded-full bg-slate-900 border-2 border-accent text-accent shadow-lg shadow-amber-500/20 hover:scale-105 hover:bg-slate-800 transition-all cursor-pointer focus:outline-none"
+        >
+          <Timer size={20} className="text-accent animate-pulse" />
+        </button>
       )}
 
-      {/* Popup Modal (shared on mobile and desktop clock click) */}
-      {renderPopupModal()}
+      {/* MOBILE TIMER VIEW (< 768px) */}
+      {/* Mobile Floating Compact Timer Button */}
+      <button
+        type="button"
+        onClick={() => setMobilePopupOpen(true)}
+        aria-label="Open IPL 2026 countdown timer"
+        title="View IPL 2026 Timer"
+        className="md:hidden fixed bottom-5 right-5 z-40 flex h-11 w-11 items-center justify-center rounded-full bg-slate-900 border-2 border-accent text-accent shadow-lg shadow-amber-500/20 hover:scale-105 active:scale-95 transition-all cursor-pointer focus:outline-none"
+      >
+        <Timer size={20} className="text-accent animate-pulse" />
+      </button>
+
+      {/* Mobile Modal Popup with Outside Click Detection */}
+      {mobilePopupOpen && (
+        <div
+          className="md:hidden fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 backdrop-blur-sm p-4 animate-in fade-in duration-200"
+          onClick={() => setMobilePopupOpen(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="IPL 2026 Timer Details"
+        >
+          <div
+            className="relative w-full max-w-[360px] flex flex-col bg-slate-900/95 backdrop-blur-md rounded-3xl p-5 border border-white/10 text-white font-sans shadow-2xl select-none"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              boxShadow: '0 0 30px rgba(0, 0, 0, 0.5), 0 0 20px rgba(245, 158, 11, 0.15)',
+              border: '1px solid rgba(255, 255, 255, 0.08)'
+            }}
+          >
+            {/* Close Button */}
+            <button
+              type="button"
+              onClick={() => setMobilePopupOpen(false)}
+              aria-label="Close timer popup"
+              title="Close timer"
+              className="close-btn-class absolute top-4 right-4 flex h-7 w-7 items-center justify-center rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-white transition-all focus:outline-none cursor-pointer z-10"
+            >
+              <X size={14} />
+            </button>
+
+            {/* Header: Status & Phase name */}
+            <div className="flex items-center justify-between gap-3 mb-3 pr-8 w-full min-w-0">
+              <span className="text-[11px] font-black tracking-wider text-accent uppercase min-w-0 shrink">
+                {phaseLabel}
+              </span>
+              <span className={`text-[9px] font-black tracking-widest uppercase ${statusColor} shrink-0 px-2 py-0.5 bg-white/5 rounded border border-white/5`}>
+                {statusLabel}
+              </span>
+            </div>
+
+            {/* Main Countdown Display */}
+            <div className="relative flex flex-col items-center justify-center my-2 py-4 px-3 w-full bg-slate-955/65 border border-white/5 rounded-2xl overflow-hidden shadow-inner">
+              <TimerGears className="text-amber-500/10" opacity="0.12" />
+
+              {/* Digit Row */}
+              <div className="relative grid grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] items-center justify-items-center w-full max-w-[280px] font-mono leading-none select-none text-amber-400 drop-shadow-[0_0_6px_rgba(245,158,11,0.3)]">
+                <span className="text-2xl sm:text-3xl font-black">{daysStr}</span>
+                <span className="text-amber-500/60 text-lg sm:text-xl font-bold px-1 animate-pulse">:</span>
+                <span className="text-2xl sm:text-3xl font-black">{hoursStr}</span>
+                <span className="text-amber-500/60 text-lg sm:text-xl font-bold px-1 animate-pulse">:</span>
+                <span className="text-2xl sm:text-3xl font-black">{minutesStr}</span>
+                <span className="text-amber-500/60 text-lg sm:text-xl font-bold px-1 animate-pulse">:</span>
+                <span className="text-2xl sm:text-3xl font-black">{secondsStr}</span>
+              </div>
+
+              {/* Label Row */}
+              <div className="relative grid grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] justify-items-center w-full max-w-[280px] text-[8px] text-slate-400 font-black tracking-widest uppercase mt-2">
+                <span>DAY</span>
+                <span className="opacity-0 px-1">:</span>
+                <span>HR</span>
+                <span className="opacity-0 px-1">:</span>
+                <span>MIN</span>
+                <span className="opacity-0 px-1">:</span>
+                <span>SEC</span>
+              </div>
+            </div>
+
+            {/* Footer Details */}
+            <div className="mt-3 pt-3 border-t border-white/10 flex flex-col gap-1.5 text-[10px] text-slate-350 font-semibold w-full">
+              <div className="grid grid-cols-[55px_1fr] items-center">
+                <span className="text-slate-500 uppercase font-black tracking-wider">START</span>
+                <span className="font-mono text-slate-200 text-right">{startFormatted || 'N/A'}</span>
+              </div>
+              <div className="grid grid-cols-[55px_1fr] items-center">
+                <span className="text-slate-500 uppercase font-black tracking-wider">END</span>
+                <span className="font-mono text-slate-200 text-right">{endFormatted || 'N/A'}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   )
 }
 
-export default function Hero({ onRegisterClick, timeLeft, profile: _profile, onMySubmissionsClick }) {
-  const [isCollapsed, setIsCollapsed] = useState(false)
+export default function Hero({
+  onRegisterClick,
+  timeLeft,
+  profile: _profile,
+  onMySubmissionsClick,
+  showTimer = true,
+  timerPanelOpen = true,
+  onTimerPanelToggle
+}) {
   const [timerPosition, setTimerPosition] = useState(null)
   const heroContentRef = useRef(null)
   const heroContainerRef = useRef(null)
@@ -860,8 +752,10 @@ export default function Hero({ onRegisterClick, timeLeft, profile: _profile, onM
       {/* Floating Draggable Timer Card */}
       <HeroTimer
         timeLeft={timeLeft}
-        isCollapsed={isCollapsed}
-        setIsCollapsed={setIsCollapsed}
+        showTimer={showTimer}
+        isOpen={timerPanelOpen}
+        onClose={() => onTimerPanelToggle?.(false)}
+        onOpen={() => onTimerPanelToggle?.(true)}
         position={timerPosition}
         setPosition={setTimerPosition}
         heroContentRef={heroContentRef}
