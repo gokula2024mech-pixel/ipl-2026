@@ -380,6 +380,67 @@ async function uploadFileToFolder(folderId, file, targetFileName) {
 }
 
 /**
+ * Upload or replace a document in the destination folder.
+ * If an existing file exists for this team and document template slot, it updates the existing file.
+ * Otherwise, it creates a new file.
+ */
+async function updateOrUploadFileToFolder(folderId, file, canonicalFileName, normalizedTemplateName, teamId) {
+  const drive = getDriveClient()
+  const cleanName = canonicalFileName.trim()
+
+  // 1. Search for an existing file in folderId for this template slot
+  const children = await listFolderChildren(folderId)
+  const slotMatch = children.find(f => {
+    if (f.mimeType === 'application/vnd.google-apps.folder') return false
+    const nameLower = f.name.toLowerCase()
+    const cleanSlotLower = (normalizedTemplateName || '').toLowerCase()
+    const rawSlotLower = (normalizedTemplateName || '').replace(/_/g, ' ').toLowerCase()
+    const teamLower = (teamId || '').toLowerCase()
+    return (
+      nameLower === cleanName.toLowerCase() ||
+      (nameLower.includes(cleanSlotLower) && nameLower.includes(teamLower)) ||
+      (nameLower.includes(rawSlotLower) && nameLower.includes(teamLower))
+    )
+  })
+
+  const mediaStream = new Readable()
+  mediaStream.push(file.buffer)
+  mediaStream.push(null)
+
+  const media = {
+    mimeType: file.mimetype || 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    body: mediaStream
+  }
+
+  if (slotMatch) {
+    // Replace / update existing file content and name
+    const response = await drive.files.update({
+      fileId: slotMatch.id,
+      resource: { name: cleanName },
+      media: media,
+      fields: 'id, name, mimeType, size, webViewLink, modifiedTime',
+      supportsAllDrives: true
+    })
+    return { ...response.data, isReplacement: true }
+  }
+
+  // Otherwise create new file
+  const fileMetadata = {
+    name: cleanName,
+    parents: [folderId]
+  }
+
+  const response = await drive.files.create({
+    resource: fileMetadata,
+    media: media,
+    fields: 'id, name, mimeType, size, webViewLink, createdTime, modifiedTime',
+    supportsAllDrives: true
+  })
+
+  return { ...response.data, isReplacement: false }
+}
+
+/**
  * Retrieve metadata for a file
  */
 async function getFileMetadata(fileId) {
@@ -425,6 +486,7 @@ module.exports = {
   validateTemplate,
   listTeamSubmissions,
   uploadFileToFolder,
+  updateOrUploadFileToFolder,
   getFileMetadata,
   streamFile
 }

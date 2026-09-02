@@ -176,6 +176,7 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
   const [selectedCategory, setSelectedCategory] = useState('')
   const [selectedPatentType, setSelectedPatentType] = useState('')
   const [classificationError, setClassificationError] = useState('')
+  const [invalidFileModal, setInvalidFileModal] = useState(null)
 
   const [isEditing, setIsEditing] = useState(false)
   const [editProjectTitle, setEditProjectTitle] = useState('')
@@ -216,12 +217,28 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
     setSaveErrorMsg('')
   }
 
-  const handleSaveChanges = async (e) => {
-    e.preventDefault()
-    if (!currentPage) return
+  const handleToggleSdg = (sdgNum) => {
+    setEditSdgGoals(prev => {
+      if (prev.includes(sdgNum)) {
+        return prev.filter(n => n !== sdgNum)
+      } else {
+        if (prev.length >= 3) return prev
+        return [...prev, sdgNum].sort((a, b) => a - b)
+      }
+    })
+  }
 
-    if (!editProjectTitle.trim() || !editProblemArea.trim() || !editProposedSolution.trim() || !editExpectedImpact.trim() || !editInnovationDomain.trim()) {
-      setSaveErrorMsg('All fields are required.')
+  const saveProjectDetails = async () => {
+    if (!editProjectTitle.trim()) {
+      setSaveErrorMsg('Project title cannot be empty.')
+      return
+    }
+    if (!editProblemArea.trim()) {
+      setSaveErrorMsg('Problem area cannot be empty.')
+      return
+    }
+    if (!editProposedSolution.trim()) {
+      setSaveErrorMsg('Proposed solution cannot be empty.')
       return
     }
 
@@ -230,12 +247,6 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
     setSaveSuccessMsg('')
 
     try {
-      const { data: { session } } = await supabase.auth.getSession()
-      const token = session?.access_token
-      if (!token) throw new Error('Authentication session expired. Please log in again.')
-
-      const regId = currentPage.team.registrationId
-
       const response = await fetch(`${API_BASE_URL}/api/registrations/${regId}`, {
         method: 'PUT',
         headers: {
@@ -380,8 +391,13 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
     if (!activeRegId) return
     const saved = loadPreferences(userEmail, activeRegId)
     if (saved && (saved.category || saved.patentType)) {
-      setSelectedCategory(saved.category || '')
-      setSelectedPatentType(saved.patentType || '')
+      const cat = saved.category || ''
+      let pt = saved.patentType || ''
+      if (cat === 'Software') {
+        pt = 'Utility Patent'
+      }
+      setSelectedCategory(cat)
+      setSelectedPatentType(pt)
     } else {
       setSelectedCategory('')
       setSelectedPatentType('')
@@ -391,16 +407,35 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
   const handleSelectCategory = (cat) => {
     setSelectedCategory(cat)
     setClassificationError('')
-    if (activeRegId) {
-      savePreferences(userEmail, activeRegId, cat, selectedPatentType)
+    if (cat === 'Software') {
+      // Software submissions can ONLY use Utility Patent
+      setSelectedPatentType('Utility Patent')
+      if (activeRegId) {
+        savePreferences(userEmail, activeRegId, 'Software', 'Utility Patent')
+        fetchTemplates('Utility Patent')
+        fetchTeamSubmissionsData(activeRegId, activeDepartment, 'Software', 'Utility Patent')
+      }
+    } else {
+      if (activeRegId) {
+        savePreferences(userEmail, activeRegId, cat, selectedPatentType)
+        if (selectedPatentType) {
+          fetchTeamSubmissionsData(activeRegId, activeDepartment, cat, selectedPatentType)
+        }
+      }
     }
   }
 
   const handleSelectPatentType = (pt) => {
+    // Prevent selecting Design Patent when Software is active
+    if (selectedCategory === 'Software' && pt === 'Design Patent') {
+      return
+    }
     setSelectedPatentType(pt)
     setClassificationError('')
     if (activeRegId) {
       savePreferences(userEmail, activeRegId, selectedCategory, pt)
+      fetchTemplates(pt)
+      fetchTeamSubmissionsData(activeRegId, activeDepartment, selectedCategory, pt)
     }
   }
 
@@ -439,29 +474,6 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
     }
   }
 
-  const handleDownload = async (fileId, originalName) => {
-    try {
-      const { data: { session } } = await supabase.auth.getSession()
-      const token = session?.access_token
-      if (!token) return
-      const response = await fetch(`${API_BASE_URL}/api/patents/file/${fileId}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
-      if (!response.ok) throw new Error('Failed to download document')
-      const blob = await response.blob()
-      const url = window.URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = originalName
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      window.URL.revokeObjectURL(url)
-    } catch (err) {
-      alert(err.message)
-    }
-  }
-
   const handleUpload = async (e, template) => {
     const file = e.target.files[0]
     if (!file) return
@@ -470,6 +482,21 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
       setClassificationError('Please select a category and patent type before uploading.')
       e.target.value = ''
       return
+    }
+
+    // Client-side Word format validation for instant feedback
+    const fileName = file.name || ''
+    const ext = fileName.slice((fileName.lastIndexOf(".") - 1 >>> 0) + 2).toLowerCase()
+    if (ext !== 'doc' && ext !== 'docx') {
+      setInvalidFileModal({ fileName: file.name })
+      e.target.value = ''
+      return
+    }
+
+    // Ensure Software uses Utility Patent
+    let finalPatentType = selectedPatentType
+    if (selectedCategory === 'Software') {
+      finalPatentType = 'Utility Patent'
     }
 
     setClassificationError('')
@@ -484,7 +511,7 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
       formData.append('phase', 'phase 1')
       formData.append('department', activeDepartment)
       formData.append('category', selectedCategory)
-      formData.append('patentType', selectedPatentType)
+      formData.append('patentType', finalPatentType)
       formData.append('teamId', activeRegId)
       formData.append('templateId', template.id)
 
@@ -496,16 +523,20 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
 
       const result = await response.json()
       if (!response.ok || !result.success) {
-        if (result.code === 'FILE_EXISTS') {
-          alert('This document has already been uploaded for this team.')
+        if (result.code === 'INVALID_FILE_FORMAT') {
+          setInvalidFileModal({ fileName: file.name })
+          return
+        }
+        if (result.code === 'SOFTWARE_DESIGN_PATENT_NOT_ALLOWED') {
+          alert('Software submissions can only use Utility Patent.')
+          setSelectedPatentType('Utility Patent')
           return
         }
         throw new Error(result.message || 'File upload failed.')
       }
 
-      alert('Patent document submitted successfully.')
       if (activeRegId) {
-        await fetchTeamSubmissionsData(activeRegId, activeDepartment, selectedCategory, selectedPatentType)
+        await fetchTeamSubmissionsData(activeRegId, activeDepartment, selectedCategory, finalPatentType)
       }
     } catch (err) {
       alert(err.message)
@@ -998,15 +1029,20 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
                     <div className="grid grid-cols-2 gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
                       {['Design Patent', 'Utility Patent'].map((pt) => {
                         const isSelected = selectedPatentType === pt
+                        const isDisabled = selectedCategory === 'Software' && pt === 'Design Patent'
                         return (
                           <button
                             key={pt}
                             type="button"
+                            disabled={isDisabled}
                             onClick={() => handleSelectPatentType(pt)}
-                            className={`py-2 rounded-lg text-xs font-black transition-all cursor-pointer ${
-                              isSelected
-                                ? 'bg-accent text-white shadow-xs'
-                                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'
+                            title={isDisabled ? "Design Patent is available only for Hardware submissions." : ""}
+                            className={`py-2 rounded-lg text-xs font-black transition-all ${
+                              isDisabled
+                                ? 'opacity-40 cursor-not-allowed bg-transparent text-slate-400 select-none'
+                                : isSelected
+                                ? 'bg-accent text-white shadow-xs cursor-pointer'
+                                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50 cursor-pointer'
                             }`}
                           >
                             {pt}
@@ -1083,12 +1119,16 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
                 ) : (
                   <div className="space-y-4">
                     {activeTemplates.map((tmpl, idx) => {
-                      const expectedFileName = `${activeRegId}_${tmpl.name}`
+                      const rawTmpl = tmpl.name.replace(/\.[^/.]+$/, '').trim()
+                      const normTmpl = rawTmpl.replace(/\s+/g, '_')
                       const isUploading = uploadingDocId === tmpl.id
                       const isDownloading = downloadingTemplateDocType === tmpl.id
                       const submittedFile = teamSubmissions.find(s => {
                         const cleanSub = s.name.toLowerCase()
-                        return cleanSub.includes(tmpl.name.toLowerCase()) || cleanSub.includes(tmpl.name.replace(/\.[^/.]+$/, '').toLowerCase())
+                        const rawTmplLower = rawTmpl.toLowerCase()
+                        const normTmplLower = normTmpl.toLowerCase()
+                        const altTmplLower = rawTmpl.replace(/\s+/g, '-').toLowerCase()
+                        return cleanSub.includes(normTmplLower) || cleanSub.includes(altTmplLower) || cleanSub.includes(rawTmplLower)
                       })
 
                       return (
@@ -1120,7 +1160,7 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
                             )}
                           </div>
 
-                          {/* Middle row: Download Template & Upload Document */}
+                          {/* Action row: Download Template & Upload/Edit File */}
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             {/* 1. Download Official Template */}
                             <button
@@ -1137,61 +1177,33 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
                               <span>Download Template</span>
                             </button>
 
-                            {/* 2. Upload / View Completed Document */}
-                            <div className="flex items-center gap-2">
-                              {submittedFile && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleDownload(submittedFile.id, submittedFile.name)}
-                                  className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-xs font-bold text-slate-700 transition cursor-pointer shadow-2xs"
-                                  title="Download submitted file"
-                                >
-                                  <FileText size={14} className="text-slate-500" /> View File
-                                </button>
-                              )}
-
-                              {phase1Active ? (
-                                <label className={`inline-flex flex-1 items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold text-white transition cursor-pointer select-none shadow-xs ${
-                                  submittedFile ? 'bg-slate-800 hover:bg-slate-900' : 'bg-accent hover:bg-amber-600'
-                                }`}>
-                                  {isUploading ? (
-                                    <>
-                                      <MechanicalLoader size={14} className="text-white" /> Submitting...
-                                    </>
-                                  ) : (
-                                    <>
-                                      <Upload size={14} /> {submittedFile ? 'Replace File' : 'Upload Document'}
-                                    </>
-                                  )}
-                                  <input
-                                    type="file"
-                                    disabled={isUploading}
-                                    onChange={(e) => handleUpload(e, tmpl)}
-                                    className="hidden"
-                                    accept=".pdf,.png,.jpg,.jpeg,.doc,.docx"
-                                  />
-                                </label>
-                              ) : (
-                                <span className="text-[11px] text-red-500 font-bold flex items-center gap-1.5 p-2 bg-red-50 rounded-xl border border-red-100 flex-1 justify-center">
-                                  <AlertTriangle size={12} /> Submissions Closed
-                                </span>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* High-visibility Required File Name Requirement */}
-                          <div className="bg-slate-50 border border-slate-200/90 rounded-xl p-3.5 space-y-1.5 shadow-2xs">
-                            <div className="flex items-center justify-between">
-                              <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">
-                                Required File Name
+                            {/* 2. Upload / Edit Completed Document */}
+                            {phase1Active ? (
+                              <label className={`inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold text-white transition cursor-pointer select-none shadow-xs ${
+                                submittedFile ? 'bg-slate-800 hover:bg-slate-900' : 'bg-accent hover:bg-amber-600'
+                              }`}>
+                                {isUploading ? (
+                                  <>
+                                    <MechanicalLoader size={14} className="text-white" /> Submitting...
+                                  </>
+                                ) : (
+                                  <>
+                                    <Upload size={14} /> {submittedFile ? 'Edit File' : 'Upload Document'}
+                                  </>
+                                )}
+                                <input
+                                  type="file"
+                                  disabled={isUploading}
+                                  onChange={(e) => handleUpload(e, tmpl)}
+                                  className="hidden"
+                                  accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                                />
+                              </label>
+                            ) : (
+                              <span className="text-[11px] text-red-500 font-bold flex items-center gap-1.5 p-2 bg-red-50 rounded-xl border border-red-100 justify-center">
+                                <AlertTriangle size={12} /> Submissions Closed
                               </span>
-                              <span className="text-[10px] text-slate-400 font-semibold hidden sm:inline">
-                                Exact name match
-                              </span>
-                            </div>
-                            <div className="p-2.5 bg-white rounded-lg border border-slate-200 font-mono text-xs sm:text-sm font-bold text-slate-900 break-all select-all shadow-xs">
-                              {expectedFileName}
-                            </div>
+                            )}
                           </div>
                         </div>
                       )
@@ -1243,6 +1255,59 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
           )}
         </div>
       </div>
+
+      {/* Invalid File Format Custom Popup Modal */}
+      {invalidFileModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs animate-in fade-in">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl border border-slate-200 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-100 text-amber-600 shrink-0">
+                <AlertTriangle size={22} />
+              </div>
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-widest text-amber-600 block">
+                  INVALID FILE FORMAT
+                </span>
+                <h3 className="text-base font-black text-slate-900">
+                  Please Upload a Word File
+                </h3>
+              </div>
+            </div>
+
+            <div className="space-y-2 text-xs text-slate-600 bg-slate-50 p-4 rounded-xl border border-slate-200/70">
+              <p className="font-semibold text-slate-800">
+                This document must be uploaded in Microsoft Word format.
+              </p>
+              <p className="text-[11px] text-slate-500">
+                <strong className="text-slate-700">Accepted formats:</strong> <span className="font-mono font-bold text-slate-800">.doc</span> or <span className="font-mono font-bold text-slate-800">.docx</span>
+              </p>
+              {invalidFileModal.fileName && (
+                <div className="pt-1.5 border-t border-slate-200">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                    Your selected file:
+                  </span>
+                  <span className="font-mono font-bold text-rose-600 text-xs break-all block mt-0.5">
+                    {invalidFileModal.fileName}
+                  </span>
+                </div>
+              )}
+              <p className="text-[11px] text-slate-500 pt-1">
+                Please choose a Word document and try again.
+              </p>
+            </div>
+
+            <div className="flex justify-end pt-1">
+              <button
+                type="button"
+                onClick={() => setInvalidFileModal(null)}
+                className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-xs font-bold text-white transition cursor-pointer shadow-xs"
+              >
+                Choose Another File
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
