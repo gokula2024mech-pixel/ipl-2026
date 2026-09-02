@@ -248,6 +248,15 @@ router.post('/upload', upload.single('file'), async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid Patent Type. Must be Design Patent or Utility Patent.' })
     }
 
+    // Authoritative Rule: Software submissions can ONLY use Utility Patent
+    if (cleanCat === 'Software' && cleanPatentType === 'Design Patent') {
+      return res.status(400).json({
+        success: false,
+        code: 'SOFTWARE_DESIGN_PATENT_NOT_ALLOWED',
+        message: 'Software submissions can only use Utility Patent.'
+      })
+    }
+
     // 2. Authoritative Team Department & Membership Resolution from Supabase
     const { data: reg, error: regErr } = await supabase
       .from('registrations')

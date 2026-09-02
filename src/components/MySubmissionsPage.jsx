@@ -244,12 +244,28 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
     setSaveErrorMsg('')
   }
 
-  const handleSaveChanges = async (e) => {
-    e.preventDefault()
-    if (!currentPage) return
+  const handleToggleSdg = (sdgNum) => {
+    setEditSdgGoals(prev => {
+      if (prev.includes(sdgNum)) {
+        return prev.filter(n => n !== sdgNum)
+      } else {
+        if (prev.length >= 3) return prev
+        return [...prev, sdgNum].sort((a, b) => a - b)
+      }
+    })
+  }
 
-    if (!editProjectTitle.trim() || !editProblemArea.trim() || !editProposedSolution.trim() || !editExpectedImpact.trim() || !editInnovationDomain.trim()) {
-      setSaveErrorMsg('All fields are required.')
+  const saveProjectDetails = async () => {
+    if (!editProjectTitle.trim()) {
+      setSaveErrorMsg('Project title cannot be empty.')
+      return
+    }
+    if (!editProblemArea.trim()) {
+      setSaveErrorMsg('Problem area cannot be empty.')
+      return
+    }
+    if (!editProposedSolution.trim()) {
+      setSaveErrorMsg('Proposed solution cannot be empty.')
       return
     }
 
@@ -258,11 +274,14 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
     setSaveSuccessMsg('')
 
     try {
+<<<<<<< HEAD
       const token = await getToken()
       if (!token) throw new Error('Authentication session expired. Please log in again.')
 
       const regId = currentPage.team.registrationId
 
+=======
+>>>>>>> feature/phase-1-document-submission
       const response = await fetch(`${API_BASE_URL}/api/registrations/${regId}`, {
         method: 'PUT',
         headers: {
@@ -422,8 +441,13 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
     if (!activeRegId) return
     const saved = loadPreferences(userEmail, activeRegId)
     if (saved && (saved.category || saved.patentType)) {
-      setSelectedCategory(saved.category || '')
-      setSelectedPatentType(saved.patentType || '')
+      const cat = saved.category || ''
+      let pt = saved.patentType || ''
+      if (cat === 'Software') {
+        pt = 'Utility Patent'
+      }
+      setSelectedCategory(cat)
+      setSelectedPatentType(pt)
     } else {
       setSelectedCategory('')
       setSelectedPatentType('')
@@ -433,16 +457,35 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
   const handleSelectCategory = (cat) => {
     setSelectedCategory(cat)
     setClassificationError('')
-    if (activeRegId) {
-      savePreferences(userEmail, activeRegId, cat, selectedPatentType)
+    if (cat === 'Software') {
+      // Software submissions can ONLY use Utility Patent
+      setSelectedPatentType('Utility Patent')
+      if (activeRegId) {
+        savePreferences(userEmail, activeRegId, 'Software', 'Utility Patent')
+        fetchTemplates('Utility Patent')
+        fetchTeamSubmissionsData(activeRegId, activeDepartment, 'Software', 'Utility Patent')
+      }
+    } else {
+      if (activeRegId) {
+        savePreferences(userEmail, activeRegId, cat, selectedPatentType)
+        if (selectedPatentType) {
+          fetchTeamSubmissionsData(activeRegId, activeDepartment, cat, selectedPatentType)
+        }
+      }
     }
   }
 
   const handleSelectPatentType = (pt) => {
+    // Prevent selecting Design Patent when Software is active
+    if (selectedCategory === 'Software' && pt === 'Design Patent') {
+      return
+    }
     setSelectedPatentType(pt)
     setClassificationError('')
     if (activeRegId) {
       savePreferences(userEmail, activeRegId, selectedCategory, pt)
+      fetchTemplates(pt)
+      fetchTeamSubmissionsData(activeRegId, activeDepartment, selectedCategory, pt)
     }
   }
 
@@ -490,7 +533,11 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
       return
     }
 
+<<<<<<< HEAD
     // Client-side Word validation for instant user feedback
+=======
+    // Client-side Word format validation for instant feedback
+>>>>>>> feature/phase-1-document-submission
     const fileName = file.name || ''
     const ext = fileName.slice((fileName.lastIndexOf(".") - 1 >>> 0) + 2).toLowerCase()
     if (ext !== 'doc' && ext !== 'docx') {
@@ -499,6 +546,15 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
       return
     }
 
+<<<<<<< HEAD
+=======
+    // Ensure Software uses Utility Patent
+    let finalPatentType = selectedPatentType
+    if (selectedCategory === 'Software') {
+      finalPatentType = 'Utility Patent'
+    }
+
+>>>>>>> feature/phase-1-document-submission
     setClassificationError('')
     setUploadingDocId(template.id)
     try {
@@ -510,7 +566,7 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
       formData.append('phase', 'phase 1')
       formData.append('department', activeDepartment)
       formData.append('category', selectedCategory)
-      formData.append('patentType', selectedPatentType)
+      formData.append('patentType', finalPatentType)
       formData.append('teamId', activeRegId)
       formData.append('templateId', template.id)
 
@@ -524,13 +580,21 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
       if (!response.ok || !result.success) {
         if (result.code === 'INVALID_FILE_FORMAT') {
           setInvalidFileModal({ fileName: file.name })
+<<<<<<< HEAD
+=======
+          return
+        }
+        if (result.code === 'SOFTWARE_DESIGN_PATENT_NOT_ALLOWED') {
+          alert('Software submissions can only use Utility Patent.')
+          setSelectedPatentType('Utility Patent')
+>>>>>>> feature/phase-1-document-submission
           return
         }
         throw new Error(result.message || 'File upload failed.')
       }
 
       if (activeRegId) {
-        await fetchTeamSubmissionsData(activeRegId, activeDepartment, selectedCategory, selectedPatentType)
+        await fetchTeamSubmissionsData(activeRegId, activeDepartment, selectedCategory, finalPatentType)
       }
     } catch (err) {
       alert(err.message)
@@ -1042,15 +1106,20 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
                     <div className="grid grid-cols-2 gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
                       {['Design Patent', 'Utility Patent'].map((pt) => {
                         const isSelected = selectedPatentType === pt
+                        const isDisabled = selectedCategory === 'Software' && pt === 'Design Patent'
                         return (
                           <button
                             key={pt}
                             type="button"
+                            disabled={isDisabled}
                             onClick={() => handleSelectPatentType(pt)}
-                            className={`py-2 rounded-lg text-xs font-black transition-all cursor-pointer ${
-                              isSelected
-                                ? 'bg-accent text-white shadow-xs'
-                                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'
+                            title={isDisabled ? "Design Patent is available only for Hardware submissions." : ""}
+                            className={`py-2 rounded-lg text-xs font-black transition-all ${
+                              isDisabled
+                                ? 'opacity-40 cursor-not-allowed bg-transparent text-slate-400 select-none'
+                                : isSelected
+                                ? 'bg-accent text-white shadow-xs cursor-pointer'
+                                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50 cursor-pointer'
                             }`}
                           >
                             {pt}
