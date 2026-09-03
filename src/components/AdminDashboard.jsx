@@ -16,9 +16,10 @@ import {
   UserPlus,
   BookOpen,
   Download,
-  ShieldAlert,
   X,
-  Timer
+  Timer,
+  Trophy,
+  CheckCircle
 } from "lucide-react";
 
 const rawApiUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000').trim().replace(/\/+$/, '')
@@ -595,6 +596,11 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
   const [extMinutes, setExtMinutes] = useState(0);
   const [extSeconds, setExtSeconds] = useState(0);
 
+  // Leaderboard Type Configuration State
+  const [leaderboardType, setLeaderboardType] = useState('TRL_BASED');
+  const [updatingLeaderboardType, setUpdatingLeaderboardType] = useState(false);
+  const [leaderboardTypeSuccess, setLeaderboardTypeSuccess] = useState(false);
+
   // Teams search filter & Pagination
   const [teamsSearch, setTeamsSearch] = useState(() => {
     try {
@@ -743,6 +749,29 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
         .maybeSingle();
       if (regTimerError) throw regTimerError;
       setRegistrationTimer(regTimerData);
+
+      // Fetch Leaderboard Configuration
+      try {
+        const { data: appSettingsData } = await supabase
+          .from("app_settings")
+          .select("value")
+          .eq("key", "leaderboard_type")
+          .maybeSingle();
+        if (appSettingsData?.value?.type) {
+          setLeaderboardType(appSettingsData.value.type);
+        } else {
+          const lRes = await fetch(`${API_BASE_URL}/api/leaderboard-config`);
+          const contentType = lRes.headers.get("content-type") || "";
+          if (lRes.ok && contentType.includes("application/json")) {
+            const lJson = await lRes.json();
+            if (lJson.leaderboard_type) {
+              setLeaderboardType(lJson.leaderboard_type);
+            }
+          }
+        }
+      } catch (lErr) {
+        console.warn("[Admin Dashboard] Error reading leaderboard config:", lErr.message);
+      }
 
       // 2. Fetch profiles
       const { data: profilesData, error: profilesError } = await supabase
@@ -1817,6 +1846,77 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
     }
   };
 
+  // Leaderboard Type Configuration Operation
+  const handleUpdateLeaderboardType = async (type) => {
+    if (type === leaderboardType || updatingLeaderboardType) return;
+    setUpdatingLeaderboardType(true);
+    setError("");
+    setSuccess("");
+    setLeaderboardTypeSuccess(false);
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token || "";
+      const userId = session?.user?.id || null;
+
+      // 1. Direct Supabase update (Guaranteed to work for authenticated Admin via RLS)
+      let supabaseSuccess = false;
+      try {
+        const { error: upsertErr } = await supabase
+          .from("app_settings")
+          .upsert({
+            key: "leaderboard_type",
+            value: { type },
+            updated_at: new Date().toISOString(),
+            updated_by: userId
+          }, { onConflict: "key" });
+
+        if (!upsertErr) {
+          supabaseSuccess = true;
+        } else {
+          console.warn("[Admin Dashboard] Supabase app_settings update warning:", upsertErr.message);
+        }
+      } catch (dbErr) {
+        console.warn("[Admin Dashboard] Supabase direct update note:", dbErr.message);
+      }
+
+      // 2. Also notify backend endpoint if available
+      let backendSuccess = false;
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/admin/leaderboard-config`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`
+          },
+          body: JSON.stringify({ leaderboard_type: type })
+        });
+        const contentType = res.headers.get("content-type") || "";
+        if (res.ok && contentType.includes("application/json")) {
+          const json = await res.json();
+          if (json.success) backendSuccess = true;
+        }
+      } catch (apiErr) {
+        console.warn("[Admin Dashboard] Backend sync note:", apiErr.message);
+      }
+
+      if (!supabaseSuccess && !backendSuccess) {
+        throw new Error("Unable to save leaderboard mode. Please check connection.");
+      }
+
+      setLeaderboardType(type);
+      setLeaderboardTypeSuccess(true);
+      setTimeout(() => setLeaderboardTypeSuccess(false), 5000);
+
+      window.dispatchEvent(new CustomEvent("refresh-leaderboard"));
+    } catch (err) {
+      console.error("Error updating leaderboard type:", err);
+      setError(err.message || "Unable to update leaderboard type.");
+    } finally {
+      setUpdatingLeaderboardType(false);
+    }
+  };
+
   // Evaluator Operations
   const handleAddEvaluator = async (e) => {
     e.preventDefault();
@@ -2512,164 +2612,271 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
               {/* 2. PHASES TAB */}
               {activeTab === "phases" && (
                 <div className="space-y-8">
-                  {/* Registration Timer Card */}
-                  {registrationTimer && (
-                    <article className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200 max-w-xl">
-                      <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
+                  {/* Global Configuration Controls Grid */}
+                  <div className="grid gap-6 lg:grid-cols-2">
+                    {/* Registration Timer Card */}
+                    {registrationTimer && (
+                      <article className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200 flex flex-col justify-between">
                         <div>
-                          <h3 className="text-lg font-bold text-slate-900">Registration Timer</h3>
-                          <p className="text-xs text-slate-500">Configure and manage the global student team registration window.</p>
-                        </div>
-                        <span className={`inline-flex items-center rounded-md px-2.5 py-1 text-xs font-bold ring-1 ring-inset ${
-                          registrationTimer.timer_status === 'running' ? 'bg-green-50 text-green-700 ring-green-600/20 animate-pulse' :
-                          registrationTimer.timer_status === 'paused' ? 'bg-amber-50 text-amber-700 ring-amber-600/20' :
-                          registrationTimer.timer_status === 'closed' ? 'bg-slate-50 text-slate-600 ring-slate-500/10' :
-                          registrationTimer.timer_status === 'completed' ? 'bg-blue-50 text-blue-700 ring-blue-600/20' :
-                          'bg-slate-50 text-slate-500 ring-slate-500/10'
-                        }`}>
-                          {registrationTimer.timer_status ? registrationTimer.timer_status.toUpperCase() : 'UPCOMING'}
-                        </span>
-                      </div>
+                          <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
+                            <div>
+                              <h3 className="text-lg font-bold text-slate-900">Registration Timer</h3>
+                              <p className="text-xs text-slate-500">Configure and manage the global student team registration window.</p>
+                            </div>
+                            <span className={`inline-flex items-center rounded-md px-2.5 py-1 text-xs font-bold ring-1 ring-inset ${
+                              registrationTimer.timer_status === 'running' ? 'bg-green-50 text-green-700 ring-green-600/20 animate-pulse' :
+                              registrationTimer.timer_status === 'paused' ? 'bg-amber-50 text-amber-700 ring-amber-600/20' :
+                              registrationTimer.timer_status === 'closed' ? 'bg-slate-50 text-slate-600 ring-slate-500/10' :
+                              registrationTimer.timer_status === 'completed' ? 'bg-blue-50 text-blue-700 ring-blue-600/20' :
+                              'bg-slate-50 text-slate-500 ring-slate-500/10'
+                            }`}>
+                              {registrationTimer.timer_status ? registrationTimer.timer_status.toUpperCase() : 'UPCOMING'}
+                            </span>
+                          </div>
 
-                      <div className="grid gap-4 sm:grid-cols-2">
-                        {/* Countdown */}
-                        <div className="rounded-xl bg-slate-50 p-4 flex flex-col justify-center">
-                          <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Remaining Time</span>
-                          <span className="font-mono text-xl font-bold text-slate-800 mt-1">
-                            {regCountdown ? (
-                              `${String(regCountdown.days).padStart(2, '0')}d : ` +
-                              `${String(regCountdown.hours).padStart(2, '0')}h : ` +
-                              `${String(regCountdown.minutes).padStart(2, '0')}m : ` +
-                              `${String(regCountdown.seconds).padStart(2, '0')}s`
-                            ) : registrationTimer.timer_status === 'closed' ? (
-                              'Closed'
-                            ) : registrationTimer.timer_status === 'completed' ? (
-                              'Completed'
-                            ) : (
-                              '--d : --h : --m : --s'
-                            )}
+                          <div className="grid gap-4 sm:grid-cols-2">
+                            {/* Countdown */}
+                            <div className="rounded-xl bg-slate-50 p-4 flex flex-col justify-center">
+                              <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Remaining Time</span>
+                              <span className="font-mono text-xl font-bold text-slate-800 mt-1">
+                                {regCountdown ? (
+                                  `${String(regCountdown.days).padStart(2, '0')}d : ` +
+                                  `${String(regCountdown.hours).padStart(2, '0')}h : ` +
+                                  `${String(regCountdown.minutes).padStart(2, '0')}m : ` +
+                                  `${String(regCountdown.seconds).padStart(2, '0')}s`
+                                ) : registrationTimer.timer_status === 'closed' ? (
+                                  'Closed'
+                                ) : registrationTimer.timer_status === 'completed' ? (
+                                  'Completed'
+                                ) : (
+                                  '--d : --h : --m : --s'
+                                )}
+                              </span>
+                            </div>
+
+                            {/* Timing details */}
+                            <div className="text-xs text-slate-600 flex flex-col justify-center space-y-1">
+                              <div className="flex justify-between">
+                                <span>Start:</span>
+                                <span className="font-semibold text-slate-900">
+                                  {registrationTimer.scheduled_start_at ? new Date(registrationTimer.scheduled_start_at).toLocaleString() : 'Not scheduled'}
+                                </span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>End:</span>
+                                <span className="font-semibold text-slate-900">
+                                  {registrationTimer.scheduled_end_at ? new Date(registrationTimer.scheduled_end_at).toLocaleString() : 'Not scheduled'}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Controls grid */}
+                        <div className="mt-6 flex flex-wrap gap-2 pt-3 border-t border-slate-100">
+                          {registrationTimer.timer_status === 'upcoming' && (
+                            <button
+                              type="button"
+                              disabled={updatingPhase}
+                              onClick={handleStartRegTimer}
+                              className="rounded-lg bg-primary hover:bg-blue-900 px-4 py-2 text-xs font-bold text-white transition cursor-pointer"
+                            >
+                              Start Timer
+                            </button>
+                          )}
+
+                          {registrationTimer.timer_status === 'running' && (
+                            <>
+                              <button
+                                type="button"
+                                disabled={updatingPhase}
+                                onClick={handlePauseRegTimer}
+                                className="rounded-lg bg-amber-500 hover:bg-amber-600 px-4 py-2 text-xs font-bold text-white transition cursor-pointer"
+                              >
+                                Pause Timer
+                              </button>
+                              <button
+                                type="button"
+                                disabled={updatingPhase}
+                                onClick={handleStopRegTimer}
+                                className="rounded-lg bg-red-600 hover:bg-red-700 px-4 py-2 text-xs font-bold text-white transition cursor-pointer"
+                              >
+                                Stop Timer
+                              </button>
+                            </>
+                          )}
+
+                          {registrationTimer.timer_status === 'paused' && (
+                            <>
+                              <button
+                                type="button"
+                                disabled={updatingPhase}
+                                onClick={handleResumeRegTimer}
+                                className="rounded-lg bg-green-600 hover:bg-green-700 px-4 py-2 text-xs font-bold text-white transition cursor-pointer"
+                              >
+                                Resume Timer
+                              </button>
+                              <button
+                                type="button"
+                                disabled={updatingPhase}
+                                onClick={handleStopRegTimer}
+                                className="rounded-lg bg-red-600 hover:bg-red-700 px-4 py-2 text-xs font-bold text-white transition cursor-pointer"
+                              >
+                                Stop Timer
+                              </button>
+                            </>
+                          )}
+
+                          {registrationTimer.timer_status === 'completed' && (
+                            <button
+                              type="button"
+                              disabled={updatingPhase}
+                              onClick={handleStartRegTimer}
+                              className="rounded-lg bg-primary hover:bg-blue-900 px-4 py-2 text-xs font-bold text-white transition cursor-pointer"
+                            >
+                              Restart Timer
+                            </button>
+                          )}
+
+                          {registrationTimer.timer_status === 'closed' && (
+                            <button
+                              type="button"
+                              disabled={updatingPhase}
+                              onClick={handleStartRegTimer}
+                              className="rounded-lg bg-primary hover:bg-blue-900 px-4 py-2 text-xs font-bold text-white transition cursor-pointer"
+                            >
+                              Reopen Timer
+                            </button>
+                          )}
+
+                          {/* Modify & Extend Buttons */}
+                          <button
+                            type="button"
+                            disabled={updatingPhase}
+                            onClick={() => {
+                              setModifyTimerType("registration");
+                              setModifyTimerPhase(registrationTimer);
+                              if (registrationTimer.scheduled_start_at) {
+                                const s = new Date(registrationTimer.scheduled_start_at);
+                                setStartDate(s.toISOString().split("T")[0]);
+                                setStartTime(s.toTimeString().split(" ")[0].slice(0, 5));
+                              } else {
+                                setStartDate("");
+                                setStartTime("");
+                              }
+                              if (registrationTimer.scheduled_end_at) {
+                                const e = new Date(registrationTimer.scheduled_end_at);
+                                setEndDate(e.toISOString().split("T")[0]);
+                                setEndTime(e.toTimeString().split(" ")[0].slice(0, 5));
+                              } else {
+                                setEndDate("");
+                                setEndTime("");
+                              }
+                            }}
+                            className="rounded-lg border border-slate-300 bg-white hover:bg-slate-50 px-4 py-2 text-xs font-bold text-slate-700 transition cursor-pointer"
+                          >
+                            Modify
+                          </button>
+                          <button
+                            type="button"
+                            disabled={updatingPhase}
+                            onClick={() => {
+                              setExtendTimerType("registration");
+                              setExtendTimerPhase(registrationTimer);
+                              setExtDays(0);
+                              setExtHours(0);
+                              setExtMinutes(0);
+                              setExtSeconds(0);
+                            }}
+                            className="rounded-lg border border-slate-300 bg-white hover:bg-slate-50 px-4 py-2 text-xs font-bold text-slate-700 transition cursor-pointer"
+                          >
+                            Extend
+                          </button>
+                        </div>
+                      </article>
+                    )}
+
+                    {/* Leaderboard Type Configuration Card */}
+                    <article className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200 flex flex-col justify-between">
+                      <div>
+                        <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
+                          <div>
+                            <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                              <Trophy size={18} className="text-primary" /> Leaderboard Type
+                            </h3>
+                            <p className="text-xs text-slate-500">Configure the active ranking mode shown to public users in the User Portal.</p>
+                          </div>
+                          <span className={`inline-flex items-center rounded-md px-2.5 py-1 text-xs font-bold ring-1 ring-inset ${
+                            leaderboardType === 'TRL_BASED'
+                              ? 'bg-blue-50 text-blue-700 ring-blue-600/20'
+                              : 'bg-purple-50 text-purple-700 ring-purple-600/20'
+                          }`}>
+                            {leaderboardType === 'TRL_BASED' ? 'TRL BASED' : 'VOTING BASED'}
                           </span>
                         </div>
 
-                        {/* Timing details */}
-                        <div className="text-xs text-slate-600 flex flex-col justify-center space-y-1">
-                          <div className="flex justify-between">
-                            <span>Start:</span>
-                            <span className="font-semibold text-slate-900">
-                              {registrationTimer.scheduled_start_at ? new Date(registrationTimer.scheduled_start_at).toLocaleString() : 'Not scheduled'}
-                            </span>
+                        <div className="space-y-4">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            {/* TRL Based Button */}
+                            <button
+                              type="button"
+                              disabled={updatingLeaderboardType}
+                              onClick={() => handleUpdateLeaderboardType('TRL_BASED')}
+                              className={`p-4 rounded-xl border text-left transition cursor-pointer flex flex-col justify-between ${
+                                leaderboardType === 'TRL_BASED'
+                                  ? 'border-primary bg-primary/5 ring-2 ring-primary/20 shadow-sm'
+                                  : 'border-slate-200 hover:border-slate-300 bg-white'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between w-full mb-1.5">
+                                <span className="font-bold text-sm text-slate-900">TRL Based</span>
+                                {leaderboardType === 'TRL_BASED' && (
+                                  <CheckCircle size={16} className="text-primary" />
+                                )}
+                              </div>
+                              <p className="text-[11px] text-slate-500 leading-relaxed">
+                                Ranks teams by validated Technology Readiness Level (TRL 1–9). (Active Mode)
+                              </p>
+                            </button>
+
+                            {/* Voting Based Button */}
+                            <button
+                              type="button"
+                              disabled={updatingLeaderboardType}
+                              onClick={() => handleUpdateLeaderboardType('VOTING_BASED')}
+                              className={`p-4 rounded-xl border text-left transition cursor-pointer flex flex-col justify-between ${
+                                leaderboardType === 'VOTING_BASED'
+                                  ? 'border-primary bg-primary/5 ring-2 ring-primary/20 shadow-sm'
+                                  : 'border-slate-200 hover:border-slate-300 bg-white'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between w-full mb-1.5">
+                                <span className="font-bold text-sm text-slate-900">Voting Based</span>
+                                {leaderboardType === 'VOTING_BASED' && (
+                                  <CheckCircle size={16} className="text-primary" />
+                                )}
+                              </div>
+                              <p className="text-[11px] text-slate-500 leading-relaxed">
+                                Ranks teams by student/evaluator community votes. (Future Mode)
+                              </p>
+                            </button>
                           </div>
-                          <div className="flex justify-between">
-                            <span>End:</span>
-                            <span className="font-semibold text-slate-900">
-                              {registrationTimer.scheduled_end_at ? new Date(registrationTimer.scheduled_end_at).toLocaleString() : 'Not scheduled'}
-                            </span>
-                          </div>
+
+                          {leaderboardTypeSuccess && (
+                            <div className="rounded-xl bg-green-50 p-3 text-xs text-green-700 flex items-center gap-2 border border-green-200 animate-fade-in">
+                              <CheckCircle size={14} className="text-green-600 shrink-0" />
+                              <span>Leaderboard mode saved successfully. User portal is now set to <strong>{leaderboardType === 'TRL_BASED' ? 'TRL Based' : 'Voting Based'}</strong>.</span>
+                            </div>
+                          )}
                         </div>
                       </div>
 
-                      {/* Controls grid */}
-                      <div className="mt-6 flex flex-wrap gap-2">
-                        {registrationTimer.timer_status === 'upcoming' && (
-                          <button
-                            type="button"
-                            disabled={updatingPhase}
-                            onClick={handleStartRegTimer}
-                            className="rounded-lg bg-primary hover:bg-blue-900 px-4 py-2 text-xs font-bold text-white transition cursor-pointer"
-                          >
-                            Start Timer
-                          </button>
-                        )}
-
-                        {registrationTimer.timer_status === 'running' && (
-                          <>
-                            <button
-                              type="button"
-                              disabled={updatingPhase}
-                              onClick={handlePauseRegTimer}
-                              className="rounded-lg bg-amber-500 hover:bg-amber-600 px-4 py-2 text-xs font-bold text-white transition cursor-pointer"
-                            >
-                              Pause
-                            </button>
-                            <button
-                              type="button"
-                              disabled={updatingPhase}
-                              onClick={handleStopRegTimer}
-                              className="rounded-lg bg-red-600 hover:bg-red-700 px-4 py-2 text-xs font-bold text-white transition cursor-pointer"
-                            >
-                              Stop
-                            </button>
-                          </>
-                        )}
-
-                        {registrationTimer.timer_status === 'paused' && (
-                          <>
-                            <button
-                              type="button"
-                              disabled={updatingPhase}
-                              onClick={handleResumeRegTimer}
-                              className="rounded-lg bg-green-600 hover:bg-green-700 px-4 py-2 text-xs font-bold text-white transition cursor-pointer"
-                            >
-                              Resume
-                            </button>
-                            <button
-                              type="button"
-                              disabled={updatingPhase}
-                              onClick={handleStopRegTimer}
-                              className="rounded-lg bg-red-600 hover:bg-red-700 px-4 py-2 text-xs font-bold text-white transition cursor-pointer"
-                            >
-                              Stop
-                            </button>
-                          </>
-                        )}
-
-                        {(registrationTimer.timer_status === 'completed' || registrationTimer.timer_status === 'closed') && (
-                          <button
-                            type="button"
-                            disabled={updatingPhase}
-                            onClick={handleStartRegTimer}
-                            className="rounded-lg bg-primary hover:bg-blue-900 px-4 py-2 text-xs font-bold text-white transition cursor-pointer"
-                          >
-                            Start Again
-                          </button>
-                        )}
-
-                        {/* Modify and Extend */}
-                        <button
-                          type="button"
-                          disabled={updatingPhase}
-                          onClick={() => {
-                            setModifyTimerType("registration");
-                            setModifyTimerPhase(registrationTimer);
-                            const start = splitIsoDateTime(registrationTimer.scheduled_start_at);
-                            const end = splitIsoDateTime(registrationTimer.scheduled_end_at);
-                            setStartDate(start.date);
-                            setStartTime(start.time);
-                            setEndDate(end.date);
-                            setEndTime(end.time);
-                          }}
-                          className="rounded-lg border border-slate-300 bg-white hover:bg-slate-50 px-4 py-2 text-xs font-bold text-slate-700 transition cursor-pointer"
-                        >
-                          Modify
-                        </button>
-                        <button
-                          type="button"
-                          disabled={updatingPhase}
-                          onClick={() => {
-                            setExtendTimerType("registration");
-                            setExtendTimerPhase(registrationTimer);
-                            setExtDays(0);
-                            setExtHours(0);
-                            setExtMinutes(0);
-                            setExtSeconds(0);
-                          }}
-                          className="rounded-lg border border-slate-300 bg-white hover:bg-slate-50 px-4 py-2 text-xs font-bold text-slate-700 transition cursor-pointer"
-                        >
-                          Extend
-                        </button>
+                      <div className="mt-6 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+                        <span>Active Mode:</span>
+                        <span className="font-bold text-slate-700">{leaderboardType === 'TRL_BASED' ? 'TRL Evaluation (Live)' : 'Voting Evaluation (Pending)'}</span>
                       </div>
                     </article>
-                  )}
+                  </div>
 
                   {/* Phase Timer Cards */}
                   <div>

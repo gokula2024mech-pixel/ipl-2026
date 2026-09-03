@@ -3,6 +3,7 @@ const router = express.Router()
 
 const multer = require('multer')
 const path = require('path')
+const fs = require('fs')
 const { Readable } = require('stream')
 const { google } = require('googleapis')
 const { supabase } = require('../supabaseClient')
@@ -680,7 +681,7 @@ router.get('/leaderboard-domains', async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('products')
-      .select('team_id, innovation_domain, trl_level, created_at, id')
+      .select('team_id, product_title, innovation_domain, trl_level, created_at, id')
       .eq('status', 'active');
     if (error) {
       throw error;
@@ -692,6 +693,110 @@ router.get('/leaderboard-domains', async (req, res) => {
   } catch (err) {
     console.error('[leaderboard-domains API Error]:', err.message);
     return res.status(500).json({ success: false, message: 'Failed to query active products data.' });
+  }
+});
+
+// Helper functions for persistent local configuration storage
+const CONFIG_FILE_PATH = path.join(__dirname, '..', 'config', 'app_settings.json');
+
+function readLocalSettings() {
+  try {
+    if (fs.existsSync(CONFIG_FILE_PATH)) {
+      const raw = fs.readFileSync(CONFIG_FILE_PATH, 'utf-8');
+      return JSON.parse(raw);
+    }
+  } catch (e) {
+    console.warn('[Leaderboard Config] Local config read error:', e.message);
+  }
+  return { leaderboard_type: 'TRL_BASED' };
+}
+
+function writeLocalSettings(cfg) {
+  try {
+    const dir = path.dirname(CONFIG_FILE_PATH);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    fs.writeFileSync(CONFIG_FILE_PATH, JSON.stringify(cfg, null, 2), 'utf-8');
+  } catch (e) {
+    console.warn('[Leaderboard Config] Local config write error:', e.message);
+  }
+}
+
+// GET /api/leaderboard-config (Public endpoint)
+// Returns current active leaderboard type: 'TRL_BASED' | 'VOTING_BASED'
+router.get('/leaderboard-config', async (req, res) => {
+  try {
+    // 1. Try reading from supabase app_settings table
+    const { data, error } = await supabase
+      .from('app_settings')
+      .select('value')
+      .eq('key', 'leaderboard_type')
+      .maybeSingle();
+
+    if (!error && data && data.value && data.value.type) {
+      const type = data.value.type === 'VOTING_BASED' ? 'VOTING_BASED' : 'TRL_BASED';
+      return res.status(200).json({ success: true, leaderboard_type: type });
+    }
+
+    // 2. Fallback to persistent local file configuration
+    const localCfg = readLocalSettings();
+    const type = localCfg.leaderboard_type === 'VOTING_BASED' ? 'VOTING_BASED' : 'TRL_BASED';
+    return res.status(200).json({ success: true, leaderboard_type: type });
+  } catch (err) {
+    console.error('[leaderboard-config GET Error]:', err.message);
+    const localCfg = readLocalSettings();
+    return res.status(200).json({ success: true, leaderboard_type: localCfg.leaderboard_type || 'TRL_BASED' });
+  }
+});
+
+// POST /api/admin/leaderboard-config (Admin only endpoint)
+// Updates the active leaderboard type
+router.post('/admin/leaderboard-config', authenticateUser, checkAdmin, async (req, res) => {
+  try {
+    const { leaderboard_type } = req.body;
+    if (!['TRL_BASED', 'VOTING_BASED'].includes(leaderboard_type)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid leaderboard type. Must be TRL_BASED or VOTING_BASED.'
+      });
+    }
+
+    // 1. Persist to Supabase app_settings table
+    try {
+      const { error: upsertErr } = await supabase
+        .from('app_settings')
+        .upsert({
+          key: 'leaderboard_type',
+          value: { type: leaderboard_type },
+          updated_at: new Date().toISOString(),
+          updated_by: req.user.id
+        }, { onConflict: 'key' });
+
+      if (upsertErr) {
+        console.warn('[Leaderboard Config] Supabase app_settings upsert warning:', upsertErr.message);
+      }
+    } catch (dbErr) {
+      console.warn('[Leaderboard Config] DB error:', dbErr.message);
+    }
+
+    // 2. Persist to local config file as guaranteed fallback
+    const localCfg = readLocalSettings();
+    localCfg.leaderboard_type = leaderboard_type;
+    localCfg.updated_at = new Date().toISOString();
+    localCfg.updated_by = req.user.id;
+    writeLocalSettings(localCfg);
+
+    console.log(`[Leaderboard Config] Admin ${req.user.email} set leaderboard_type to: ${leaderboard_type}`);
+
+    return res.status(200).json({
+      success: true,
+      leaderboard_type,
+      message: `Leaderboard type successfully updated to ${leaderboard_type === 'TRL_BASED' ? 'TRL Based' : 'Voting Based'}.`
+    });
+  } catch (err) {
+    console.error('[leaderboard-config POST Error]:', err.message);
+    return res.status(500).json({ success: false, message: 'Failed to update leaderboard configuration.' });
   }
 });
 
