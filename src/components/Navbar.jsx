@@ -25,6 +25,7 @@ const MOBILE_NAV_LINKS = [
   { label: 'Domains', href: '#domains' },
   { label: 'Guidelines', href: '#eligibility' },
   { label: 'FAQs', href: '#' },
+  { label: 'Leaderboard', href: '#leaderboard' },
   { label: 'Contact Us', href: '#contact' },
 ]
 
