@@ -199,6 +199,9 @@ export default function MySubmissionsPage({
   const [teamSubmissions, setTeamSubmissions] = useState([]);
 
   const [uploadingDocId, setUploadingDocId] = useState(null);
+  const [uploadingFileInfo, setUploadingFileInfo] = useState(null);
+  const fileInputRef = useRef(null);
+  const uploadingTemplateRef = useRef(null);
   const [downloadingTemplateDocType, setDownloadingTemplateDocType] =
     useState(null);
   const [currentPageIndex, setCurrentPageIndex] = useState(() => {
@@ -761,22 +764,34 @@ export default function MySubmissionsPage({
     }
   };
 
-  const handleUpload = async (e, template) => {
-    // Capture input element and file immediately before any async gap or event pooling
-    const targetInput = e.target;
-    const files = targetInput?.files;
-    const file = files && files[0];
-    if (!file) return;
-
+  const handleUploadClick = (template) => {
     if (!selectedCategory || !selectedPatentType) {
       showToast({
         type: "warning",
         title: "Selection Required",
         message: "Please select both Category (Hardware/Software) and Patent Type (Utility/Design) before uploading.",
       });
-      if (targetInput) targetInput.value = "";
       return;
     }
+    uploadingTemplateRef.current = template;
+    if (fileInputRef.current) {
+      // Clear input value so choosing the same file always triggers onChange
+      fileInputRef.current.value = "";
+      fileInputRef.current.click();
+    }
+  };
+
+  const handleFileInputChange = (e) => {
+    const file = e.target.files && e.target.files[0];
+    const template = uploadingTemplateRef.current;
+    // Reset input value immediately
+    e.target.value = "";
+    if (!file || !template) return;
+    handleUploadFile(file, template);
+  };
+
+  const handleUploadFile = async (file, template) => {
+    if (!file || !template) return;
 
     // Client-side Word format validation for instant feedback (.doc or .docx)
     const fileName = (file.name || "").trim();
@@ -788,13 +803,8 @@ export default function MySubmissionsPage({
     const isWordDoc = isWordExt || isWordMime;
 
     if (!isWordDoc) {
+      // Primary UI feedback: Dedicated Invalid File Format modal (no duplicate toast)
       setInvalidFileModal({ fileName: fileName || "Selected file" });
-      showToast({
-        type: "error",
-        title: "Invalid File Format",
-        message: "Please upload a Microsoft Word document (.doc or .docx).",
-      });
-      if (targetInput) targetInput.value = "";
       return;
     }
 
@@ -805,6 +815,12 @@ export default function MySubmissionsPage({
     }
 
     setUploadingDocId(template.id);
+    setUploadingFileInfo({
+      templateId: template.id,
+      name: fileName,
+      size: file.size,
+    });
+
     try {
       const token = await getToken();
       if (!token) {
@@ -860,7 +876,7 @@ export default function MySubmissionsPage({
       });
     } finally {
       setUploadingDocId(null);
-      if (targetInput) targetInput.value = "";
+      setUploadingFileInfo(null);
     }
   };
 
@@ -1626,6 +1642,17 @@ export default function MySubmissionsPage({
                       )}
                   </div>
 
+                  {/* Hidden single file input for reliable programmatic activation across Android / iOS / Desktop */}
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    tabIndex={-1}
+                    aria-hidden="true"
+                    style={{ display: "none" }}
+                    accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    onChange={handleFileInputChange}
+                  />
+
                   {!selectedPatentType ? (
                     <div className="p-12 flex flex-col items-center justify-center text-center gap-3 text-slate-400">
                       <Lightbulb size={36} className="text-amber-500" />
@@ -1671,15 +1698,20 @@ export default function MySubmissionsPage({
                       </p>
                     </div>
                   ) : (
-                    <div className="space-y-4">
+                    <div className="grid grid-cols-1 gap-4">
                       {activeTemplates.map((tmpl, idx) => {
-                        const rawTmpl = tmpl.name
-                          .replace(/\.[^/.]+$/, "")
-                          .trim();
-                        const normTmpl = rawTmpl.replace(/\s+/g, "_");
                         const isUploading = uploadingDocId === tmpl.id;
                         const isDownloading =
                           downloadingTemplateDocType === tmpl.id;
+                        const cleanTmpl = tmpl.name
+                          .replace(/\.docx?$/i, "")
+                          .trim();
+                        const rawTmpl = tmpl.rawName
+                          ? tmpl.rawName.replace(/\.docx?$/i, "").trim()
+                          : cleanTmpl;
+                        const normTmpl = cleanTmpl
+                          .toLowerCase()
+                          .replace(/[^a-z0-9]/g, "");
                         const submittedFile = teamSubmissions.find((s) => {
                           const cleanSub = s.name.toLowerCase();
                           const rawTmplLower = rawTmpl.toLowerCase();
@@ -1719,7 +1751,15 @@ export default function MySubmissionsPage({
                               </div>
 
                               <div className="shrink-0 flex items-center">
-                                {submittedFile ? (
+                                {isUploading ? (
+                                  <span className="inline-flex items-center gap-1.5 bg-amber-50 text-amber-700 border border-amber-200 text-[10px] sm:text-[11px] font-black px-3 py-1 rounded-full uppercase tracking-wider shadow-2xs animate-pulse">
+                                    <MechanicalLoader
+                                      size={12}
+                                      className="text-amber-600 shrink-0"
+                                    />
+                                    Uploading...
+                                  </span>
+                                ) : submittedFile ? (
                                   <span className="inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] sm:text-[11px] font-black px-3 py-1 rounded-full uppercase tracking-wider shadow-2xs">
                                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0"></span>
                                     Submitted
@@ -1733,12 +1773,28 @@ export default function MySubmissionsPage({
                               </div>
                             </div>
 
+                            {/* Uploading File Feedback Banner */}
+                            {isUploading && uploadingFileInfo?.name && (
+                              <div className="flex items-center gap-2 p-2.5 bg-amber-50/90 border border-amber-200 rounded-xl text-xs text-amber-900 font-semibold animate-in fade-in">
+                                <MechanicalLoader
+                                  size={14}
+                                  className="text-amber-600 shrink-0"
+                                />
+                                <span className="truncate">
+                                  Uploading file:{" "}
+                                  <strong className="font-mono text-amber-950 font-bold">
+                                    {uploadingFileInfo.name}
+                                  </strong>
+                                </span>
+                              </div>
+                            )}
+
                             {/* Action row: Download Template & Upload/Edit File */}
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                               {/* 1. Download Official Template */}
                               <button
                                 type="button"
-                                disabled={isDownloading}
+                                disabled={isDownloading || isUploading}
                                 onClick={() =>
                                   handleDownloadTemplate(tmpl.id, tmpl.name)
                                 }
@@ -1760,55 +1816,37 @@ export default function MySubmissionsPage({
 
                               {/* 2. Upload / Edit Completed Document */}
                               {phase1Active ? (
-                                <div className="relative w-full">
-                                  <label
-                                    htmlFor={`upload-input-${tmpl.id}`}
-                                    className={`relative inline-flex items-center justify-center gap-2 h-11 px-4 rounded-xl text-xs font-bold text-white transition cursor-pointer select-none shadow-xs w-full overflow-hidden ${
-                                      isUploading
-                                        ? "opacity-80 cursor-wait pointer-events-none"
-                                        : submittedFile
-                                        ? "bg-slate-800 hover:bg-slate-900 active:bg-slate-950"
-                                        : "bg-accent hover:bg-amber-600 active:bg-amber-700"
-                                    }`}
-                                  >
-                                    {isUploading ? (
-                                      <>
-                                        <MechanicalLoader
-                                          size={14}
-                                          className="text-white shrink-0"
-                                        />
-                                        <span>Submitting...</span>
-                                      </>
-                                    ) : (
-                                      <>
-                                        <Upload size={15} className="shrink-0" />
-                                        <span>
-                                          {submittedFile
-                                            ? "Edit / Replace File"
-                                            : "Upload Document"}
-                                        </span>
-                                      </>
-                                    )}
-                                    {/* Mobile-first touch-accessible file input with explicit ID and value reset */}
-                                    <input
-                                      id={`upload-input-${tmpl.id}`}
-                                      type="file"
-                                      disabled={isUploading}
-                                      onChange={(e) => handleUpload(e, tmpl)}
-                                      onClick={(e) => {
-                                        // Reset value on click so choosing the exact same file fires onChange on Android Chrome
-                                        e.target.value = "";
-                                      }}
-                                      className="sr-only"
-                                      accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                                      aria-label={
-                                        submittedFile
-                                          ? `Replace ${tmpl.name}`
-                                          : `Upload ${tmpl.name}`
-                                      }
-                                    />
-                                  </label>
-                                </div>
+                                <button
+                                  type="button"
+                                  disabled={isUploading}
+                                  onClick={() => handleUploadClick(tmpl)}
+                                  className={`inline-flex items-center justify-center gap-2 h-11 px-4 rounded-xl text-xs font-bold text-white transition cursor-pointer select-none shadow-xs w-full ${
+                                    isUploading
+                                      ? "opacity-80 cursor-wait pointer-events-none"
+                                      : submittedFile
+                                      ? "bg-slate-800 hover:bg-slate-900 active:bg-slate-950"
+                                      : "bg-accent hover:bg-amber-600 active:bg-amber-700"
+                                  }`}
+                                >
+                                  {isUploading ? (
+                                    <>
+                                      <MechanicalLoader
+                                        size={14}
+                                        className="text-white shrink-0"
+                                      />
+                                      <span>Uploading...</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Upload size={15} className="shrink-0" />
+                                      <span>
+                                        {submittedFile
+                                          ? "Edit / Replace File"
+                                          : "Upload Document"}
+                                      </span>
+                                    </>
+                                  )}
+                                </button>
                               ) : (
                                 <span className="inline-flex items-center justify-center gap-1.5 h-11 px-4 text-xs font-bold text-red-600 bg-red-50 rounded-xl border border-red-100 w-full">
                                   <AlertTriangle
