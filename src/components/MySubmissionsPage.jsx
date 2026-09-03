@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Award, Lightbulb, Users, AlertCircle, Download, Upload, FileText, AlertTriangle, ArrowLeft, ArrowRight, Calendar, Edit3, Layers, Rocket, Wrench } from 'lucide-react'
+import { Award, Lightbulb, Users, AlertCircle, Download, Upload, FileText, AlertTriangle, ArrowLeft, ArrowRight, Calendar, Edit3, Layers, Rocket, Wrench, BookOpen, ChevronDown } from 'lucide-react'
 import MechanicalLoader from './MechanicalLoader'
 import { supabase } from '../supabaseClient'
 import { getSessionState, saveSessionState } from '../utils/sessionNavigationState'
@@ -186,6 +186,8 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
   const [selectedPatentType, setSelectedPatentType] = useState('')
   const [classificationError, setClassificationError] = useState('')
   const [invalidFileModal, setInvalidFileModal] = useState(null)
+  const [utilityGuideOpen, setUtilityGuideOpen] = useState(false)
+  const [designGuideOpen, setDesignGuideOpen] = useState(false)
 
   const [isEditing, setIsEditing] = useState(false)
   const [editProjectTitle, setEditProjectTitle] = useState('')
@@ -1120,6 +1122,161 @@ export default function MySubmissionsPage({ onBackToHome, selectedPhase = 'my_su
                       <span className="truncate">{activeDepartment}</span>
                       <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0 ml-2" title="Authoritative Team Department"></span>
                     </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Patent Category Guide (Informational Accordion Section) */}
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div className="flex items-center gap-2">
+                    <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-50 text-accent border border-amber-200/60">
+                      <BookOpen size={15} />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-black text-slate-900 uppercase tracking-wide">
+                        Patent Category Guide
+                      </h3>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  {/* 1. Utility Patent Accordion Card */}
+                  <div className="border border-slate-200 rounded-xl overflow-hidden transition-all bg-slate-50/50 hover:border-slate-300">
+                    <button
+                      type="button"
+                      onClick={() => setUtilityGuideOpen(prev => !prev)}
+                      className="w-full flex items-center justify-between p-4 text-left transition cursor-pointer hover:bg-slate-100/60"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                        <span className="text-base sm:text-lg shrink-0">⚙️</span>
+                        <span className="font-black text-xs sm:text-sm text-slate-900 truncate">
+                          Utility Patent – Technical & Functional Innovations
+                        </span>
+                      </div>
+                      <ChevronDown
+                        size={18}
+                        className={`text-slate-400 shrink-0 transition-transform duration-200 ${
+                          utilityGuideOpen ? 'rotate-180 text-accent' : ''
+                        }`}
+                      />
+                    </button>
+
+                    {utilityGuideOpen && (
+                      <div className="px-4 pb-4 pt-1 border-t border-slate-200/80 bg-white space-y-3.5 animate-in fade-in duration-150">
+                        <p className="text-xs text-slate-600 font-medium leading-relaxed">
+                          A Utility Patent category covers innovations that focus on the function, operation, mechanism, or technical working of a product or system.
+                        </p>
+
+                        <div>
+                          <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block mb-2">
+                            Examples of Inclusions:
+                          </span>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            {[
+                              { icon: '⚙️', text: 'New mechanical mechanisms and functional systems' },
+                              { icon: '🤖', text: 'Robotics and automation solutions' },
+                              { icon: '🔌', text: 'Electrical and electronic systems' },
+                              { icon: '🧠', text: 'AI and intelligent technical systems' },
+                              { icon: '📡', text: 'IoT and smart-device technologies' },
+                              { icon: '🔋', text: 'Battery and energy technologies' },
+                              { icon: '🚗', text: 'Electric mobility and vehicle technologies' },
+                              { icon: '🏭', text: 'Manufacturing processes and industrial systems' },
+                              { icon: '🔧', text: 'New machines, tools, and equipment' },
+                              { icon: '💧', text: 'Water treatment and purification technologies' },
+                              { icon: '🌱', text: 'Sustainable and environmental technologies' },
+                              { icon: '🏥', text: 'Healthcare and assistive technologies' },
+                              { icon: '🌾', text: 'Agricultural and smart farming technologies' },
+                              { icon: '🔬', text: 'New technical processes and material applications' },
+                              { icon: '🔄', text: 'Functional or technical improvements to existing products' }
+                            ].map((item, i) => (
+                              <div key={i} className="flex items-start gap-2 p-2 rounded-lg bg-slate-50 border border-slate-100 text-xs text-slate-700">
+                                <span className="shrink-0 text-xs mt-0.5">{item.icon}</span>
+                                <span className="font-medium leading-snug">{item.text}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="p-3 bg-amber-50/70 border border-amber-200/80 rounded-xl text-xs text-slate-800">
+                          <span className="font-black text-amber-800 uppercase tracking-wider text-[10px] block mb-0.5">
+                            Focus:
+                          </span>
+                          <p className="font-semibold text-slate-700">
+                            What is new about the way the product works, operates, or solves a technical problem?
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 2. Design Patent Accordion Card */}
+                  <div className="border border-slate-200 rounded-xl overflow-hidden transition-all bg-slate-50/50 hover:border-slate-300">
+                    <button
+                      type="button"
+                      onClick={() => setDesignGuideOpen(prev => !prev)}
+                      className="w-full flex items-center justify-between p-4 text-left transition cursor-pointer hover:bg-slate-100/60"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                        <span className="text-base sm:text-lg shrink-0">🎨</span>
+                        <span className="font-black text-xs sm:text-sm text-slate-900 truncate">
+                          Design Patent – Product Appearance & Visual Innovations
+                        </span>
+                      </div>
+                      <ChevronDown
+                        size={18}
+                        className={`text-slate-400 shrink-0 transition-transform duration-200 ${
+                          designGuideOpen ? 'rotate-180 text-accent' : ''
+                        }`}
+                      />
+                    </button>
+
+                    {designGuideOpen && (
+                      <div className="px-4 pb-4 pt-1 border-t border-slate-200/80 bg-white space-y-3.5 animate-in fade-in duration-150">
+                        <p className="text-xs text-slate-600 font-medium leading-relaxed">
+                          A Design Patent category covers innovations that focus on the visual appearance, shape, configuration, pattern, or ornamental features of a product.
+                        </p>
+
+                        <div>
+                          <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block mb-2">
+                            Examples of Inclusions:
+                          </span>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            {[
+                              { icon: '📐', text: 'New and distinctive product shapes' },
+                              { icon: '🧩', text: 'Unique product configurations' },
+                              { icon: '🎨', text: 'Surface patterns and visual features' },
+                              { icon: '🖌️', text: 'Decorative and ornamental designs' },
+                              { icon: '📱', text: 'Consumer product designs' },
+                              { icon: '🪑', text: 'Furniture and lifestyle product designs' },
+                              { icon: '🚗', text: 'Automotive and EV exterior designs' },
+                              { icon: '💡', text: 'Lighting product designs' },
+                              { icon: '🏠', text: 'Home appliance designs' },
+                              { icon: '🛠️', text: 'Tool and equipment designs' },
+                              { icon: '📦', text: 'Packaging and container designs' },
+                              { icon: '⌚', text: 'Wearable product designs' },
+                              { icon: '🤖', text: 'Robot and smart-device exterior designs' },
+                              { icon: '🏥', text: 'Medical-device exterior designs' }
+                            ].map((item, i) => (
+                              <div key={i} className="flex items-start gap-2 p-2 rounded-lg bg-slate-50 border border-slate-100 text-xs text-slate-700">
+                                <span className="shrink-0 text-xs mt-0.5">{item.icon}</span>
+                                <span className="font-medium leading-snug">{item.text}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="p-3 bg-amber-50/70 border border-amber-200/80 rounded-xl text-xs text-slate-800">
+                          <span className="font-black text-amber-800 uppercase tracking-wider text-[10px] block mb-0.5">
+                            Focus:
+                          </span>
+                          <p className="font-semibold text-slate-700">
+                            What is new about the way the product looks or is visually designed?
+                          </p>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
