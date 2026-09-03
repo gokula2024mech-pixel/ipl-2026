@@ -303,39 +303,6 @@ export const PHASES = [
 
 
 /* =========================================================
-   JUDGING CRITERIA
-   ========================================================= */
-
-export const JUDGING_CRITERIA = [
-  {
-    label: 'Innovation',
-    value: 30,
-    color: '#1E3A8A',
-  },
-  {
-    label: 'Technical Design',
-    value: 20,
-    color: '#2563EB',
-  },
-  {
-    label: 'Working Prototype',
-    value: 25,
-    color: '#F59E0B',
-  },
-  {
-    label: 'Product Usability',
-    value: 15,
-    color: '#10B981',
-  },
-  {
-    label: 'Presentation',
-    value: 10,
-    color: '#8B5CF6',
-  },
-]
-
-
-/* =========================================================
    TIMELINE EVENTS
    ========================================================= */
 

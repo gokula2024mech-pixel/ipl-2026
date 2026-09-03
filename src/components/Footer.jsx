@@ -9,7 +9,6 @@ const QUICK_LINKS = [
   { label: 'Highlights', href: '#highlights' },
   { label: 'Eligibility', href: '#eligibility' },
   { label: 'Features', href: '#features' },
-  { label: 'Judging', href: '#judging' },
   { label: 'Program Flow', href: '#program-flow' },
   { label: 'Incubation', href: '#incubation' },
 ]

@@ -17,10 +17,8 @@ import About from './components/About'
 import ProgramHighlights from './components/ProgramHighlights'
 import Eligibility from './components/Eligibility'
 import Domains from './components/Domains'
-import WhatYouGain from './components/WhatYouGain'
 import FeaturesBenefits from './components/FeaturesBenefits'
 import Journey from './components/Journey'
-import Judging from './components/Judging'
 import Timeline from './components/Timeline'
 import ProgramFlow from './components/ProgramFlow'
 import Commercialization from './components/Commercialization'
@@ -643,11 +641,9 @@ export default function App() {
             <ProgramHighlights />
             <Eligibility />
             <Domains />
-            <WhatYouGain />
             <FeaturesBenefits />
             <Journey />
-            <Judging />
-            <Timeline />
+            <Timeline regTimer={regTimer} dbPhases={dbPhases} serverOffset={serverOffset} />
             <ProgramFlow />
             <Commercialization />
             <IncubationSupport />
