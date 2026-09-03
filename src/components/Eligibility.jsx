@@ -31,7 +31,7 @@ const CRITERIA = [
 
 export default function Eligibility() {
   return (
-    <section id="eligibility" className="bg-white py-20 md:py-28">
+    <section id="eligibility" className="bg-white py-12 md:py-16 lg:py-20">
       <div className="mx-auto max-w-7xl px-4 md:px-6 lg:px-8">
         <SectionHeading
           eyebrow="Eligibility"
@@ -54,7 +54,7 @@ export default function Eligibility() {
           ))}
         </div>
 
-        <SectionReveal className="mx-auto mt-12 max-w-3xl text-center">
+        <SectionReveal delay={0.2} className="mx-auto mt-8 sm:mt-10 max-w-3xl text-center">
           <p className="text-base leading-relaxed text-slate-700 md:text-lg font-normal">
             Teams are encouraged to collaborate across departments and bring diverse perspectives
             combining hardware, software, design, and business skills to solve real-world problems

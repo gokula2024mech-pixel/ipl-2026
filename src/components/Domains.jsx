@@ -135,7 +135,7 @@ export default function Domains() {
   return (
     <section
       id="domains"
-      className="bg-slate-50 py-20 md:py-28"
+      className="bg-slate-50 py-12 md:py-16 lg:py-20"
     >
 
       <div className="mx-auto max-w-7xl px-4 md:px-6 lg:px-8">
@@ -155,7 +155,7 @@ export default function Domains() {
             TAB SWITCHER
             ================================================= */}
 
-        <div className="mb-12 flex justify-center">
+        <div className="mb-8 sm:mb-10 flex justify-center">
 
           <div
             className="

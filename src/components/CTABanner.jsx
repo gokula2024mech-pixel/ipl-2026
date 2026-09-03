@@ -11,7 +11,7 @@ export default function CTABanner({ onRegisterClick }) {
   }
 
   return (
-    <section id="cta" className="relative overflow-hidden bg-gradient-to-r from-primary via-blue-800 to-primary py-16 md:py-20">
+    <section id="cta" className="relative overflow-hidden bg-gradient-to-r from-primary via-blue-800 to-primary py-12 md:py-14 lg:py-16">
       <div className="pointer-events-none absolute inset-0 opacity-20" aria-hidden="true">
         <div className="absolute -right-20 -top-20 h-64 w-64 rounded-full bg-amber-400 blur-3xl" />
         <div className="absolute -bottom-20 -left-20 h-64 w-64 rounded-full bg-blue-400 blur-3xl" />

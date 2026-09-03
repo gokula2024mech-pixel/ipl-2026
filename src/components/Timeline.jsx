@@ -230,7 +230,7 @@ export default function Timeline({ regTimer: propRegTimer, dbPhases: propDbPhase
     <section
       ref={sectionRef}
       id="timeline"
-      className="bg-slate-50/70 py-20 md:py-28 overflow-hidden relative selection:bg-amber-100"
+      className="bg-slate-50/70 py-12 md:py-16 lg:py-20 overflow-hidden relative selection:bg-amber-100"
     >
       <style>{`
         @keyframes studentWalkCycle {

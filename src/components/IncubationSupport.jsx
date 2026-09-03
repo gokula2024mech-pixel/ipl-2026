@@ -26,7 +26,7 @@ const SUPPORT_POINTS = [
 
 export default function IncubationSupport() {
   return (
-    <section id="incubation" className="bg-primary py-20 md:py-28">
+    <section id="incubation" className="bg-primary py-12 md:py-16 lg:py-20">
       <div className="mx-auto max-w-7xl px-4 md:px-6 lg:px-8">
         <SectionReveal className="mx-auto max-w-4xl text-center">
           <p className="mb-3 text-sm font-semibold uppercase tracking-widest text-amber-300">
@@ -40,7 +40,7 @@ export default function IncubationSupport() {
           </p>
         </SectionReveal>
 
-        <div className="mx-auto mt-12 grid max-w-3xl gap-4">
+        <div className="mx-auto mt-8 sm:mt-10 grid max-w-3xl gap-4">
           {SUPPORT_POINTS.map(({ icon: Icon, text }, i) => (
             <SectionReveal key={text} delay={i * 0.08}>
               <div className="flex items-start gap-4 rounded-xl border border-white/10 bg-white/5 p-5 backdrop-blur-sm">

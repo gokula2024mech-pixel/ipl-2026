@@ -701,13 +701,13 @@ export default function Hero({
         </motion.div>
       </div>
 
-      <div className="relative z-10 mx-auto max-w-4xl px-4 py-16 md:px-6 lg:px-8 lg:py-24 w-full flex flex-col items-center text-center">
+      <div className="relative z-10 mx-auto max-w-4xl px-4 py-10 sm:py-12 md:py-16 lg:py-20 w-full flex flex-col items-center text-center">
         {/* Centered Hero Content Block */}
         <motion.div
           ref={heroContentRef}
-          initial={{ opacity: 0, y: 40 }}
+          initial={{ opacity: 0, y: 24 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
+          transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
           className="flex flex-col items-center w-full"
         >
           <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-4 py-1.5 text-sm text-blue-100 backdrop-blur-sm">

@@ -1,30 +1,40 @@
-import { motion } from 'framer-motion'
+import { motion, useReducedMotion } from 'framer-motion'
 
-const variants = {
-  hidden: { opacity: 0, y: 32 },
-  visible: {
-    opacity: 1,
-    y: 0,
-    transition: { duration: 0.55, ease: [0.22, 1, 0.36, 1] },
-  },
-}
+export default function SectionReveal({
+  children,
+  className = '',
+  delay = 0,
+  y = 18,
+  duration = 0.45,
+}) {
+  const shouldReduceMotion = useReducedMotion()
 
-export default function SectionReveal({ children, className = '', delay = 0 }) {
+  const variants = {
+    hidden: {
+      opacity: 0,
+      y: shouldReduceMotion ? 0 : y,
+    },
+    visible: {
+      opacity: 1,
+      y: 0,
+      transition: {
+        duration: shouldReduceMotion ? 0.01 : duration,
+        delay: shouldReduceMotion ? 0 : delay,
+        ease: [0.16, 1, 0.3, 1], // Smooth cubic-bezier acceleration/deceleration
+      },
+    },
+  }
+
   return (
     <motion.div
       initial="hidden"
       whileInView="visible"
-      viewport={{ once: true, margin: '-80px' }}
-      variants={{
-        hidden: variants.hidden,
-        visible: {
-          ...variants.visible,
-          transition: { ...variants.visible.transition, delay },
-        },
-      }}
+      viewport={{ once: true, amount: 0.1, margin: '-20px 0px -20px 0px' }}
+      variants={variants}
       className={className}
     >
       {children}
     </motion.div>
   )
 }
+

@@ -10,7 +10,7 @@ export default function Journey() {
   const phase = PHASES[activePhase]
 
   return (
-    <section id="journey" className="bg-primary py-20 md:py-28">
+    <section id="journey" className="bg-primary py-12 md:py-16 lg:py-20">
       <div className="mx-auto max-w-7xl px-4 md:px-6 lg:px-8">
         <SectionHeading
           eyebrow="The IPL Journey"
@@ -20,7 +20,7 @@ export default function Journey() {
         />
 
         <SectionReveal>
-          <div className="mb-8 flex flex-wrap justify-center gap-3">
+          <div className="mb-6 sm:mb-8 flex flex-wrap justify-center gap-3">
             {PHASES.map((p, i) => (
               <button
                 key={p.id}

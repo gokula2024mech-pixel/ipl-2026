@@ -67,7 +67,7 @@ export default function Footer({ onNavClick }) {
 
   return (
     <footer className="bg-slate-900 text-slate-300">
-      <div className="mx-auto max-w-7xl px-4 py-16 md:px-6 lg:px-8">
+      <div className="mx-auto max-w-7xl px-4 py-12 md:py-14 lg:py-16">
         <div className="grid gap-10 md:grid-cols-2 lg:grid-cols-4">
           
           {/* Column 1: IPL 2026 Branding */}

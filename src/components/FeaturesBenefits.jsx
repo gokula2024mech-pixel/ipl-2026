@@ -44,7 +44,7 @@ const FEATURES = [
 
 export default function FeaturesBenefits() {
   return (
-    <section id="features" className="bg-white py-20 md:py-28">
+    <section id="features" className="bg-white py-12 md:py-16 lg:py-20">
       <div className="mx-auto max-w-7xl px-4 md:px-6 lg:px-8">
         <SectionHeading
           eyebrow="Features & Benefits"

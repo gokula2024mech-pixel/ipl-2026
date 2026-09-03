@@ -2,7 +2,7 @@ import SectionReveal from './SectionReveal'
 
 export default function Vision() {
   return (
-    <section id="vision" className="bg-white py-20 md:py-28">
+    <section id="vision" className="bg-white py-12 md:py-16 lg:py-20">
       <div className="mx-auto max-w-7xl px-4 md:px-6 lg:px-8">
         <SectionReveal className="mx-auto max-w-4xl text-center">
           <p className="mb-6 text-sm font-semibold uppercase tracking-widest text-amber-500">
