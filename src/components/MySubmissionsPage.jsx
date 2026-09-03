@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import {
   Lightbulb,
   Users,
@@ -778,10 +779,21 @@ export default function MySubmissionsPage({
     }
 
     // Client-side Word format validation for instant feedback (.doc or .docx)
-    const fileName = file.name || "";
-    const isWordDoc = /\.(docx?)$/i.test(fileName);
+    const fileName = (file.name || "").trim();
+    const isWordExt = /\.(docx?)$/i.test(fileName);
+    const isWordMime =
+      file.type === "application/msword" ||
+      file.type ===
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    const isWordDoc = isWordExt || isWordMime;
+
     if (!isWordDoc) {
-      setInvalidFileModal({ fileName: file.name });
+      setInvalidFileModal({ fileName: fileName || "Selected file" });
+      showToast({
+        type: "error",
+        title: "Invalid File Format",
+        message: "Please upload a Microsoft Word document (.doc or .docx).",
+      });
       if (targetInput) targetInput.value = "";
       return;
     }
@@ -795,7 +807,9 @@ export default function MySubmissionsPage({
     setUploadingDocId(template.id);
     try {
       const token = await getToken();
-      if (!token) throw new Error("Authentication required. Please refresh or log in again.");
+      if (!token) {
+        throw new Error("Your session has expired. Please sign in again to continue.");
+      }
 
       const formData = new FormData();
       formData.append("file", file);
@@ -915,12 +929,12 @@ export default function MySubmissionsPage({
 
   return (
     <div className="min-h-screen bg-slate-50 pt-28 pb-10 px-4 md:px-6 lg:px-8 relative">
-      {/* Temporary Toast Popup Notification (Auto-dismisses in 4.5s, non-modal overlay) */}
-      {toast && (
+      {/* Temporary Toast Popup Notification (Auto-dismisses in 6.5s, portal directly onto document.body) */}
+      {toast && createPortal(
         <aside
           role="alert"
           aria-live="assertive"
-          className="fixed top-24 right-4 sm:right-6 z-50 max-w-sm sm:max-w-md w-[calc(100vw-2rem)] sm:w-auto animate-in fade-in slide-in-from-top-4 duration-200 pointer-events-auto shadow-xl rounded-2xl bg-white border border-slate-200 overflow-hidden ring-1 ring-slate-900/5"
+          className="fixed top-20 left-4 right-4 sm:left-auto sm:right-6 z-[99999] max-w-sm sm:max-w-md w-[calc(100vw-2rem)] sm:w-auto animate-in fade-in slide-in-from-top-4 duration-200 pointer-events-auto shadow-2xl rounded-2xl bg-white border border-slate-200 overflow-hidden ring-1 ring-slate-900/10"
         >
           <div className="flex items-start gap-3 p-4">
             <div
@@ -961,7 +975,7 @@ export default function MySubmissionsPage({
           </div>
 
           {/* Progress Bar indicating auto-dismiss timeline */}
-          <div className="h-0.5 w-full bg-slate-100 overflow-hidden">
+          <div className="h-1 w-full bg-slate-100 overflow-hidden">
             <div
               key={toast.id}
               className={`h-full animate-toast-progress ${
@@ -974,7 +988,8 @@ export default function MySubmissionsPage({
               style={{ animationDuration: `${TOAST_DURATION}ms` }}
             />
           </div>
-        </aside>
+        </aside>,
+        document.body
       )}
 
       <div className="mx-auto max-w-7xl">
@@ -1746,11 +1761,12 @@ export default function MySubmissionsPage({
                               {/* 2. Upload / Edit Completed Document */}
                               {phase1Active ? (
                                 <div className="relative w-full">
-                                  <button
-                                    type="button"
-                                    disabled={isUploading}
+                                  <label
+                                    htmlFor={`upload-input-${tmpl.id}`}
                                     className={`relative inline-flex items-center justify-center gap-2 h-11 px-4 rounded-xl text-xs font-bold text-white transition cursor-pointer select-none shadow-xs w-full overflow-hidden ${
-                                      submittedFile
+                                      isUploading
+                                        ? "opacity-80 cursor-wait pointer-events-none"
+                                        : submittedFile
                                         ? "bg-slate-800 hover:bg-slate-900 active:bg-slate-950"
                                         : "bg-accent hover:bg-amber-600 active:bg-amber-700"
                                     }`}
@@ -1773,12 +1789,17 @@ export default function MySubmissionsPage({
                                         </span>
                                       </>
                                     )}
-                                    {/* Mobile-first touch-accessible file input positioned over the full button */}
+                                    {/* Mobile-first touch-accessible file input with explicit ID and value reset */}
                                     <input
+                                      id={`upload-input-${tmpl.id}`}
                                       type="file"
                                       disabled={isUploading}
                                       onChange={(e) => handleUpload(e, tmpl)}
-                                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                                      onClick={(e) => {
+                                        // Reset value on click so choosing the exact same file fires onChange on Android Chrome
+                                        e.target.value = "";
+                                      }}
+                                      className="sr-only"
                                       accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                                       aria-label={
                                         submittedFile
@@ -1786,7 +1807,7 @@ export default function MySubmissionsPage({
                                           : `Upload ${tmpl.name}`
                                       }
                                     />
-                                  </button>
+                                  </label>
                                 </div>
                               ) : (
                                 <span className="inline-flex items-center justify-center gap-1.5 h-11 px-4 text-xs font-bold text-red-600 bg-red-50 rounded-xl border border-red-100 w-full">
@@ -1893,10 +1914,10 @@ export default function MySubmissionsPage({
         </div>
       </div>
 
-      {/* Invalid File Format Custom Popup Modal */}
-      {invalidFileModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs animate-in fade-in">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl border border-slate-200 space-y-4">
+      {/* Invalid File Format Custom Popup Modal - rendered via Portal directly into document.body */}
+      {invalidFileModal && createPortal(
+        <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-xs animate-in fade-in">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl border border-slate-200 space-y-4 text-left">
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-100 text-amber-600 shrink-0">
                 <AlertTriangle size={22} />
@@ -1948,7 +1969,8 @@ export default function MySubmissionsPage({
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
