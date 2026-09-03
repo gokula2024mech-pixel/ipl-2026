@@ -649,18 +649,42 @@ export default function Hero({
       {/* Dark Blue Overlay */}
       <div className="absolute inset-0 pointer-events-none bg-[#102d78]/35 z-1" />
 
-      <div className="pointer-events-none absolute inset-0" aria-hidden="true" style={{ zIndex: 2 }}>
+      <div
+        className="pointer-events-none absolute inset-0"
+        aria-hidden="true"
+        style={{ zIndex: 2 }}
+      >
         <div className="absolute -left-32 -top-32 h-96 w-96 rounded-full bg-blue-500/20 blur-3xl" />
         <div className="absolute -bottom-32 -right-32 h-96 w-96 rounded-full bg-amber-500/15 blur-3xl" />
         <motion.div
           animate={{ rotate: 360 }}
-          transition={{ duration: 60, repeat: Infinity, ease: 'linear' }}
+          transition={{ duration: 60, repeat: Infinity, ease: "linear" }}
           className="absolute left-1/2 top-1/2 h-[600px] w-[600px] -translate-x-1/2 -translate-y-1/2 opacity-10"
         >
           <svg viewBox="0 0 600 600" fill="none" className="h-full w-full">
-            <circle cx="300" cy="300" r="280" stroke="white" strokeWidth="0.5" strokeDasharray="8 12" />
-            <circle cx="300" cy="300" r="200" stroke="white" strokeWidth="0.5" strokeDasharray="4 8" />
-            <circle cx="300" cy="300" r="120" stroke="white" strokeWidth="0.5" />
+            <circle
+              cx="300"
+              cy="300"
+              r="280"
+              stroke="white"
+              strokeWidth="0.5"
+              strokeDasharray="8 12"
+            />
+            <circle
+              cx="300"
+              cy="300"
+              r="200"
+              stroke="white"
+              strokeWidth="0.5"
+              strokeDasharray="4 8"
+            />
+            <circle
+              cx="300"
+              cy="300"
+              r="120"
+              stroke="white"
+              strokeWidth="0.5"
+            />
             {[0, 60, 120, 180, 240, 300].map((deg) => (
               <line
                 key={deg}
@@ -686,16 +710,18 @@ export default function Hero({
           transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
           className="flex flex-col items-center w-full"
         >
-
-
           <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-4 py-1.5 text-sm text-blue-100 backdrop-blur-sm">
             <Sparkles size={16} className="text-accent" aria-hidden="true" />
             <span>Innovation Program 2026</span>
           </div>
 
           <h1 className="font-heading text-4xl font-bold leading-tight tracking-tight text-white md:text-5xl lg:text-6xl w-full max-w-full break-words px-2">
-            <span className="block text-3xl sm:text-4xl md:text-5xl lg:text-6xl">IPL 2026</span>
-            <span className="block text-2xl sm:text-3xl md:text-4xl lg:text-5xl text-blue-100 mt-2">Innovative Product League</span>
+            <span className="block text-3xl sm:text-4xl md:text-5xl lg:text-6xl">
+              IPL 2026
+            </span>
+            <span className="block text-2xl sm:text-3xl md:text-4xl lg:text-5xl text-blue-100 mt-2">
+              Innovative Product League
+            </span>
           </h1>
 
           <p className="mt-6 text-base sm:text-lg font-medium text-amber-300 md:text-xl px-2 max-w-full break-words leading-relaxed">
@@ -724,27 +750,28 @@ export default function Hero({
             <a
               href={REGISTRATION_FORM_URL}
               onClick={handleRegister}
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-full bg-accent px-8 py-3.5 text-base font-semibold text-white shadow-lg transition-all hover:-translate-y-0.5 hover:bg-amber-600 hover:shadow-xl cursor-pointer"
+              className="group w-full sm:w-auto inline-flex items-center justify-center gap-2.5 rounded-full bg-accent px-8 py-3.5 text-base font-bold text-white shadow-lg shadow-amber-500/20 transition-all duration-300 ease-out hover:-translate-y-1 hover:scale-[1.02] hover:bg-amber-600 hover:shadow-xl hover:shadow-amber-500/35 active:scale-[0.97] active:translate-y-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-2 focus-visible:ring-offset-primary animate-cta-glow cursor-pointer"
             >
-              Register Now
-              <ArrowRight size={18} aria-hidden="true" />
+              <span>Register Now</span>
+              <ArrowRight
+                size={18}
+                aria-hidden="true"
+                className="transition-transform duration-300 ease-out group-hover:translate-x-1.5"
+              />
             </a>
 
             <button
               type="button"
               onClick={onMySubmissionsClick}
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-full px-8 py-3.5 text-base font-semibold text-white shadow-lg transition-all hover:-translate-y-0.5 hover:shadow-xl cursor-pointer border-2 border-white/30 bg-white/10 hover:border-white/50 hover:bg-white/20 backdrop-blur-sm"
+              className="group w-full sm:w-auto inline-flex items-center justify-center gap-2.5 rounded-full bg-accent px-8 py-3.5 text-base font-bold text-white shadow-lg shadow-amber-500/20 transition-all duration-300 ease-out hover:-translate-y-1 hover:scale-[1.02] hover:bg-amber-600 hover:shadow-xl hover:shadow-amber-500/35 active:scale-[0.97] active:translate-y-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-2 focus-visible:ring-offset-primary animate-cta-glow cursor-pointer"
             >
-              My Submissions
-              <ArrowRight size={18} aria-hidden="true" />
+              <span>My Submissions</span>
+              <ArrowRight
+                size={18}
+                aria-hidden="true"
+                className="transition-transform duration-300 ease-out group-hover:translate-x-1.5"
+              />
             </button>
-
-            <a
-              href="#about"
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-full border-2 border-white/30 bg-white/10 px-8 py-3.5 text-base font-semibold text-white backdrop-blur-sm transition-all hover:-translate-y-0.5 hover:border-white/50 hover:bg-white/20 shrink-0"
-            >
-              Explore the Program
-            </a>
           </div>
         </motion.div>
       </div>
@@ -762,5 +789,5 @@ export default function Hero({
         heroContainerRef={heroContainerRef}
       />
     </section>
-  )
+  );
 }

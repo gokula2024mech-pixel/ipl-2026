@@ -685,19 +685,19 @@ function MilestoneCard({ event, index, status, isHovered, iconConfig }) {
         </div>
 
         {/* Date Badge */}
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 border border-blue-100/80 px-2.5 py-0.5 text-[11px] font-bold text-blue-700">
-          <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 border border-blue-200 px-2.5 py-0.5 text-xs font-bold text-blue-800">
+          <span className="h-1.5 w-1.5 rounded-full bg-blue-600" />
           {event.date}
         </span>
       </div>
 
       {/* Milestone Title */}
-      <h3 className="font-heading text-base sm:text-[17px] font-bold text-slate-900 leading-snug">
+      <h3 className="font-heading text-base sm:text-lg font-extrabold text-slate-900 leading-snug">
         {event.title}
       </h3>
 
       {/* Milestone Description */}
-      <p className="mt-2 text-xs sm:text-[13px] leading-relaxed text-slate-600">
+      <p className="mt-2 text-xs sm:text-sm leading-relaxed text-slate-700 font-normal">
         {event.description}
       </p>
 
@@ -705,7 +705,7 @@ function MilestoneCard({ event, index, status, isHovered, iconConfig }) {
       {event.patentTitle && (
         <div className="mt-4 rounded-xl border border-amber-200/90 bg-amber-50/75 p-3 text-left">
           <div className="flex items-center justify-between gap-2">
-            <span className="text-[10px] font-black uppercase tracking-wider text-amber-800 bg-amber-100/80 px-2 py-0.5 rounded border border-amber-200/80">
+            <span className="text-[10px] font-black uppercase tracking-wider text-amber-900 bg-amber-100/90 px-2 py-0.5 rounded border border-amber-200">
               {event.patentPhase || 'PHASE'}
             </span>
             <span className="text-base leading-none" aria-hidden="true">
@@ -714,12 +714,12 @@ function MilestoneCard({ event, index, status, isHovered, iconConfig }) {
           </div>
 
           <div className="mt-1.5 flex items-center gap-1.5">
-            <span className="text-xs font-black text-slate-900">
+            <span className="text-xs sm:text-sm font-extrabold text-slate-900">
               {event.patentTitle}
             </span>
           </div>
 
-          <p className="mt-0.5 text-[11px] font-medium leading-relaxed text-slate-600">
+          <p className="mt-0.5 text-xs font-medium leading-relaxed text-slate-700">
             {event.patentDescription}
           </p>
         </div>

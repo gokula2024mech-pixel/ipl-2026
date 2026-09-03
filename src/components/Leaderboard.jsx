@@ -842,7 +842,7 @@ export default function Leaderboard() {
 
             <div className="hidden md:block w-full min-w-0 border border-slate-200 rounded-2xl overflow-hidden">
               <table className="w-full border-collapse text-left text-sm text-slate-700 table-fixed">
-                <thead className="bg-slate-100/90 text-[11px] font-black text-slate-700 uppercase border-b border-slate-200 tracking-wider">
+                <thead className="bg-slate-100 text-xs font-black text-slate-800 uppercase border-b border-slate-200 tracking-wider">
                   <tr>
                     <th className="px-4 py-3 w-16 text-center">Rank</th>
                     <th className="px-4 py-3 w-1/2">

@@ -299,7 +299,7 @@ export default function Domains() {
                         <h3
                           className="
                             font-heading
-                            text-sm
+                            text-sm sm:text-base
                             font-bold
                             leading-snug
                             text-slate-900
@@ -313,9 +313,10 @@ export default function Domains() {
                           className="
                             mt-2
                             flex-1
-                            text-xs
+                            text-xs sm:text-sm
                             leading-relaxed
-                            text-slate-600
+                            text-slate-700
+                            font-normal
                           "
                         >
                           {description}
@@ -419,7 +420,7 @@ export default function Domains() {
                         <h3
                           className="
                             font-heading
-                            text-sm
+                            text-sm sm:text-base
                             font-bold
                             leading-snug
                             text-slate-900
@@ -444,7 +445,7 @@ export default function Domains() {
 
 
         {/* =================================================
-            THIRD TAB — BUSINESS DOMAINS
+            THIRD TAB — BUSINESS / APPLICATION DOMAINS
             ================================================= */}
 
         {activeTab === 'business' && (
@@ -528,7 +529,7 @@ export default function Domains() {
                         <h3
                           className="
                             font-heading
-                            text-sm
+                            text-sm sm:text-base
                             font-bold
                             leading-snug
                             text-slate-900

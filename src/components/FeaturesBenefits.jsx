@@ -60,7 +60,7 @@ export default function FeaturesBenefits() {
                   <Icon size={22} aria-hidden="true" />
                 </div>
                 <h3 className="font-heading text-lg font-bold text-slate-900">{title}</h3>
-                <p className="mt-2 text-sm leading-relaxed text-slate-600">{description}</p>
+                <p className="mt-2 text-sm leading-relaxed text-slate-700 font-normal">{description}</p>
               </article>
             </SectionReveal>
           ))}

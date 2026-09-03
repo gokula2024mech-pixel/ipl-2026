@@ -654,7 +654,13 @@ export default function App() {
           </>
         )}
       </main>
-      <Footer />
+      <Footer
+        onNavClick={(href) => {
+          if (viewMode !== "public") {
+            setViewMode("public")
+          }
+        }}
+      />
 
       <RegistrationModal
         isOpen={isRegistrationOpen}

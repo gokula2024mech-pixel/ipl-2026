@@ -46,16 +46,16 @@ export default function Eligibility() {
                 <div className="mb-4 inline-flex rounded-xl bg-accent/10 p-3 text-accent">
                   <Icon size={24} aria-hidden="true" />
                 </div>
-                <p className="text-sm font-semibold uppercase tracking-wide text-slate-500">{title}</p>
-                <h3 className="mt-1 font-heading text-xl font-bold text-slate-900">{value}</h3>
-                <p className="mt-2 text-sm text-slate-600">{description}</p>
+                <p className="text-xs sm:text-sm font-extrabold uppercase tracking-wider text-slate-600">{title}</p>
+                <h3 className="mt-1 font-heading text-xl font-extrabold text-slate-900">{value}</h3>
+                <p className="mt-2 text-sm text-slate-700 leading-relaxed font-normal">{description}</p>
               </article>
             </SectionReveal>
           ))}
         </div>
 
         <SectionReveal className="mx-auto mt-12 max-w-3xl text-center">
-          <p className="text-base leading-relaxed text-slate-600 md:text-lg">
+          <p className="text-base leading-relaxed text-slate-700 md:text-lg font-normal">
             Teams are encouraged to collaborate across departments and bring diverse perspectives
             combining hardware, software, design, and business skills to solve real-world problems
             together.

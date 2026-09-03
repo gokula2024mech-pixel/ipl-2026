@@ -48,8 +48,8 @@ export default function Commercialization() {
                   <Icon size={20} aria-hidden="true" />
                 </div>
                 <div>
-                  <h3 className="font-heading font-bold text-slate-900">{title}</h3>
-                  <p className="mt-1 text-sm text-slate-600">{description}</p>
+                  <h3 className="font-heading font-bold text-slate-900 text-base">{title}</h3>
+                  <p className="mt-1 text-sm text-slate-700 font-normal leading-relaxed">{description}</p>
                 </div>
               </div>
             </SectionReveal>

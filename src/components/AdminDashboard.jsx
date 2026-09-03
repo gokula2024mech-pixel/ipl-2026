@@ -2905,29 +2905,29 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
                       <h3 className="mt-4 text-lg font-bold text-slate-900">
                         {phase.name}
                       </h3>
-                      <p className="mt-2 flex-grow text-sm leading-6 text-slate-600">
+                      <p className="mt-2 flex-grow text-sm leading-6 text-slate-700 font-normal">
                         {phase.description}
                       </p>
 
-                      <div className="mt-5 border-t border-slate-100 pt-4 text-sm text-slate-600">
+                      <div className="mt-5 border-t border-slate-100 pt-4 text-sm text-slate-700">
                         <div className="flex justify-between">
-                          <span>Duration:</span>
-                          <span className="font-semibold text-slate-900">{phase.duration}</span>
+                          <span className="font-medium text-slate-600">Duration:</span>
+                          <span className="font-bold text-slate-900">{phase.duration}</span>
                         </div>
                         <div className="mt-2 flex justify-between">
-                          <span>Max Score:</span>
-                          <span className="font-semibold text-slate-900">{phase.max_score} pts</span>
+                          <span className="font-medium text-slate-600">Max Score:</span>
+                          <span className="font-bold text-slate-900">{phase.max_score} pts</span>
                         </div>
                       </div>
 
                       {/* Phase Timer controls section */}
                       <div className="mt-5 border-t border-slate-100 pt-4">
-                        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Phase Timer</h4>
+                        <h4 className="text-xs font-extrabold text-slate-600 uppercase tracking-wider mb-3">Phase Timer</h4>
 
                         {/* Status and Countdown */}
-                        <div className="flex flex-col gap-2 rounded-xl bg-slate-50 p-3 mb-4">
+                        <div className="flex flex-col gap-2 rounded-xl bg-slate-50 p-3 mb-4 border border-slate-150">
                           <div className="flex items-center justify-between">
-                            <span className="text-xs font-medium text-slate-500">Status:</span>
+                            <span className="text-xs font-bold text-slate-600">Status:</span>
                             <span className={`inline-flex items-center rounded-md px-2 py-1 text-xs font-bold ring-1 ring-inset ${
                               phase.timer_status === 'running' ? 'bg-green-50 text-green-700 ring-green-600/20 animate-pulse' :
                               phase.timer_status === 'paused' ? 'bg-amber-50 text-amber-700 ring-amber-600/20' :
@@ -2941,8 +2941,8 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
 
                           {/* Countdown display */}
                           <div className="flex items-center justify-between mt-1">
-                            <span className="text-xs font-medium text-slate-500">Remaining:</span>
-                            <span className="font-mono text-sm font-bold text-slate-800">
+                            <span className="text-xs font-bold text-slate-600">Remaining:</span>
+                            <span className="font-mono text-sm font-bold text-slate-900">
                               {countdownStates[phase.id] ? (
                                 `${String(countdownStates[phase.id].days).padStart(2, '0')}d : ` +
                                 `${String(countdownStates[phase.id].hours).padStart(2, '0')}h : ` +

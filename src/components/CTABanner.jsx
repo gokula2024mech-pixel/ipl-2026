@@ -18,10 +18,10 @@ export default function CTABanner({ onRegisterClick }) {
       </div>
 
       <SectionReveal className="relative mx-auto max-w-4xl px-4 text-center md:px-6">
-        <h2 className="font-heading text-3xl font-bold text-white md:text-4xl lg:text-5xl">
+        <h2 className="font-heading text-3xl font-extrabold text-white md:text-4xl lg:text-5xl">
           Your Idea Can Become a Product.
         </h2>
-        <p className="mt-4 text-lg text-blue-100">
+        <p className="mt-4 text-base sm:text-lg md:text-xl text-blue-50 font-medium">
           Join IPL 2026 and take the first step from imagination to innovation.
         </p>
         <a

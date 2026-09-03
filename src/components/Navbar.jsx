@@ -252,7 +252,7 @@ export default function Navbar({ onRegisterClick, user, profile, onProfileUpdate
               <a
                 href={link.href}
                 onClick={(e) => handleDesktopNav(e, link.href)}
-                className="text-sm font-medium text-slate-700 transition-colors hover:text-accent"
+                className="text-sm font-semibold text-slate-800 transition-colors hover:text-accent"
               >
                 {link.label}
               </a>
@@ -472,7 +472,7 @@ export default function Navbar({ onRegisterClick, user, profile, onProfileUpdate
                   <a
                     href={link.href}
                     onClick={(e) => handleMobileNav(e, link.href)}
-                    className="block rounded-lg px-4 py-3 text-base font-medium text-slate-700 transition-all hover:bg-slate-50 hover:text-primary active:bg-slate-100"
+                    className="block rounded-lg px-4 py-3 text-base font-bold text-slate-800 transition-all hover:bg-slate-50 hover:text-primary active:bg-slate-100"
                   >
                     {link.label}
                   </a>

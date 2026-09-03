@@ -56,17 +56,17 @@ export default function Journey() {
                 </h3>
               </div>
 
-              <p className="mb-8 text-base leading-relaxed text-blue-100 md:text-lg">
-                <span className="font-semibold text-white">Objective: </span>
+              <p className="mb-8 text-base leading-relaxed text-blue-50 md:text-lg font-medium">
+                <span className="font-bold text-white">Objective: </span>
                 {phase.objective}
               </p>
 
               <div className="grid gap-8 md:grid-cols-2">
                 <div>
-                  <h4 className="mb-4 font-heading text-lg font-semibold text-white">Key Outputs</h4>
+                  <h4 className="mb-4 font-heading text-lg font-bold text-white">Key Outputs</h4>
                   <ul className="space-y-3">
                     {phase.outputs.map((output) => (
-                      <li key={output} className="flex items-start gap-3 text-blue-100">
+                      <li key={output} className="flex items-start gap-3 text-blue-50 font-medium text-sm sm:text-base">
                         <CheckCircle2 size={18} className="mt-0.5 shrink-0 text-accent" aria-hidden="true" />
                         <span>{output}</span>
                       </li>
@@ -75,13 +75,13 @@ export default function Journey() {
                 </div>
 
                 <div>
-                  <h4 className="mb-4 font-heading text-lg font-semibold text-white">Evaluation Criteria</h4>
+                  <h4 className="mb-4 font-heading text-lg font-bold text-white">Evaluation Criteria</h4>
                   <div className="space-y-3">
                     {phase.evaluation.map(({ label, value }) => (
                       <div key={label}>
-                        <div className="mb-1 flex justify-between text-sm">
-                          <span className="text-blue-100">{label}</span>
-                          <span className="font-semibold text-amber-300">{value}%</span>
+                        <div className="mb-1.5 flex justify-between text-sm sm:text-base">
+                          <span className="text-blue-50 font-medium">{label}</span>
+                          <span className="font-bold text-amber-300 font-mono">{value}%</span>
                         </div>
                         <div className="h-2 overflow-hidden rounded-full bg-white/10">
                           <motion.div

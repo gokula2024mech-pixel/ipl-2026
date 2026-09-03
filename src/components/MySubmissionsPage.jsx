@@ -1,6 +1,5 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import {
-  Award,
   Lightbulb,
   Users,
   AlertCircle,
@@ -12,11 +11,8 @@ import {
   ArrowRight,
   Calendar,
   Edit3,
-  Layers,
-  Rocket,
-  Wrench,
-  BookOpen,
-  ChevronDown,
+  X,
+  CheckCircle2,
 } from "lucide-react";
 import MechanicalLoader from "./MechanicalLoader";
 import IpTypeFinder from "./IpTypeFinder";
@@ -32,6 +28,8 @@ const rawApiUrl = (import.meta.env.VITE_API_BASE_URL || "http://localhost:5000")
 const API_BASE_URL = rawApiUrl.endsWith("/api")
   ? rawApiUrl.slice(0, -4)
   : rawApiUrl;
+
+const TOAST_DURATION = 4500; // ~4.5 seconds centralized auto-dismiss
 
 const OFFICIAL_DOMAINS = [
   "Smart Manufacturing & Industry 4.0",
@@ -188,7 +186,6 @@ export default function MySubmissionsPage({
 }) {
   const [submissions, setSubmissions] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
   const [authExpired, setAuthExpired] = useState(false);
   const [userEmail, setUserEmail] = useState("");
   const [phasesList, setPhasesList] = useState([]);
@@ -218,8 +215,11 @@ export default function MySubmissionsPage({
 
   const [selectedCategory, setSelectedCategory] = useState("");
   const [selectedPatentType, setSelectedPatentType] = useState("");
-  const [classificationError, setClassificationError] = useState("");
   const [invalidFileModal, setInvalidFileModal] = useState(null);
+
+  // Temporary Popup Notification State
+  const [toast, setToast] = useState(null);
+  const toastTimeoutRef = useRef(null);
 
   const [isEditing, setIsEditing] = useState(false);
   const [editProjectTitle, setEditProjectTitle] = useState("");
@@ -229,8 +229,76 @@ export default function MySubmissionsPage({
   const [editInnovationDomain, setEditInnovationDomain] = useState("");
   const [editSdgGoals, setEditSdgGoals] = useState([]);
   const [isSaving, setIsSaving] = useState(false);
-  const [saveSuccessMsg, setSaveSuccessMsg] = useState("");
-  const [saveErrorMsg, setSaveErrorMsg] = useState("");
+
+  const showToast = useCallback((notification) => {
+    if (toastTimeoutRef.current) {
+      clearTimeout(toastTimeoutRef.current);
+    }
+    const normalized =
+      typeof notification === "string"
+        ? { type: "error", title: "Error", message: notification }
+        : {
+            type: notification.type || "error",
+            title:
+              notification.title ||
+              (notification.type === "success"
+                ? "Success"
+                : notification.type === "warning"
+                ? "Notice"
+                : "Error"),
+            message: notification.message || "An unexpected error occurred.",
+          };
+    setToast({ ...normalized, id: Date.now() });
+    toastTimeoutRef.current = setTimeout(() => {
+      setToast(null);
+    }, TOAST_DURATION);
+  }, []);
+
+  const dismissToast = useCallback(() => {
+    if (toastTimeoutRef.current) {
+      clearTimeout(toastTimeoutRef.current);
+    }
+    setToast(null);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimeoutRef.current) {
+        clearTimeout(toastTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  // Real-time listener for Admin Phase Timer updates
+  useEffect(() => {
+    const phasesChannel = supabase
+      .channel("my-submissions-realtime-phases")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "phases" },
+        async () => {
+          try {
+            const { data: phasesData, error: phasesErr } = await supabase
+              .from("phases")
+              .select("*")
+              .order("phase_number", { ascending: true });
+            if (!phasesErr && phasesData) {
+              setPhasesList(phasesData);
+              const p1 = phasesData.find((p) => p.phase_number === 1);
+              setPhase1Active(p1?.timer_status === "running");
+              setPhase1Deadline(p1?.scheduled_end_at || null);
+            }
+          } catch (e) {
+            console.warn("[MySubmissions] Realtime phase update note:", e);
+          }
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(phasesChannel);
+    };
+  }, []);
 
   const getToken = async () => {
     const {
@@ -250,8 +318,6 @@ export default function MySubmissionsPage({
 
   useEffect(() => {
     setIsEditing(false);
-    setSaveSuccessMsg("");
-    setSaveErrorMsg("");
     try {
       sessionStorage.setItem(
         "ipl2026_submissions_page_index",
@@ -279,14 +345,10 @@ export default function MySubmissionsPage({
     );
     setEditSdgGoals(team.sdgGoals || []);
     setIsEditing(true);
-    setSaveSuccessMsg("");
-    setSaveErrorMsg("");
   };
 
   const cancelEditing = () => {
     setIsEditing(false);
-    setSaveSuccessMsg("");
-    setSaveErrorMsg("");
   };
 
   const handleToggleSdg = (sdgNum) => {
@@ -302,21 +364,31 @@ export default function MySubmissionsPage({
 
   const saveProjectDetails = async () => {
     if (!editProjectTitle.trim()) {
-      setSaveErrorMsg("Project title cannot be empty.");
+      showToast({
+        type: "error",
+        title: "Validation Error",
+        message: "Project title cannot be empty.",
+      });
       return;
     }
     if (!editProblemArea.trim()) {
-      setSaveErrorMsg("Problem area cannot be empty.");
+      showToast({
+        type: "error",
+        title: "Validation Error",
+        message: "Problem area cannot be empty.",
+      });
       return;
     }
     if (!editProposedSolution.trim()) {
-      setSaveErrorMsg("Proposed solution cannot be empty.");
+      showToast({
+        type: "error",
+        title: "Validation Error",
+        message: "Proposed solution cannot be empty.",
+      });
       return;
     }
 
     setIsSaving(true);
-    setSaveErrorMsg("");
-    setSaveSuccessMsg("");
 
     try {
       const token = await getToken();
@@ -351,18 +423,28 @@ export default function MySubmissionsPage({
         );
       }
 
-      setSaveSuccessMsg("Team details updated successfully.");
+      showToast({
+        type: "success",
+        title: "Changes Saved",
+        message: "Team details updated successfully.",
+      });
       setIsEditing(false);
 
       await fetchSubmissions();
-      setTimeout(() => setSaveSuccessMsg(""), 4000);
     } catch (err) {
-      setSaveErrorMsg(
-        err.message || "Unable to update team details. Please try again.",
-      );
+      showToast({
+        type: "error",
+        title: "Save Failed",
+        message: err.message || "Unable to update team details. Please try again.",
+      });
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const handleSaveChanges = (e) => {
+    if (e) e.preventDefault();
+    saveProjectDetails();
   };
 
   useEffect(() => {
@@ -371,12 +453,15 @@ export default function MySubmissionsPage({
 
   const fetchSubmissions = async () => {
     setLoading(true);
-    setError("");
     setAuthExpired(false);
     try {
       const token = await getToken();
       if (!token) {
-        setError("Authentication session not found. Please sign in.");
+        showToast({
+          type: "warning",
+          title: "Authentication Required",
+          message: "Authentication session not found. Please sign in.",
+        });
         setAuthExpired(true);
         setSubmissions([]);
         setLoading(false);
@@ -393,9 +478,12 @@ export default function MySubmissionsPage({
       });
 
       if (response.status === 401) {
-        setError(
-          "Invalid or expired authentication session. Please sign in again.",
-        );
+        showToast({
+          type: "error",
+          title: "Session Expired",
+          message:
+            "Invalid or expired authentication session. Please sign in again.",
+        });
         setAuthExpired(true);
         setSubmissions([]);
         setLoading(false);
@@ -413,23 +501,37 @@ export default function MySubmissionsPage({
       const data = await response.json();
       if (data.success) {
         setSubmissions(data.submissions || []);
-        setError("");
       } else {
         throw new Error(data.message || "Unable to retrieve submissions.");
       }
 
-      const { data: phasesData } = await supabase
-        .from("phases")
-        .select("*")
-        .order("phase_number", { ascending: true });
-      setPhasesList(phasesData || []);
+      // Fetch dynamic phase timers from the existing single source of truth
+      try {
+        const { data: phasesData, error: phasesErr } = await supabase
+          .from("phases")
+          .select("*")
+          .order("phase_number", { ascending: true });
+        if (phasesErr) throw phasesErr;
+        setPhasesList(phasesData || []);
 
-      const phase1Config = phasesData?.find((p) => p.phase_number === 1);
-      setPhase1Active(phase1Config?.timer_status === "running");
-      setPhase1Deadline(phase1Config?.scheduled_end_at || null);
+        const phase1Config = phasesData?.find((p) => p.phase_number === 1);
+        setPhase1Active(phase1Config?.timer_status === "running");
+        setPhase1Deadline(phase1Config?.scheduled_end_at || null);
+      } catch (pErr) {
+        console.warn("[MySubmissions] Could not load phase timer data:", pErr);
+        showToast({
+          type: "error",
+          title: "Timer Notice",
+          message: "Unable to load phase deadlines. Please refresh and try again.",
+        });
+      }
     } catch (err) {
       console.error("[MySubmissions] Error fetching submissions:", err);
-      setError(err.message || "Unable to load details.");
+      showToast({
+        type: "error",
+        title: "Error Loading Submissions",
+        message: err.message || "Unable to load your submissions. Please try again.",
+      });
     } finally {
       setLoading(false);
     }
@@ -457,6 +559,11 @@ export default function MySubmissionsPage({
     } catch (tmplErr) {
       console.warn("[MySubmissions] Failed to fetch templates:", tmplErr);
       setTemplatesError(true);
+      showToast({
+        type: "error",
+        title: "Templates Error",
+        message: "Unable to load required document templates. Please try again.",
+      });
     } finally {
       setTemplatesLoading(false);
     }
@@ -520,7 +627,6 @@ export default function MySubmissionsPage({
 
   const handleSelectCategory = (cat) => {
     setSelectedCategory(cat);
-    setClassificationError("");
     if (cat === "Software") {
       // Software submissions can ONLY use Utility Patent
       setSelectedPatentType("Utility Patent");
@@ -552,10 +658,14 @@ export default function MySubmissionsPage({
   const handleSelectPatentType = (pt) => {
     // Prevent selecting Design Patent when Software is active
     if (selectedCategory === "Software" && pt === "Design Patent") {
+      showToast({
+        type: "warning",
+        title: "Category Restriction",
+        message: "Design Patent is available only for Hardware submissions.",
+      });
       return;
     }
     setSelectedPatentType(pt);
-    setClassificationError("");
     if (activeRegId) {
       savePreferences(userEmail, activeRegId, selectedCategory, pt);
       fetchTemplates(pt);
@@ -604,7 +714,11 @@ export default function MySubmissionsPage({
       a.remove();
       window.URL.revokeObjectURL(url);
     } catch (err) {
-      alert(err.message || "Failed to download template.");
+      showToast({
+        type: "error",
+        title: "Download Failed",
+        message: err.message || "Failed to download template. Please try again.",
+      });
     } finally {
       setDownloadingTemplateDocType(null);
     }
@@ -615,9 +729,11 @@ export default function MySubmissionsPage({
     if (!file) return;
 
     if (!selectedCategory || !selectedPatentType) {
-      setClassificationError(
-        "Please select a category and patent type before uploading.",
-      );
+      showToast({
+        type: "warning",
+        title: "Selection Required",
+        message: "Please select a category and patent type before uploading.",
+      });
       e.target.value = "";
       return;
     }
@@ -639,7 +755,6 @@ export default function MySubmissionsPage({
       finalPatentType = "Utility Patent";
     }
 
-    setClassificationError("");
     setUploadingDocId(template.id);
     try {
       const token = await getToken();
@@ -669,6 +784,12 @@ export default function MySubmissionsPage({
         throw new Error(result.message || "File upload failed.");
       }
 
+      showToast({
+        type: "success",
+        title: "Upload Successful",
+        message: `${file.name} uploaded successfully.`,
+      });
+
       if (activeRegId) {
         await fetchTeamSubmissionsData(
           activeRegId,
@@ -678,7 +799,11 @@ export default function MySubmissionsPage({
         );
       }
     } catch (err) {
-      alert(err.message);
+      showToast({
+        type: "error",
+        title: "Upload Failed",
+        message: err.message || "Unable to upload document. Please try again.",
+      });
     } finally {
       setUploadingDocId(null);
       e.target.value = "";
@@ -686,9 +811,9 @@ export default function MySubmissionsPage({
   };
 
   const formatDateTime = (dateStr) => {
-    if (!dateStr) return "N/A";
+    if (!dateStr) return "Not Scheduled";
     const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return "N/A";
+    if (isNaN(d.getTime())) return "Not Scheduled";
     const months = [
       "Jan",
       "Feb",
@@ -704,7 +829,7 @@ export default function MySubmissionsPage({
       "Dec",
     ];
     const pad = (n) => String(n).padStart(2, "0");
-    const day = d.getDate();
+    const day = pad(d.getDate());
     const month = months[d.getMonth()];
     const year = d.getFullYear();
     let hours = d.getHours();
@@ -712,7 +837,7 @@ export default function MySubmissionsPage({
     const ampm = hours >= 12 ? "PM" : "AM";
     hours = hours % 12;
     hours = hours ? hours : 12;
-    return `${day} ${month} ${year}, ${hours}:${minutes} ${ampm}`;
+    return `${day} ${month} ${year} • ${pad(hours)}:${minutes} ${ampm}`;
   };
 
   const renderMemberRow = (label, member) => {
@@ -722,21 +847,21 @@ export default function MySubmissionsPage({
       member.email.trim().toLowerCase() === userEmail.trim().toLowerCase();
     return (
       <div className="p-4 bg-slate-50 border border-slate-200/60 rounded-xl flex flex-col gap-2.5 transition hover:border-slate-300 w-full min-w-0">
-        <div className="flex justify-between items-center border-b border-slate-100 pb-1.5 gap-2">
-          <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">
+        <div className="flex justify-between items-center border-b border-slate-150 pb-1.5 gap-2">
+          <span className="text-[10px] font-extrabold text-slate-500 uppercase tracking-widest leading-none">
             {label}
           </span>
           {isYou && (
-            <span className="bg-amber-50 text-accent text-[9px] font-black px-1.5 py-0.5 rounded border border-amber-100 uppercase select-none shrink-0 leading-none">
+            <span className="bg-amber-50 text-accent text-[9px] font-black px-2 py-0.5 rounded border border-amber-200 uppercase select-none shrink-0 leading-none">
               You
             </span>
           )}
         </div>
         <div className="space-y-1">
-          <span className="text-xs font-black text-slate-900 block break-words select-text">
+          <span className="text-sm font-extrabold text-slate-900 block break-words select-text">
             {member.name}
           </span>
-          <span className="text-[10px] text-slate-400 font-semibold block break-all select-text">
+          <span className="text-xs text-slate-600 font-medium block break-all select-text">
             {member.email}
           </span>
         </div>
@@ -744,11 +869,74 @@ export default function MySubmissionsPage({
     );
   };
 
+  const phase1Config = phasesList.find((p) => p.phase_number === 1);
   const phase2Config = phasesList.find((p) => p.phase_number === 2);
   const phase3Config = phasesList.find((p) => p.phase_number === 3);
 
   return (
-    <div className="min-h-screen bg-slate-50 pt-28 pb-10 px-4 md:px-6 lg:px-8">
+    <div className="min-h-screen bg-slate-50 pt-28 pb-10 px-4 md:px-6 lg:px-8 relative">
+      {/* Temporary Toast Popup Notification (Auto-dismisses in 4.5s, non-modal overlay) */}
+      {toast && (
+        <aside
+          role="alert"
+          aria-live="assertive"
+          className="fixed top-24 right-4 sm:right-6 z-50 max-w-sm sm:max-w-md w-[calc(100vw-2rem)] sm:w-auto animate-in fade-in slide-in-from-top-4 duration-200 pointer-events-auto shadow-xl rounded-2xl bg-white border border-slate-200 overflow-hidden ring-1 ring-slate-900/5"
+        >
+          <div className="flex items-start gap-3 p-4">
+            <div
+              className={`flex h-9 w-9 items-center justify-center rounded-xl shrink-0 ${
+                toast.type === "success"
+                  ? "bg-emerald-50 text-emerald-600 border border-emerald-200/80"
+                  : toast.type === "warning"
+                  ? "bg-amber-50 text-amber-600 border border-amber-200/80"
+                  : "bg-rose-50 text-rose-600 border border-rose-200/80"
+              }`}
+            >
+              {toast.type === "success" ? (
+                <CheckCircle2 size={18} />
+              ) : toast.type === "warning" ? (
+                <AlertTriangle size={18} />
+              ) : (
+                <AlertCircle size={18} />
+              )}
+            </div>
+
+            <div className="min-w-0 flex-1 pr-1">
+              <h4 className="text-xs font-black uppercase tracking-wider text-[#0B1B3A] font-heading">
+                {toast.title}
+              </h4>
+              <p className="text-xs sm:text-sm font-semibold text-slate-700 leading-snug mt-0.5 break-words">
+                {toast.message}
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={dismissToast}
+              aria-label="Close notification"
+              className="flex h-6 w-6 items-center justify-center rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition cursor-pointer shrink-0 mt-0.5"
+            >
+              <X size={14} />
+            </button>
+          </div>
+
+          {/* Progress Bar indicating auto-dismiss timeline */}
+          <div className="h-0.5 w-full bg-slate-100 overflow-hidden">
+            <div
+              key={toast.id}
+              className={`h-full animate-toast-progress ${
+                toast.type === "success"
+                  ? "bg-emerald-500"
+                  : toast.type === "warning"
+                  ? "bg-amber-500"
+                  : "bg-rose-500"
+              }`}
+              style={{ animationDuration: `${TOAST_DURATION}ms` }}
+            />
+          </div>
+        </aside>
+      )}
+
       <div className="mx-auto max-w-7xl">
         {/* Header bar */}
         <div className="mb-6 flex items-center justify-between gap-4 border-b border-slate-200 pb-4">
@@ -863,14 +1051,14 @@ export default function MySubmissionsPage({
         {/* Mobile Navigation (< md) - Compact Dedicated Segmented Control */}
         <div className="flex md:hidden bg-slate-200/80 p-1 rounded-xl border border-slate-300/70 mb-5">
           <nav
-            className="grid grid-cols-4 w-full gap-1"
+            className="grid grid-cols-[1.35fr_1fr_1fr_1fr] sm:grid-cols-4 w-full gap-1"
             aria-label="Phase navigation"
           >
             {[
               {
                 id: "my_submissions",
-                label: "SUBMISSIONS",
-                shortLabel: "SUBMIT",
+                label: "SUBMISSION",
+                shortLabel: "SUBMISSION",
               },
               { id: "phase_1", label: "PHASE 1", shortLabel: "P1" },
               { id: "phase_2", label: "PHASE 2", shortLabel: "P2" },
@@ -882,14 +1070,13 @@ export default function MySubmissionsPage({
                   key={tab.id}
                   type="button"
                   onClick={() => setSelectedPhase(tab.id)}
-                  className={`py-2 px-1 rounded-lg text-center font-black transition-all cursor-pointer select-none text-[11px] sm:text-xs tracking-tight ${
+                  className={`py-2 px-1 rounded-lg text-center font-black transition-all cursor-pointer select-none text-[10px] xs:text-[11px] sm:text-xs tracking-tight truncate ${
                     isActive
                       ? "bg-accent text-white shadow-xs"
-                      : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
+                      : "text-slate-700 hover:text-slate-900 hover:bg-white/50"
                   }`}
                 >
-                  <span className="hidden xs:inline">{tab.label}</span>
-                  <span className="inline xs:hidden">{tab.shortLabel}</span>
+                  <span>{tab.shortLabel}</span>
                 </button>
               );
             })}
@@ -905,27 +1092,17 @@ export default function MySubmissionsPage({
                 Loading details...
               </p>
             </div>
-          ) : error ? (
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-16 flex flex-col items-center text-center gap-3 text-red-500 border-red-100">
-              <AlertCircle size={36} />
-              <p className="text-base font-semibold">{error}</p>
-              {authExpired ? (
-                <button
-                  type="button"
-                  onClick={handleSignOutAndReload}
-                  className="mt-2 rounded-xl bg-accent px-5 py-2.5 text-xs font-bold text-white hover:bg-amber-600 transition cursor-pointer shadow-xs"
-                >
-                  Sign In Again
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={fetchSubmissions}
-                  className="mt-2 rounded-xl bg-red-600 px-5 py-2.5 text-xs font-bold text-white hover:bg-red-700 transition cursor-pointer"
-                >
-                  Retry Load
-                </button>
-              )}
+          ) : authExpired && totalPages === 0 ? (
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-16 flex flex-col items-center text-center gap-3 text-slate-700">
+              <AlertCircle size={36} className="text-amber-500" />
+              <p className="text-base font-semibold">Authentication Session Expired</p>
+              <button
+                type="button"
+                onClick={handleSignOutAndReload}
+                className="mt-2 rounded-xl bg-accent px-5 py-2.5 text-xs font-bold text-white hover:bg-amber-600 transition cursor-pointer shadow-xs"
+              >
+                Sign In Again
+              </button>
             </div>
           ) : selectedPhase === "my_submissions" ? (
             /* ==================== MY SUBMISSIONS PAGE ==================== */
@@ -941,6 +1118,13 @@ export default function MySubmissionsPage({
                       You are not listed in any team registrations.
                     </p>
                   </div>
+                  <button
+                    type="button"
+                    onClick={fetchSubmissions}
+                    className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-xs font-bold text-white transition cursor-pointer"
+                  >
+                    Refresh
+                  </button>
                 </div>
               ) : (
                 currentPage && (
@@ -976,17 +1160,6 @@ export default function MySubmissionsPage({
                                 )}
                             </div>
                           </div>
-                          {saveSuccessMsg && (
-                            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs font-bold flex items-center gap-2">
-                              ✓ {saveSuccessMsg}
-                            </div>
-                          )}
-                          {saveErrorMsg && (
-                            <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-xs font-bold flex items-center gap-2">
-                              <AlertCircle size={14} className="shrink-0" />{" "}
-                              {saveErrorMsg}
-                            </div>
-                          )}
                           {isEditing ? (
                             <form
                               onSubmit={handleSaveChanges}
@@ -1104,20 +1277,20 @@ export default function MySubmissionsPage({
                           ) : (
                             <div className="space-y-5">
                               <div>
-                                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">
+                                <h3 className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider mb-1.5">
                                   Project Title
                                 </h3>
-                                <p className="text-sm font-black text-slate-800 leading-snug">
+                                <p className="text-base font-extrabold text-slate-900 leading-snug">
                                   {currentPage.idea
                                     ? currentPage.idea.product_title
                                     : currentPage.team.projectTitle || "N/A"}
                                 </p>
                               </div>
                               <div>
-                                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">
+                                <h3 className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider mb-1.5">
                                   Innovation Domain
                                 </h3>
-                                <p className="text-xs font-bold text-slate-700 bg-slate-50 p-2.5 rounded-xl border border-slate-100 inline-block">
+                                <p className="text-xs sm:text-sm font-bold text-slate-800 bg-slate-50 p-2.5 rounded-xl border border-slate-200 inline-block">
                                   {currentPage.idea
                                     ? currentPage.idea.innovation_domain
                                     : currentPage.team.innovationDomain ||
@@ -1125,20 +1298,20 @@ export default function MySubmissionsPage({
                                 </p>
                               </div>
                               <div>
-                                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">
+                                <h3 className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider mb-1.5">
                                   Problem Area
                                 </h3>
-                                <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-100 text-xs text-slate-700 leading-relaxed whitespace-pre-line font-medium">
+                                <div className="p-4 bg-slate-50 rounded-xl border border-slate-200/80 text-sm text-slate-800 leading-relaxed whitespace-pre-line font-normal">
                                   {currentPage.idea
                                     ? currentPage.idea.problem_area
                                     : currentPage.team.problemArea || "N/A"}
                                 </div>
                               </div>
                               <div>
-                                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">
+                                <h3 className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider mb-1.5">
                                   Proposed Solution
                                 </h3>
-                                <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-100 text-xs text-slate-700 leading-relaxed whitespace-pre-line font-medium">
+                                <div className="p-4 bg-slate-50 rounded-xl border border-slate-200/80 text-sm text-slate-800 leading-relaxed whitespace-pre-line font-normal">
                                   {currentPage.idea
                                     ? currentPage.idea.proposed_solution
                                     : currentPage.team.proposedSolution ||
@@ -1146,10 +1319,10 @@ export default function MySubmissionsPage({
                                 </div>
                               </div>
                               <div>
-                                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">
+                                <h3 className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider mb-1.5">
                                   Expected Impact
                                 </h3>
-                                <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-100 text-xs text-slate-700 leading-relaxed whitespace-pre-line font-medium">
+                                <div className="p-4 bg-slate-50 rounded-xl border border-slate-200/80 text-sm text-slate-800 leading-relaxed whitespace-pre-line font-normal">
                                   {currentPage.idea
                                     ? currentPage.idea.expected_impact
                                     : currentPage.team.expectedImpact || "N/A"}
@@ -1161,17 +1334,17 @@ export default function MySubmissionsPage({
                       </div>
                       <div className="space-y-6">
                         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-3">
-                          <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider border-b border-slate-100 pb-2">
+                          <h3 className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider border-b border-slate-100 pb-2">
                             Faculty Mentor
                           </h3>
                           {currentPage.team.mentor &&
                           currentPage.team.mentor.name ? (
                             <div className="p-3.5 bg-slate-50 border border-slate-200/60 rounded-xl">
-                              <span className="text-xs font-black text-slate-900 block">
+                              <span className="text-sm font-extrabold text-slate-900 block">
                                 {currentPage.team.mentor.name}
                               </span>
                               {currentPage.team.mentor.department && (
-                                <span className="text-[10px] text-slate-500 block font-semibold leading-tight break-words">
+                                <span className="text-xs text-slate-600 block font-semibold leading-tight break-words mt-0.5">
                                   {normalizeMentorDepartment(
                                     currentPage.team.mentor.department,
                                   )}
@@ -1179,13 +1352,13 @@ export default function MySubmissionsPage({
                               )}
                             </div>
                           ) : (
-                            <p className="text-xs text-slate-400 italic">
+                            <p className="text-xs text-slate-500 italic">
                               No mentor assigned.
                             </p>
                           )}
                         </div>
                         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-3">
-                          <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider border-b border-slate-100 pb-2">
+                          <h3 className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider border-b border-slate-100 pb-2">
                             Team Members
                           </h3>
                           <div className="space-y-3">
@@ -1227,35 +1400,38 @@ export default function MySubmissionsPage({
               <div className="space-y-6">
                 {/* Step 1: Patent Classification Card */}
                 <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-4">
-                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-100 pb-3 gap-2">
                     <div>
                       <span className="text-[10px] font-black text-accent uppercase tracking-widest block">
-                        Step 1
+                        Phase 1 · Step 1
                       </span>
                       <h3 className="text-sm font-black text-slate-900 uppercase tracking-wide">
                         Patent Classification
                       </h3>
                     </div>
-                    <span
-                      className={`text-[10px] font-black uppercase px-2.5 py-1 rounded-md border ${
-                        phase1Active
-                          ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                          : "bg-red-50 text-red-700 border-red-200"
-                      }`}
-                    >
-                      {phase1Active ? "Submissions Open" : "Submissions Closed"}
-                    </span>
-                  </div>
-
-                  {classificationError && (
-                    <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 text-xs font-bold flex items-center gap-2">
-                      <AlertTriangle
-                        size={16}
-                        className="text-amber-600 shrink-0"
-                      />
-                      <span>{classificationError}</span>
+                    <div className="flex items-center gap-2.5 flex-wrap">
+                      <div className="flex items-center gap-1.5 text-xs text-slate-600 font-semibold bg-slate-50 px-2.5 py-1 rounded-lg border border-slate-200">
+                        <Calendar size={13} className="text-slate-400" />
+                        <span>
+                          Deadline:{" "}
+                          <strong className="text-slate-800">
+                            {formatDateTime(
+                              phase1Config?.scheduled_end_at || phase1Deadline,
+                            )}
+                          </strong>
+                        </span>
+                      </div>
+                      <span
+                        className={`text-[10px] font-black uppercase px-2.5 py-1 rounded-md border ${
+                          phase1Active
+                            ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                            : "bg-red-50 text-red-700 border-red-200"
+                        }`}
+                      >
+                        {phase1Active ? "Submissions Open" : "Submissions Closed"}
+                      </span>
                     </div>
-                  )}
+                  </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     {/* Category */}
@@ -1562,16 +1738,32 @@ export default function MySubmissionsPage({
               <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-slate-100 pb-4">
                   <div>
+                    <span className="text-[10px] font-black text-primary uppercase tracking-widest block leading-none mb-1">
+                      Phase 2
+                    </span>
                     <h2 className="text-lg font-black text-slate-900">
-                      Phase 2 – Product Prototyping & Validation
+                      Product Prototyping & Validation
                     </h2>
                     <p className="text-xs text-slate-500 font-medium mt-1">
                       Prototyping development guidelines and testing phase
                       workspace.
                     </p>
                   </div>
+                  <span
+                    className={`text-[10px] font-black uppercase px-2.5 py-1 rounded-md border ${
+                      phase2Config?.timer_status === "running"
+                        ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                        : phase2Config?.timer_status === "paused"
+                        ? "bg-amber-50 text-amber-700 border-amber-200"
+                        : "bg-slate-100 text-slate-600 border-slate-200"
+                    }`}
+                  >
+                    {phase2Config?.timer_status
+                      ? phase2Config.timer_status.toUpperCase()
+                      : "UPCOMING"}
+                  </span>
                 </div>
-                <div className="flex items-center gap-2 text-xs text-slate-650 font-semibold pt-1">
+                <div className="flex items-center gap-2 text-xs text-slate-600 font-semibold pt-1">
                   <Calendar size={14} className="text-slate-400" />
                   <span>
                     Deadline:{" "}
@@ -1588,15 +1780,31 @@ export default function MySubmissionsPage({
               <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-slate-100 pb-4">
                   <div>
+                    <span className="text-[10px] font-black text-primary uppercase tracking-widest block leading-none mb-1">
+                      Phase 3
+                    </span>
                     <h2 className="text-lg font-black text-slate-900">
-                      Phase 3 – Business Planning & Pitching
+                      Business Planning & Pitching
                     </h2>
                     <p className="text-xs text-slate-500 font-medium mt-1">
                       Final pitch deck templates and presentation gateway.
                     </p>
                   </div>
+                  <span
+                    className={`text-[10px] font-black uppercase px-2.5 py-1 rounded-md border ${
+                      phase3Config?.timer_status === "running"
+                        ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                        : phase3Config?.timer_status === "paused"
+                        ? "bg-amber-50 text-amber-700 border-amber-200"
+                        : "bg-slate-100 text-slate-600 border-slate-200"
+                    }`}
+                  >
+                    {phase3Config?.timer_status
+                      ? phase3Config.timer_status.toUpperCase()
+                      : "UPCOMING"}
+                  </span>
                 </div>
-                <div className="flex items-center gap-2 text-xs text-slate-650 font-semibold pt-1">
+                <div className="flex items-center gap-2 text-xs text-slate-600 font-semibold pt-1">
                   <Calendar size={14} className="text-slate-400" />
                   <span>
                     Deadline:{" "}

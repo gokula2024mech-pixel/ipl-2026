@@ -35,7 +35,7 @@ export default function IncubationSupport() {
           <h2 className="font-heading text-3xl font-bold text-white md:text-4xl">
             From Prototype to Product Venture
           </h2>
-          <p className="mt-4 text-blue-100">
+          <p className="mt-4 text-base md:text-lg text-blue-50 font-medium">
             Top-performing teams receive dedicated support to protect, launch, and scale their innovations.
           </p>
         </SectionReveal>
@@ -47,7 +47,7 @@ export default function IncubationSupport() {
                 <div className="rounded-lg bg-accent/20 p-2.5 text-amber-300">
                   <Icon size={20} aria-hidden="true" />
                 </div>
-                <p className="text-sm leading-relaxed text-blue-100 md:text-base">{text}</p>
+                <p className="text-sm sm:text-base leading-relaxed text-blue-50 font-medium">{text}</p>
               </div>
             </SectionReveal>
           ))}

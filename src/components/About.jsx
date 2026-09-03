@@ -11,23 +11,22 @@ export default function About() {
           subtitle="Not a hackathon — A rigorous, mentor-guided innovation program."
         />
 
-        <SectionReveal className="mx-auto max-w-4xl space-y-6 text-base leading-relaxed text-slate-600 md:text-lg">
+        <SectionReveal className="mx-auto max-w-4xl space-y-6 text-base leading-relaxed text-slate-700 md:text-lg font-normal">
           <p>
-            The <strong className="font-semibold text-slate-900">Innovative Product League  (IPL) 2026</strong> is
+            The <strong className="font-bold text-slate-900">Innovative Product League (IPL) 2026</strong> is
             a structured, multi-phase innovation initiative designed to guide engineering students through the complete
             product delivery lifecycle from identifying real-world problems to building working prototypes and
             presenting market ready solutions.
           </p>
           <p>
             Unlike a hackathon, IPL provides a rigorous framework spanning four weeks and three distinct phases:
-            ideation and concept design, prototype development and testing, and product showcase with commercialization
-            . Teams will receive structured evaluation criteria, industry mentorship, and pathways to incubation
+            ideation and concept design, prototype development and testing, and product showcase with commercialization.
+            Teams will receive structured evaluation criteria, industry mentorship, and pathways to incubation
             and patent support at every stage.
           </p>
           <p>
             IPL empowers students to move beyond classroom learning and experience what it truly means to{' '}
-            <em>Ideate, Innovate, Design, Develop, and Commercialize</em> transforming bold ideas into tangible products
-            .
+            <em className="font-semibold text-slate-900">Ideate, Innovate, Design, Develop, and Commercialize</em> transforming bold ideas into tangible products.
           </p>
         </SectionReveal>
       </div>
