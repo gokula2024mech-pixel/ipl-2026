@@ -11,6 +11,8 @@ import {
   Layers,
   Sparkles,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
   Info
 } from 'lucide-react';
 
@@ -138,6 +140,7 @@ export default function IpTypeFinder({
   onSelectPatentType,
   onSelectCategory
 }) {
+  const [isExpanded, setIsExpanded] = useState(false);
   const [currentStep, setCurrentStep] = useState(0); // 0..6 for questions, 7 for results
   const [answers, setAnswers] = useState({});
   const [showReview, setShowReview] = useState(false);
@@ -199,53 +202,102 @@ export default function IpTypeFinder({
   };
 
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 sm:p-6 space-y-5 min-w-0">
-      {/* Header with Title & Disclaimer */}
-      <div className="border-b border-slate-100 pb-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-start gap-3 min-w-0">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary border border-primary/20 shrink-0 mt-0.5">
-              <Sparkles size={18} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <h3 className="text-base sm:text-lg font-black text-[#0B1B3A] font-heading tracking-tight leading-snug break-words">
-                Which Intellectual Property Protection May Fit Your Innovation?
-              </h3>
-              <p className="text-xs sm:text-sm text-slate-600 font-medium mt-1 leading-relaxed">
-                Answer a few simple questions about your innovation, and we'll
-                suggest whether Patent Protection, Design Protection, Both, or
-                Further Review may be relevant.
-              </p>
-            </div>
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden transition-all duration-200 min-w-0">
+      {/* Interactive Accordion Header Banner */}
+      <div
+        onClick={() => setIsExpanded(prev => !prev)}
+        className={`p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 cursor-pointer transition select-none ${
+          isExpanded ? "bg-slate-50/80 border-b border-slate-100" : "bg-white hover:bg-slate-50/50"
+        }`}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setIsExpanded(prev => !prev);
+          }
+        }}
+        aria-expanded={isExpanded}
+        aria-label="Toggle IP Type Finder Questionnaire"
+      >
+        <div className="flex items-start gap-3 min-w-0 flex-1">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary border border-primary/20 shrink-0 mt-0.5">
+            <Sparkles size={20} />
           </div>
-
-          <div className="shrink-0 flex items-center gap-2 self-start sm:self-center">
-            {answeredCount > 0 && (
-              <button
-                type="button"
-                onClick={handleReset}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-600 hover:text-slate-900 text-xs font-bold transition cursor-pointer"
-                title="Restart questionnaire"
-              >
-                <RotateCcw size={13} />
-                <span>Start Again</span>
-              </button>
-            )}
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2 mb-1">
+              {answeredCount > 0 && !isResultScreen && (
+                <span className="text-[10px] font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded">
+                  {answeredCount}/{totalQuestions} Answered
+                </span>
+              )}
+              {isResultScreen && (
+                <span className="text-[10px] font-black text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                  Recommendation Ready
+                </span>
+              )}
+            </div>
+            <h3 className="text-base sm:text-lg font-black text-[#0B1B3A] font-bold leading-snug ">
+              Which Intellectual Property Protection May Fit Your Innovation?
+            </h3>
+            <p className="text-xs sm:text-sm text-slate-600 font-medium mt-1 leading-relaxed">
+              Answer 7 simple questions about your product to determine whether Utility Patent, Design Patent, or Both may be relevant.
+            </p>
           </div>
         </div>
 
-        {/* Disclaimer Alert */}
-        <div className="mt-3.5 flex items-start gap-2 bg-amber-50/80 border border-amber-200/70 rounded-xl px-3 py-2 text-slate-700 text-xs font-medium">
-          <Info size={14} className="text-amber-600 shrink-0 mt-0.5" />
-          <p className="leading-relaxed">
-            <span className="font-bold text-amber-900">
-              Preliminary Guidance:
-            </span>{" "}
-            This tool provides a preliminary indication only and is not a legal
-            patentability assessment.
-          </p>
+        {/* Action Controls */}
+        <div
+          className="shrink-0 flex items-center gap-2 self-stretch sm:self-center justify-end"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {isExpanded && answeredCount > 0 && (
+            <button
+              type="button"
+              onClick={handleReset}
+              className="inline-flex items-center gap-1.5 px-3 py-2 min-h-[40px] rounded-xl border border-slate-200 bg-white hover:bg-slate-100 text-slate-700 text-xs font-bold transition cursor-pointer shadow-2xs"
+              title="Restart questionnaire"
+            >
+              <RotateCcw size={13} />
+              <span className="hidden xs:inline">Start Again</span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={() => setIsExpanded(prev => !prev)}
+            className={`w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 min-h-[44px] rounded-xl text-xs sm:text-sm font-black transition cursor-pointer shadow-xs ${
+              isExpanded
+                ? "bg-slate-200/80 hover:bg-slate-300 text-slate-800"
+                : "bg-accent hover:bg-amber-600 text-white"
+            }`}
+          >
+            <span>
+              {isExpanded
+                ? "Collapse Questionnaire"
+                : answeredCount > 0
+                ? "Continue Questionnaire"
+                : "Start IP Type Finder"}
+            </span>
+            {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+          </button>
         </div>
       </div>
+
+      {/* Expandable Questionnaire Body */}
+      {isExpanded && (
+        <div className="p-4 sm:p-6 space-y-5 animate-in fade-in slide-in-from-top-2 duration-200">
+          {/* Disclaimer Alert */}
+          <div className="flex items-start gap-2.5 bg-amber-50/90 border border-amber-200/80 rounded-xl p-3 text-slate-700 text-xs font-medium">
+            <Info size={16} className="text-amber-600 shrink-0 mt-0.5" />
+            <p className="leading-relaxed">
+              <span className="font-bold text-amber-900">
+                Preliminary Guidance:
+              </span>{" "}
+              This tool provides a preliminary indication only and is not a legal
+              patentability assessment.
+            </p>
+          </div>
 
       {!isResultScreen ? (
         /* QUESTION VIEW */
@@ -683,5 +735,7 @@ export default function IpTypeFinder({
         </div>
       )}
     </div>
-  );
+  )}
+</div>
+);
 }

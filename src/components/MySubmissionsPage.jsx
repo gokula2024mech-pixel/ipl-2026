@@ -29,7 +29,7 @@ const API_BASE_URL = rawApiUrl.endsWith("/api")
   ? rawApiUrl.slice(0, -4)
   : rawApiUrl;
 
-const TOAST_DURATION = 4500; // ~4.5 seconds centralized auto-dismiss
+const TOAST_DURATION = 6500; // ~6.5 seconds centralized auto-dismiss (5-10s range)
 
 const OFFICIAL_DOMAINS = [
   "Smart Manufacturing & Industry 4.0",
@@ -626,6 +626,14 @@ export default function MySubmissionsPage({
   }, [activeRegId, userEmail]);
 
   const handleSelectCategory = (cat) => {
+    if (selectedCategory === cat) {
+      // Toggle off / Clear
+      setSelectedCategory("");
+      if (activeRegId) {
+        savePreferences(userEmail, activeRegId, "", selectedPatentType);
+      }
+      return;
+    }
     setSelectedCategory(cat);
     if (cat === "Software") {
       // Software submissions can ONLY use Utility Patent
@@ -655,7 +663,23 @@ export default function MySubmissionsPage({
     }
   };
 
+  const handleClearCategory = () => {
+    setSelectedCategory("");
+    if (activeRegId) {
+      savePreferences(userEmail, activeRegId, "", selectedPatentType);
+    }
+  };
+
   const handleSelectPatentType = (pt) => {
+    if (selectedPatentType === pt) {
+      // Toggle off / Clear
+      setSelectedPatentType("");
+      setActiveTemplates([]);
+      if (activeRegId) {
+        savePreferences(userEmail, activeRegId, selectedCategory, "");
+      }
+      return;
+    }
     // Prevent selecting Design Patent when Software is active
     if (selectedCategory === "Software" && pt === "Design Patent") {
       showToast({
@@ -678,12 +702,24 @@ export default function MySubmissionsPage({
     }
   };
 
+  const handleClearPatentType = () => {
+    setSelectedPatentType("");
+    setActiveTemplates([]);
+    if (activeRegId) {
+      savePreferences(userEmail, activeRegId, selectedCategory, "");
+    }
+  };
+
   useEffect(() => {
-    fetchTemplates(selectedPatentType);
+    if (selectedPatentType) {
+      fetchTemplates(selectedPatentType);
+    } else {
+      setActiveTemplates([]);
+    }
   }, [selectedPatentType]);
 
   useEffect(() => {
-    if (activeRegId) {
+    if (activeRegId && (selectedCategory || selectedPatentType)) {
       fetchTeamSubmissionsData(
         activeRegId,
         activeDepartment,
@@ -694,8 +730,8 @@ export default function MySubmissionsPage({
   }, [activeRegId, activeDepartment, selectedCategory, selectedPatentType]);
 
   const handleDownloadTemplate = async (templateId, filename) => {
+    setDownloadingTemplateDocType(templateId);
     try {
-      setDownloadingTemplateDocType(templateId);
       const token = await getToken();
       const response = await fetch(
         `${API_BASE_URL}/api/patents/templates/${templateId}`,
@@ -725,31 +761,32 @@ export default function MySubmissionsPage({
   };
 
   const handleUpload = async (e, template) => {
-    const file = e.target.files[0];
+    // Capture input element and file immediately before any async gap or event pooling
+    const targetInput = e.target;
+    const files = targetInput?.files;
+    const file = files && files[0];
     if (!file) return;
 
     if (!selectedCategory || !selectedPatentType) {
       showToast({
         type: "warning",
         title: "Selection Required",
-        message: "Please select a category and patent type before uploading.",
+        message: "Please select both Category (Hardware/Software) and Patent Type (Utility/Design) before uploading.",
       });
-      e.target.value = "";
+      if (targetInput) targetInput.value = "";
       return;
     }
 
-    // Client-side Word format validation for instant feedback
+    // Client-side Word format validation for instant feedback (.doc or .docx)
     const fileName = file.name || "";
-    const ext = fileName
-      .slice(((fileName.lastIndexOf(".") - 1) >>> 0) + 2)
-      .toLowerCase();
-    if (ext !== "doc" && ext !== "docx") {
+    const isWordDoc = /\.(docx?)$/i.test(fileName);
+    if (!isWordDoc) {
       setInvalidFileModal({ fileName: file.name });
-      e.target.value = "";
+      if (targetInput) targetInput.value = "";
       return;
     }
 
-    // Ensure Software uses Utility Patent
+    // Ensure Software strictly uses Utility Patent
     let finalPatentType = selectedPatentType;
     if (selectedCategory === "Software") {
       finalPatentType = "Utility Patent";
@@ -758,7 +795,7 @@ export default function MySubmissionsPage({
     setUploadingDocId(template.id);
     try {
       const token = await getToken();
-      if (!token) throw new Error("Authentication required.");
+      if (!token) throw new Error("Authentication required. Please refresh or log in again.");
 
       const formData = new FormData();
       formData.append("file", file);
@@ -784,10 +821,13 @@ export default function MySubmissionsPage({
         throw new Error(result.message || "File upload failed.");
       }
 
+      const isReplacement = result.data?.isReplacement || false;
       showToast({
         type: "success",
-        title: "Upload Successful",
-        message: `${file.name} uploaded successfully.`,
+        title: isReplacement ? "Document Updated" : "Document Uploaded",
+        message: isReplacement
+          ? `${file.name} replaced the previous version successfully.`
+          : `${file.name} was uploaded and linked to ${activeRegId} successfully.`,
       });
 
       if (activeRegId) {
@@ -802,11 +842,11 @@ export default function MySubmissionsPage({
       showToast({
         type: "error",
         title: "Upload Failed",
-        message: err.message || "Unable to upload document. Please try again.",
+        message: err.message || "Unable to upload document. Please check your connection and try again.",
       });
     } finally {
       setUploadingDocId(null);
-      e.target.value = "";
+      if (targetInput) targetInput.value = "";
     }
   };
 
@@ -1436,9 +1476,21 @@ export default function MySubmissionsPage({
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     {/* Category */}
                     <div>
-                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1.5">
-                        Category *
-                      </label>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="block text-[10px] font-black text-slate-500 uppercase tracking-wider">
+                          Category *
+                        </label>
+                        {selectedCategory && (
+                          <button
+                            type="button"
+                            onClick={handleClearCategory}
+                            className="text-[10px] font-black text-slate-400 hover:text-red-500 uppercase tracking-wider transition cursor-pointer px-1 py-0.5 rounded hover:bg-slate-100"
+                            title="Clear category selection"
+                          >
+                            ✕ Clear
+                          </button>
+                        )}
+                      </div>
                       <div className="grid grid-cols-2 gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
                         {["Hardware", "Software"].map((cat) => {
                           const isSelected = selectedCategory === cat;
@@ -1447,10 +1499,10 @@ export default function MySubmissionsPage({
                               key={cat}
                               type="button"
                               onClick={() => handleSelectCategory(cat)}
-                              className={`py-2 rounded-lg text-xs font-black transition-all cursor-pointer ${
+                              className={`py-2 px-2 rounded-lg text-xs font-black transition-all cursor-pointer select-none min-h-[38px] ${
                                 isSelected
                                   ? "bg-accent text-white shadow-xs"
-                                  : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/50"
+                                  : "text-slate-700 hover:text-slate-900 hover:bg-slate-200/50"
                               }`}
                             >
                               {cat}
@@ -1462,9 +1514,21 @@ export default function MySubmissionsPage({
 
                     {/* Patent Type */}
                     <div>
-                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1.5">
-                        Patent Type *
-                      </label>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="block text-[10px] font-black text-slate-500 uppercase tracking-wider">
+                          Patent Type *
+                        </label>
+                        {selectedPatentType && (
+                          <button
+                            type="button"
+                            onClick={handleClearPatentType}
+                            className="text-[10px] font-black text-slate-400 hover:text-red-500 uppercase tracking-wider transition cursor-pointer px-1 py-0.5 rounded hover:bg-slate-100"
+                            title="Clear patent type selection"
+                          >
+                            ✕ Clear
+                          </button>
+                        )}
+                      </div>
                       <div className="grid grid-cols-2 gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
                         {["Design Patent", "Utility Patent"].map((pt) => {
                           const isSelected = selectedPatentType === pt;
@@ -1482,12 +1546,12 @@ export default function MySubmissionsPage({
                                   ? "Design Patent is available only for Hardware submissions."
                                   : ""
                               }
-                              className={`py-2 rounded-lg text-xs font-black transition-all ${
+                              className={`py-2 px-1 rounded-lg text-xs font-black transition-all select-none min-h-[38px] truncate ${
                                 isDisabled
                                   ? "opacity-40 cursor-not-allowed bg-transparent text-slate-400 select-none"
                                   : isSelected
                                     ? "bg-accent text-white shadow-xs cursor-pointer"
-                                    : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/50 cursor-pointer"
+                                    : "text-slate-700 hover:text-slate-900 hover:bg-slate-200/50 cursor-pointer"
                               }`}
                             >
                               {pt}
@@ -1663,7 +1727,7 @@ export default function MySubmissionsPage({
                                 onClick={() =>
                                   handleDownloadTemplate(tmpl.id, tmpl.name)
                                 }
-                                className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-xs font-bold text-slate-700 hover:border-slate-300 transition cursor-pointer disabled:opacity-50 shadow-2xs"
+                                className="inline-flex items-center justify-center gap-2 h-11 px-4 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 active:bg-slate-100 text-xs font-bold text-slate-800 hover:border-slate-300 transition cursor-pointer disabled:opacity-50 shadow-2xs w-full"
                               >
                                 {isDownloading ? (
                                   <MechanicalLoader
@@ -1681,41 +1745,51 @@ export default function MySubmissionsPage({
 
                               {/* 2. Upload / Edit Completed Document */}
                               {phase1Active ? (
-                                <label
-                                  className={`inline-flex items-center justify-center gap-2 h-10 px-4 rounded-xl text-xs font-bold text-white transition cursor-pointer select-none shadow-xs ${
-                                    submittedFile
-                                      ? "bg-slate-800 hover:bg-slate-900"
-                                      : "bg-accent hover:bg-amber-600"
-                                  }`}
-                                >
-                                  {isUploading ? (
-                                    <>
-                                      <MechanicalLoader
-                                        size={14}
-                                        className="text-white shrink-0"
-                                      />
-                                      <span>Submitting...</span>
-                                    </>
-                                  ) : (
-                                    <>
-                                      <Upload size={15} className="shrink-0" />
-                                      <span>
-                                        {submittedFile
-                                          ? "Edit File"
-                                          : "Upload Document"}
-                                      </span>
-                                    </>
-                                  )}
-                                  <input
-                                    type="file"
+                                <div className="relative w-full">
+                                  <button
+                                    type="button"
                                     disabled={isUploading}
-                                    onChange={(e) => handleUpload(e, tmpl)}
-                                    className="hidden"
-                                    accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                                  />
-                                </label>
+                                    className={`relative inline-flex items-center justify-center gap-2 h-11 px-4 rounded-xl text-xs font-bold text-white transition cursor-pointer select-none shadow-xs w-full overflow-hidden ${
+                                      submittedFile
+                                        ? "bg-slate-800 hover:bg-slate-900 active:bg-slate-950"
+                                        : "bg-accent hover:bg-amber-600 active:bg-amber-700"
+                                    }`}
+                                  >
+                                    {isUploading ? (
+                                      <>
+                                        <MechanicalLoader
+                                          size={14}
+                                          className="text-white shrink-0"
+                                        />
+                                        <span>Submitting...</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Upload size={15} className="shrink-0" />
+                                        <span>
+                                          {submittedFile
+                                            ? "Edit / Replace File"
+                                            : "Upload Document"}
+                                        </span>
+                                      </>
+                                    )}
+                                    {/* Mobile-first touch-accessible file input positioned over the full button */}
+                                    <input
+                                      type="file"
+                                      disabled={isUploading}
+                                      onChange={(e) => handleUpload(e, tmpl)}
+                                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                                      accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                                      aria-label={
+                                        submittedFile
+                                          ? `Replace ${tmpl.name}`
+                                          : `Upload ${tmpl.name}`
+                                      }
+                                    />
+                                  </button>
+                                </div>
                               ) : (
-                                <span className="inline-flex items-center justify-center gap-1.5 h-10 px-4 text-xs font-bold text-red-600 bg-red-50 rounded-xl border border-red-100">
+                                <span className="inline-flex items-center justify-center gap-1.5 h-11 px-4 text-xs font-bold text-red-600 bg-red-50 rounded-xl border border-red-100 w-full">
                                   <AlertTriangle
                                     size={14}
                                     className="shrink-0"
