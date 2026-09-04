@@ -15,6 +15,19 @@ const QUICK_LINKS = [
   { label: 'Leaderboard', href: '#leaderboard' },
 ]
 
+function LinkedInIcon({ className = 'w-[18px] h-[18px]' }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+    >
+      <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451c.979 0 1.778-.773 1.778-1.729V1.73C24 .774 23.205 0 22.225 0z" />
+    </svg>
+  )
+}
+
 export default function Footer({ onNavClick }) {
   const handleQuickLink = (e, href) => {
     e.preventDefault()
@@ -85,6 +98,20 @@ export default function Footer({ onNavClick }) {
               Empowering engineers to transform innovative ideas into products that solve
               real-world problems and drive meaningful impact.
             </p>
+
+            {/* Social Media Links */}
+            <div className="mt-5 flex items-center gap-3">
+              <a
+                href="https://www.linkedin.com/company/innovative-product-league/"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="LinkedIn"
+                title="LinkedIn"
+                className="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-slate-800/80 text-slate-400 hover:text-accent hover:bg-slate-800 border border-slate-700/60 hover:border-accent/40 transition-all duration-200 hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent cursor-pointer"
+              >
+                <LinkedInIcon className="w-[18px] h-[18px] fill-current" />
+              </a>
+            </div>
           </div>
 
           {/* Column 2: Quick Links */}
