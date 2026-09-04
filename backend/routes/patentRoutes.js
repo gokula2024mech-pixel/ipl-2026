@@ -2,6 +2,7 @@ const express = require('express')
 const router = express.Router()
 const multer = require('multer')
 const path = require('path')
+const fs = require('fs')
 const googleDriveService = require('../services/googleDriveService')
 const { supabase } = require('../supabaseClient')
 
@@ -371,6 +372,116 @@ router.post('/upload', upload.single('file'), async (req, res) => {
         normalizedTemplateName,
         cleanTeamId
       )
+
+      // 9. Synchronize metadata to Supabase phase1_submissions & reset decision state to PENDING
+      try {
+        let docType = 'OTHER'
+        const tmplLower = (normalizedTemplateName || '').toLowerCase()
+        if (tmplLower.includes('abstract')) docType = 'FIGURE_OF_ABSTRACT'
+        else if (tmplLower.includes('declaration') || tmplLower.includes('form_5')) docType = 'FORM_5'
+        else if (tmplLower.includes('grant') || tmplLower.includes('form_2')) docType = 'FORM_2'
+        else if (tmplLower.includes('drawing')) docType = 'LIST_OF_DRAWINGS'
+        else docType = normalizedTemplateName.replace(/[^a-zA-Z0-9_]/g, '').toUpperCase()
+
+        let teamRec = null;
+        try {
+          const { data: byNorm } = await supabase
+            .from('teams')
+            .select('id')
+            .eq('normalized_team_name', reg.team_name.toLowerCase().trim())
+            .maybeSingle();
+          teamRec = byNorm;
+          if (!teamRec) {
+            const { data: byName } = await supabase
+              .from('teams')
+              .select('id')
+              .eq('team_name', reg.team_name)
+              .maybeSingle();
+            teamRec = byName;
+          }
+        } catch (tErr) {}
+
+        const subPayload = {
+          team_id: teamRec?.id || null,
+          registration_id: cleanTeamId,
+          team_name: reg.team_name,
+          document_type: docType,
+          original_filename: uploadedFile.name || canonicalFileName,
+          google_drive_file_id: uploadedFile.id,
+          google_drive_folder_id: targetFolderId,
+          uploaded_by: (req.user && req.user.email) || reg.leader_email || 'student',
+          uploaded_at: new Date().toISOString(),
+          review_status: 'UPLOADED',
+          rejection_reason: null,
+          template_version_used: 1,
+          updated_at: new Date().toISOString()
+        };
+
+        // Try upserting with extra columns if present
+        try {
+          const extendedPayload = {
+            ...subPayload,
+            admin_comment: null,
+            decision_seen: false,
+            patent_type: cleanPatentType,
+            category: cleanCat
+          };
+          let { error: extErr } = await supabase
+            .from('phase1_submissions')
+            .upsert(extendedPayload, { onConflict: 'team_id,document_type' });
+
+          if (extErr) {
+            // Check if document_type check constraint failed or extended columns failed
+            let targetDocType = docType;
+            if (
+              extErr.code === '23514' ||
+              extErr.message?.includes('chk_submission_document_type')
+            ) {
+              if (docType === 'NOVELTY_FORM') targetDocType = 'FORM_2';
+              else if (docType === 'REPRESENTATION_SHEET') targetDocType = 'FORM_5';
+              else targetDocType = 'FORM_2';
+            }
+
+            const fallbackPayload = {
+              ...subPayload,
+              document_type: targetDocType
+            };
+
+            let { error: fallbackErr } = await supabase
+              .from('phase1_submissions')
+              .upsert(fallbackPayload, { onConflict: 'team_id,document_type' });
+
+            if (fallbackErr && targetDocType !== 'FORM_2') {
+              fallbackPayload.document_type = 'FORM_2';
+              await supabase
+                .from('phase1_submissions')
+                .upsert(fallbackPayload, { onConflict: 'team_id,document_type' });
+            }
+          }
+        } catch (dbErr) {
+          console.warn('[PatentRoutes] DB submission sync warning:', dbErr.message);
+        }
+
+        // Reset local decisions cache if present
+        const DECISIONS_FILE = path.join(__dirname, '..', 'config', 'team_decisions.json')
+        if (fs.existsSync(DECISIONS_FILE)) {
+          try {
+            const raw = fs.readFileSync(DECISIONS_FILE, 'utf-8')
+            const decisions = JSON.parse(raw)
+            decisions[cleanTeamId] = {
+              status: 'PENDING',
+              adminComment: null,
+              decisionSeen: false,
+              reviewedBy: null,
+              reviewedAt: null,
+              updatedAt: new Date().toISOString()
+            }
+            fs.writeFileSync(DECISIONS_FILE, JSON.stringify(decisions, null, 2), 'utf-8')
+          } catch (e) {}
+        }
+      } catch (syncErr) {
+        console.warn('[PatentRoutes] Post-upload sync warning:', syncErr.message)
+      }
 
       return res.status(200).json({
         success: true,

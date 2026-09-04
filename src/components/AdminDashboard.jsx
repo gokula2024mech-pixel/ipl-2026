@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import { supabase } from "../supabaseClient";
 import MechanicalLoader from "./MechanicalLoader";
+import AdminSubmissionsReviewCenter from "./AdminSubmissionsReviewCenter";
 import { getSessionState, saveSessionState, saveViewScroll, getViewScroll } from "../utils/sessionNavigationState";
 import {
   Menu,
@@ -566,6 +567,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
   const [selectedColumns, setSelectedColumns] = useState(new Set());
 
   // Phase 1 Submissions & Templates States
+  const [authToken, setAuthToken] = useState("");
   const [phase1Submissions, setPhase1Submissions] = useState([]);
   const [rejectionModalSubId, setRejectionModalSubId] = useState(null);
   const [rejectionReasonInput, setRejectionReasonInput] = useState("");
@@ -944,6 +946,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token;
       if (token) {
+        setAuthToken(token);
         try {
           const subsRes = await fetch(`${API_BASE_URL}/api/phase1/submissions`, {
             headers: { 'Authorization': `Bearer ${token}` }
@@ -2429,7 +2432,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
               { id: "evaluators", label: "Evaluators", icon: UserPlus },
               { id: "teams", label: "Teams", icon: BookOpen },
               { id: "evaluations", label: "Evaluations", icon: ClipboardList },
-              { id: "phase1_subs", label: "Phase 1 Submissions", icon: ClipboardList },
+              { id: "phase1_subs", label: "Submissions", icon: ClipboardList },
               { id: "reports", label: "Reports", icon: Download }
             ].map((tab) => {
               const Icon = tab.icon;
@@ -2513,32 +2516,33 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
           ) : (
             <>
               {/* Context header */}
-              <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <h2 className="text-xl font-bold text-slate-900 capitalize md:text-2xl">
-                    {activeTab === "reports" ? "Export Center" : activeTab === "teams" ? "Team Registrations" : activeTab === "evaluations" ? "Evaluations History" : activeTab === "phase1_subs" ? "Phase 1 Submissions" : activeTab}
-                  </h2>
-                  <p className="mt-1 text-sm text-slate-500">
-                    {activeTab === "overview" && "High-level summary of program metrics."}
-                    {activeTab === "phases" && "Configure evaluation windows. Only one phase can be active at a time."}
-                    {activeTab === "evaluators" && "Add new evaluators and assign them to specific phases."}
-                    {activeTab === "teams" && "Overview of all registered student teams."}
-                    {activeTab === "evaluations" && "Review details and scores submitted by evaluators."}
-                    {activeTab === "phase1_subs" && "Review and approve/reject patent document submissions."}
-                    {activeTab === "reports" && "Download reports and data in Excel-compatible format."}
-                  </p>
-                </div>
+              {activeTab !== "phase1_subs" && (
+                <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h2 className="text-xl font-bold text-slate-900 capitalize md:text-2xl">
+                      {activeTab === "reports" ? "Export Center" : activeTab === "teams" ? "Team Registrations" : activeTab === "evaluations" ? "Evaluations History" : activeTab}
+                    </h2>
+                    <p className="mt-1 text-sm text-slate-500">
+                      {activeTab === "overview" && "High-level summary of program metrics."}
+                      {activeTab === "phases" && "Configure evaluation windows. Only one phase can be active at a time."}
+                      {activeTab === "evaluators" && "Add new evaluators and assign them to specific phases."}
+                      {activeTab === "teams" && "Overview of all registered student teams."}
+                      {activeTab === "evaluations" && "Review details and scores submitted by evaluators."}
+                      {activeTab === "reports" && "Download reports and data in Excel-compatible format."}
+                    </p>
+                  </div>
 
-                <button
-                  type="button"
-                  onClick={handleRefresh}
-                  disabled={refreshing}
-                  className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
-                >
-                  <RefreshCw size={14} className={refreshing ? "animate-spin" : ""} />
-                  {refreshing ? "Refreshing..." : "Refresh Data"}
-                </button>
-              </div>
+                  <button
+                    type="button"
+                    onClick={handleRefresh}
+                    disabled={refreshing}
+                    className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    <RefreshCw size={14} className={refreshing ? "animate-spin" : ""} />
+                    {refreshing ? "Refreshing..." : "Refresh Data"}
+                  </button>
+                </div>
+              )}
 
               {/* PANEL RENDERS */}
 
@@ -3656,156 +3660,16 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
                 </section>
               )}
 
-              {/* 7. PHASE 1 SUBMISSIONS TAB */}
+              {/* 7. SUBMISSIONS REVIEW CENTER TAB */}
               {activeTab === "phase1_subs" && (
-                <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200 space-y-6">
-                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-slate-100 pb-4">
-                    <div className="flex flex-wrap gap-2">
-                      {[
-                        { id: 'ALL', label: 'All Submissions' },
-                        { id: 'PENDING', label: 'Pending Review' },
-                        { id: 'APPROVED', label: 'Approved' },
-                        { id: 'REJECTED', label: 'Rejected' }
-                      ].map((f) => (
-                        <button
-                          key={f.id}
-                          type="button"
-                          onClick={() => setPhase1Filter(f.id)}
-                          className={`px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
-                            phase1Filter === f.id
-                              ? 'bg-accent text-white shadow'
-                              : 'bg-slate-50 text-slate-600 hover:bg-slate-100 border border-slate-200'
-                          }`}
-                        >
-                          {f.label} ({
-                            f.id === 'ALL' ? phase1Submissions.length :
-                            f.id === 'PENDING' ? phase1Submissions.filter(s => s.review_status === 'UPLOADED').length :
-                            f.id === 'APPROVED' ? phase1Submissions.filter(s => s.review_status === 'APPROVED').length :
-                            phase1Submissions.filter(s => s.review_status === 'REJECTED').length
-                          })
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {(() => {
-                    const filteredSubmissions = phase1Submissions.filter(s => {
-                      if (phase1Filter === 'ALL') return true;
-                      if (phase1Filter === 'PENDING') return s.review_status === 'UPLOADED';
-                      if (phase1Filter === 'APPROVED') return s.review_status === 'APPROVED';
-                      return s.review_status === 'REJECTED';
-                    });
-
-                    if (filteredSubmissions.length === 0) {
-                      return (
-                        <div className="text-center py-16 text-slate-400 font-medium bg-slate-50 rounded-2xl border border-slate-100">
-                          No submissions match this filter.
-                        </div>
-                      );
-                    }
-
-                    return (
-                      <div className="space-y-4">
-                        <div className="block sm:hidden text-right">
-                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-100 px-2.5 py-1 rounded-md">
-                            ← Scroll Horizontally →
-                          </span>
-                        </div>
-                        <div className="overflow-x-auto border border-slate-200 rounded-xl bg-white">
-                          <table className="w-full border-collapse text-left text-xs text-slate-600 min-w-[900px]">
-                            <thead className="bg-slate-50 font-bold text-slate-700 uppercase border-b border-slate-200">
-                              <tr>
-                                <th className="px-4 py-3">Registration ID</th>
-                                <th className="px-4 py-3">Team Name</th>
-                                <th className="px-4 py-3">Document Type</th>
-                                <th className="px-4 py-3">Filename</th>
-                                <th className="px-4 py-3">Upload Date</th>
-                                <th className="px-4 py-3">Template Used</th>
-                                <th className="px-4 py-3">Status</th>
-                                <th className="px-4 py-3">Review Details</th>
-                                <th className="px-4 py-3 text-right">Actions</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100 font-medium">
-                              {filteredSubmissions.map((sub) => {
-                                const docLabel =
-                                  sub.document_type === 'FORM_2' ? 'Form 2 – To Grant' :
-                                  sub.document_type === 'FORM_5' ? 'Form 5 – Declaration' :
-                                  sub.document_type === 'FIGURE_OF_ABSTRACT' ? 'Figure of Abstract' :
-                                  sub.document_type === 'LIST_OF_DRAWINGS' ? 'List of Drawings' : sub.document_type;
-
-                                return (
-                                  <tr key={sub.id} className="hover:bg-slate-50/50 align-top">
-                                    <td className="px-4 py-3 font-semibold text-slate-900 select-all">{sub.registration_id}</td>
-                                    <td className="px-4 py-3 font-bold text-slate-900 select-text">{sub.team_name}</td>
-                                    <td className="px-4 py-3 whitespace-nowrap text-slate-800 font-semibold">{docLabel}</td>
-                                    <td className="px-4 py-3 max-w-[150px] break-all select-all font-mono text-[11px] text-slate-700">{sub.original_filename}</td>
-                                    <td className="px-4 py-3 whitespace-nowrap text-slate-500">{new Date(sub.uploaded_at).toLocaleString()}</td>
-                                    <td className="px-4 py-3 text-center text-slate-600 font-mono">v{sub.template_version_used}</td>
-                                    <td className="px-4 py-3 whitespace-nowrap">
-                                      <span className={`text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full border ${
-                                        sub.review_status === 'APPROVED' ? 'bg-green-50 text-green-700 border-green-100' :
-                                        sub.review_status === 'REJECTED' ? 'bg-red-50 text-red-700 border-red-100' :
-                                        sub.review_status === 'UPLOADED' ? 'bg-amber-50 text-amber-700 border-amber-100' :
-                                        'bg-slate-100 text-slate-600 border-slate-200'
-                                      }`}>
-                                        {sub.review_status.replace(/_/g, ' ')}
-                                      </span>
-                                    </td>
-                                    <td className="px-4 py-3 max-w-[200px] select-text">
-                                      {sub.review_status === 'REJECTED' && sub.rejection_reason && (
-                                        <div className="text-[11px] text-red-600 bg-red-50/30 p-2 border border-red-100 rounded">
-                                          <span className="font-black uppercase text-[8px] block">Reason:</span>
-                                          {sub.rejection_reason}
-                                        </div>
-                                      )}
-                                      {sub.reviewed_by && (
-                                        <div className="text-[10px] text-slate-400 mt-1">
-                                          Reviewed by {sub.reviewed_by} on {new Date(sub.reviewed_at).toLocaleDateString()}
-                                        </div>
-                                      )}
-                                    </td>
-                                    <td className="px-4 py-3 text-right space-y-1.5 whitespace-nowrap">
-                                      <button
-                                        type="button"
-                                        onClick={() => handleDownload(sub.google_drive_file_id, sub.original_filename)}
-                                        className="inline-flex items-center gap-1.5 px-3 py-1 rounded bg-slate-100 hover:bg-slate-200 text-xs font-bold text-slate-700 cursor-pointer transition w-full justify-center"
-                                      >
-                                        <Download size={12} /> Download
-                                      </button>
-
-                                      {sub.review_status === 'UPLOADED' && (
-                                        <div className="flex gap-1">
-                                          <button
-                                            type="button"
-                                            onClick={() => handleReviewSubmission(sub.id, 'APPROVED')}
-                                            className="flex-1 py-1 rounded bg-green-600 hover:bg-green-700 text-xs font-bold text-white cursor-pointer transition text-center"
-                                          >
-                                            Approve
-                                          </button>
-                                          <button
-                                            type="button"
-                                            onClick={() => {
-                                              setRejectionModalSubId(sub.id);
-                                              setRejectionReasonInput('');
-                                            }}
-                                            className="flex-1 py-1 rounded bg-red-600 hover:bg-red-700 text-xs font-bold text-white cursor-pointer transition text-center"
-                                          >
-                                            Reject
-                                          </button>
-                                        </div>
-                                      )}
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                    );
-                  })()}
-                </section>
+                <AdminSubmissionsReviewCenter
+                  token={authToken}
+                  userEmail={profile?.email}
+                  onShowToast={({ type, title, message }) => {
+                    if (type === "error") setError(`${title}: ${message}`);
+                    else setSuccess(`${title}: ${message}`);
+                  }}
+                />
               )}
 
 

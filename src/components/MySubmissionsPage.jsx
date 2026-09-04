@@ -14,6 +14,10 @@ import {
   Edit3,
   X,
   CheckCircle2,
+  CheckCircle,
+  XCircle,
+  Clock,
+  MessageSquare,
 } from "lucide-react";
 import MechanicalLoader from "./MechanicalLoader";
 import IpTypeFinder from "./IpTypeFinder";
@@ -220,6 +224,8 @@ export default function MySubmissionsPage({
   const [selectedCategory, setSelectedCategory] = useState("");
   const [selectedPatentType, setSelectedPatentType] = useState("");
   const [invalidFileModal, setInvalidFileModal] = useState(null);
+  const [phase1Decision, setPhase1Decision] = useState(null);
+  const [isDecisionPopupOpen, setIsDecisionPopupOpen] = useState(false);
 
   // Toast Notification State
   const [toast, setToast] = useState(null);
@@ -591,6 +597,71 @@ export default function MySubmissionsPage({
     }
   };
 
+  const fetchPhase1Decision = async (regId) => {
+    if (!regId) {
+      setPhase1Decision(null);
+      return;
+    }
+    try {
+      const token = await getToken();
+      if (!token) {
+        setPhase1Decision(null);
+        return;
+      }
+      const res = await fetch(
+        `${API_BASE_URL}/api/phase1/team-status/${encodeURIComponent(regId)}`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.hasSubmission && data.status) {
+          setPhase1Decision({
+            status: data.status,
+            adminComment: data.adminComment,
+            decisionSeen: data.decisionSeen,
+          });
+          if (
+            (data.status === "APPROVED" || data.status === "REJECTED") &&
+            !data.decisionSeen
+          ) {
+            setIsDecisionPopupOpen(true);
+          }
+        } else {
+          setPhase1Decision(null);
+        }
+      } else {
+        setPhase1Decision(null);
+      }
+    } catch (e) {
+      console.warn("[MySubmissions] Failed to fetch phase 1 decision:", e);
+      setPhase1Decision(null);
+    }
+  };
+
+  const handleCloseDecisionPopup = async () => {
+    setIsDecisionPopupOpen(false);
+    if (!activeRegId) return;
+    try {
+      const token = await getToken();
+      if (!token) return;
+      await fetch(`${API_BASE_URL}/api/phase1/decision-seen`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ registrationId: activeRegId }),
+      });
+      setPhase1Decision((prev) =>
+        prev ? { ...prev, decisionSeen: true } : null
+      );
+    } catch (e) {
+      console.warn("[MySubmissions] Error marking decision seen:", e);
+    }
+  };
+
   const pages = [];
   submissions.forEach((sub) => {
     if (!sub.ideas || sub.ideas.length === 0) {
@@ -615,7 +686,9 @@ export default function MySubmissionsPage({
 
   // Restore user/team-specific preferences on mount or team switch
   useEffect(() => {
+    setPhase1Decision(null);
     if (!activeRegId) return;
+    fetchPhase1Decision(activeRegId);
     const saved = loadPreferences(userEmail, activeRegId);
     if (saved && (saved.category || saved.patentType)) {
       const cat = saved.category || "";
@@ -942,6 +1015,7 @@ export default function MySubmissionsPage({
         selectedCategory,
         finalPatentType,
       );
+      await fetchPhase1Decision(teamId);
     } catch (err) {
       showToast({
         type: "error",
@@ -1164,6 +1238,23 @@ export default function MySubmissionsPage({
                   <span className="text-[10px] font-bold text-slate-400 uppercase bg-slate-100 px-1.5 py-0.5 rounded">
                     {currentPage.team.userRole}
                   </span>
+                  {phase1Decision?.status && (teamSubmissions.length > 0 || phase1Decision.status === "APPROVED" || phase1Decision.status === "REJECTED") && (
+                    <span
+                      className={`text-[10px] font-black uppercase px-2 py-0.5 rounded border tracking-wide ${
+                        phase1Decision.status === "APPROVED"
+                          ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                          : phase1Decision.status === "REJECTED"
+                          ? "bg-rose-50 text-rose-700 border-rose-200"
+                          : "bg-amber-50 text-amber-800 border-amber-200"
+                      }`}
+                    >
+                      {phase1Decision.status === "APPROVED"
+                        ? "✓ APPROVED"
+                        : phase1Decision.status === "REJECTED"
+                        ? "! REJECTED"
+                        : "● PENDING REVIEW"}
+                    </span>
+                  )}
                 </div>
               </div>
 
@@ -1330,6 +1421,28 @@ export default function MySubmissionsPage({
                               <span className="bg-blue-50 text-blue-700 text-xs font-black px-3 py-1 rounded-full border border-blue-100 uppercase tracking-wide select-none">
                                 {currentPage.team.userRole}
                               </span>
+                              {phase1Decision?.status && (teamSubmissions.length > 0 || phase1Decision.status === "APPROVED" || phase1Decision.status === "REJECTED") && (
+                                <span
+                                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black uppercase tracking-wide border select-none ${
+                                    phase1Decision.status === "APPROVED"
+                                      ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                      : phase1Decision.status === "REJECTED"
+                                      ? "bg-rose-50 text-rose-700 border-rose-200"
+                                      : "bg-amber-50 text-amber-700 border-amber-200"
+                                  }`}
+                                >
+                                  {phase1Decision.status === "APPROVED" && (
+                                    <CheckCircle size={12} className="text-emerald-600" />
+                                  )}
+                                  {phase1Decision.status === "REJECTED" && (
+                                    <XCircle size={12} className="text-rose-600" />
+                                  )}
+                                  {phase1Decision.status === "PENDING" && (
+                                    <Clock size={12} className="text-amber-600" />
+                                  )}
+                                  Phase 1: {phase1Decision.status === "APPROVED" ? "Approved" : phase1Decision.status === "REJECTED" ? "Rejected" : "Pending Review"}
+                                </span>
+                              )}
                               {currentPage.team.userRole === "Team Leader" &&
                                 !isEditing && (
                                   <button
@@ -1580,6 +1693,87 @@ export default function MySubmissionsPage({
               </div>
             ) : (
               <div className="space-y-6">
+                {/* Permanent Phase 1 Review Status & Evaluator Remarks */}
+                {phase1Decision?.status && (teamSubmissions.length > 0 || phase1Decision.status === "APPROVED" || phase1Decision.status === "REJECTED") && (
+                  <div
+                    className={`rounded-2xl border p-5 sm:p-6 transition-all shadow-xs ${
+                      phase1Decision.status === "APPROVED"
+                        ? "bg-emerald-50/80 border-emerald-200 text-emerald-950"
+                        : phase1Decision.status === "REJECTED"
+                        ? "bg-rose-50/80 border-rose-200 text-rose-950"
+                        : "bg-amber-50/80 border-amber-200 text-amber-950"
+                    }`}
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      <div className="flex items-start sm:items-center gap-3.5">
+                        <div
+                          className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl shadow-xs ${
+                            phase1Decision.status === "APPROVED"
+                              ? "bg-emerald-600 text-white"
+                              : phase1Decision.status === "REJECTED"
+                              ? "bg-rose-600 text-white"
+                              : "bg-amber-500 text-white"
+                          }`}
+                        >
+                          {phase1Decision.status === "APPROVED" && <CheckCircle size={24} />}
+                          {phase1Decision.status === "REJECTED" && <XCircle size={24} />}
+                          {phase1Decision.status === "PENDING" && <Clock size={24} />}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`text-[10px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded-full ${
+                                phase1Decision.status === "APPROVED"
+                                  ? "bg-emerald-100 text-emerald-800"
+                                  : phase1Decision.status === "REJECTED"
+                                  ? "bg-rose-100 text-rose-800"
+                                  : "bg-amber-100 text-amber-800"
+                              }`}
+                            >
+                              Phase 1 Evaluation
+                            </span>
+                            <span className="text-xs font-bold uppercase tracking-wider">
+                              {phase1Decision.status === "APPROVED"
+                                ? "✓ Approved"
+                                : phase1Decision.status === "REJECTED"
+                                ? "✕ Rejected / Revision Needed"
+                                : "● Under Admin Review"}
+                            </span>
+                          </div>
+                          <h3 className="text-base sm:text-lg font-black mt-1 leading-snug">
+                            {phase1Decision.status === "APPROVED"
+                              ? "Your Phase 1 patent documents have been approved by the committee."
+                              : phase1Decision.status === "REJECTED"
+                              ? "Your Phase 1 submission requires corrections before it can be approved."
+                              : "Your submitted documents are currently under review by the panel."}
+                          </h3>
+                        </div>
+                      </div>
+                      {phase1Decision.status === "REJECTED" && (
+                        <div className="shrink-0">
+                          <span className="inline-flex items-center text-xs font-bold text-rose-700 bg-white/90 border border-rose-300 px-3.5 py-1.5 rounded-xl shadow-xs">
+                            Re-upload revised files below
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Admin Comment Card */}
+                    {phase1Decision.status !== "PENDING" && phase1Decision.adminComment && (
+                      <div className="mt-4 pt-4 border-t border-slate-200/70">
+                        <div className="bg-white/90 rounded-xl p-4 border border-slate-200/80 shadow-xs space-y-1.5">
+                          <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                            <MessageSquare size={13} className="text-slate-400" /> Reviewer Comments & Instructions
+                          </span>
+                          <p className="text-xs sm:text-sm text-slate-800 font-medium whitespace-pre-line leading-relaxed">
+                            {phase1Decision.adminComment}
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* Step 1: Patent Classification Card */}
                 <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-4">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-100 pb-3 gap-2">
@@ -2109,6 +2303,112 @@ export default function MySubmissionsPage({
                 className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-xs font-bold text-white transition cursor-pointer shadow-xs"
               >
                 Choose Another File
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Phase 1 Decision Notification Modal */}
+      {isDecisionPopupOpen && phase1Decision && createPortal(
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs transition-opacity animate-in fade-in duration-200"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="phase1-decision-modal-title"
+        >
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 sm:p-7 shadow-2xl border border-slate-200 space-y-5 text-left transform animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+              <div className="flex items-center gap-3">
+                <div
+                  className={`flex h-12 w-12 items-center justify-center rounded-2xl shrink-0 shadow-sm ${
+                    phase1Decision.status === "APPROVED"
+                      ? "bg-emerald-500 text-white"
+                      : "bg-rose-500 text-white"
+                  }`}
+                >
+                  {phase1Decision.status === "APPROVED" ? (
+                    <CheckCircle size={26} />
+                  ) : (
+                    <XCircle size={26} />
+                  )}
+                </div>
+                <div>
+                  <span
+                    className={`text-[10px] font-black uppercase tracking-widest block ${
+                      phase1Decision.status === "APPROVED"
+                        ? "text-emerald-600"
+                        : "text-rose-600"
+                    }`}
+                  >
+                    Phase 1 Review Update
+                  </span>
+                  <h3
+                    id="phase1-decision-modal-title"
+                    className="text-lg font-black text-slate-900 leading-snug"
+                  >
+                    Submission {phase1Decision.status === "APPROVED" ? "Approved" : "Requires Revision"}
+                  </h3>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseDecisionPopup}
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition cursor-pointer"
+                aria-label="Close modal"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="space-y-3.5 text-xs text-slate-600">
+              <div
+                className={`p-4 rounded-xl border ${
+                  phase1Decision.status === "APPROVED"
+                    ? "bg-emerald-50/70 border-emerald-200 text-emerald-950"
+                    : "bg-rose-50/70 border-rose-200 text-rose-950"
+                }`}
+              >
+                <p className="font-bold text-sm">
+                  {phase1Decision.status === "APPROVED"
+                    ? "Congratulations! Your Phase 1 patent documents have been officially approved."
+                    : "Your Phase 1 submission was rejected by the evaluation panel."}
+                </p>
+                <p className="text-xs mt-1 text-slate-600">
+                  {phase1Decision.status === "APPROVED"
+                    ? "Your team has met the requirements for Phase 1. Instructions for the subsequent phases will follow."
+                    : "Please review the feedback below, make the necessary corrections to your documents, and re-upload them in the Phase 1 section."}
+                </p>
+              </div>
+
+              {phase1Decision.adminComment ? (
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-1.5">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                    <MessageSquare size={13} className="text-slate-400" /> Reviewer Feedback & Comments:
+                  </span>
+                  <p className="text-xs font-semibold text-slate-800 whitespace-pre-line leading-relaxed">
+                    {phase1Decision.adminComment}
+                  </p>
+                </div>
+              ) : (
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-[11px] text-slate-500 italic">
+                  No evaluator comments were attached to this decision.
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={handleCloseDecisionPopup}
+                className={`w-full sm:w-auto px-6 py-2.5 rounded-xl font-bold text-xs text-white transition shadow-sm cursor-pointer ${
+                  phase1Decision.status === "APPROVED"
+                    ? "bg-emerald-600 hover:bg-emerald-700"
+                    : "bg-slate-900 hover:bg-slate-800"
+                }`}
+              >
+                Acknowledge & Close
               </button>
             </div>
           </div>

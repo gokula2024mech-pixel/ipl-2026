@@ -449,13 +449,14 @@ router.post('/phase1/upload', authenticateUser, checkPhase1Active, (req, res) =>
       }
 
       // Update/Upsert metadata database record
-      const { data: submission, error: insErr } = await supabase
+      let effectiveDocType = documentType;
+      let { data: submission, error: insErr } = await supabase
         .from('phase1_submissions')
         .upsert({
           team_id: team.id,
           registration_id: registrationId,
           team_name: reg.team_name,
-          document_type: documentType,
+          document_type: effectiveDocType,
           original_filename: file.originalname,
           google_drive_file_id: driveFile.id,
           google_drive_folder_id: teamFolderId,
@@ -468,6 +469,34 @@ router.post('/phase1/upload', authenticateUser, checkPhase1Active, (req, res) =>
         })
         .select()
         .single()
+
+      if (insErr && (insErr.code === '23514' || insErr.message?.includes('chk_submission_document_type'))) {
+        if (documentType === 'NOVELTY_FORM') effectiveDocType = 'FORM_2';
+        else if (documentType === 'REPRESENTATION_SHEET') effectiveDocType = 'FORM_5';
+        else effectiveDocType = 'FORM_2';
+
+        const retry = await supabase
+          .from('phase1_submissions')
+          .upsert({
+            team_id: team.id,
+            registration_id: registrationId,
+            team_name: reg.team_name,
+            document_type: effectiveDocType,
+            original_filename: file.originalname,
+            google_drive_file_id: driveFile.id,
+            google_drive_folder_id: teamFolderId,
+            uploaded_by: req.user.email,
+            uploaded_at: new Date().toISOString(),
+            review_status: 'UPLOADED',
+            rejection_reason: null,
+            template_version_used: templateVersionUsed,
+            updated_at: new Date().toISOString()
+          })
+          .select()
+          .single();
+        submission = retry.data;
+        insErr = retry.error;
+      }
 
       if (insErr) {
         // If DB update fails, attempt to clean up the newly uploaded file to avoid orphaned files in Drive
@@ -484,6 +513,21 @@ router.post('/phase1/upload', authenticateUser, checkPhase1Active, (req, res) =>
         } catch (delErr) {
           console.warn('[Google Drive] Old file cleanup error:', delErr.message)
         }
+      }
+
+      // Reset team decision to PENDING so new upload is queued for admin review
+      try {
+        const localDecs = readLocalDecisions();
+        localDecs[registrationId] = {
+          status: 'PENDING',
+          adminComment: null,
+          reviewedBy: null,
+          reviewedAt: null,
+          decisionSeen: false
+        };
+        writeLocalDecisions(localDecs);
+      } catch (cacheErr) {
+        console.warn('[Upload Decision Cache Warning]:', cacheErr.message);
       }
 
       return res.status(200).json({
@@ -673,6 +717,687 @@ router.post('/phase1/review', authenticateUser, checkAdmin, async (req, res) => 
   } catch (err) {
     console.error('[Review Error]:', err.message);
     return res.status(500).json({ success: false, message: 'Failed to update review state.' });
+  }
+});
+
+// ------------------------------------------------------------------
+// ADMIN SUBMISSIONS REVIEW CENTER ENDPOINTS
+// ------------------------------------------------------------------
+
+const DECISIONS_CONFIG_PATH = path.join(__dirname, '..', 'config', 'team_decisions.json');
+
+function readLocalDecisions() {
+  try {
+    if (fs.existsSync(DECISIONS_CONFIG_PATH)) {
+      const raw = fs.readFileSync(DECISIONS_CONFIG_PATH, 'utf-8');
+      return JSON.parse(raw);
+    }
+  } catch (e) {
+    console.warn('[Team Decisions] Local read error:', e.message);
+  }
+  return {};
+}
+
+function writeLocalDecisions(decisions) {
+  try {
+    const dir = path.dirname(DECISIONS_CONFIG_PATH);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    fs.writeFileSync(DECISIONS_CONFIG_PATH, JSON.stringify(decisions, null, 2), 'utf-8');
+  } catch (e) {
+    console.warn('[Team Decisions] Local write error:', e.message);
+  }
+}
+
+// 7. GET /api/phase1/admin/submissions
+// Aggregated team submissions query for Admin Review Center
+router.get('/phase1/admin/submissions', authenticateUser, checkAdmin, async (req, res) => {
+  try {
+    const {
+      status = 'PENDING',
+      search = '',
+      patentType = 'ALL',
+      department = 'ALL',
+      domain = 'ALL',
+      mentor = 'ALL',
+      trl = 'ALL',
+      dateFilter = 'ALL',
+      startDate = '',
+      endDate = ''
+    } = req.query;
+
+    // 1. Fetch all documents from phase1_submissions
+    const { data: subs, error: subsErr } = await supabase
+      .from('phase1_submissions')
+      .select('*')
+      .order('uploaded_at', { ascending: false });
+
+    if (subsErr) throw subsErr;
+
+    const allSubs = subs || [];
+    // Prune orphaned decisions for registrations with 0 submitted documents
+    try {
+      const currentDecisions = readLocalDecisions();
+      const activeIds = new Set(allSubs.map(s => s.registration_id).filter(Boolean));
+      let modified = false;
+      for (const regId of Object.keys(currentDecisions)) {
+        if (!activeIds.has(regId)) {
+          delete currentDecisions[regId];
+          modified = true;
+        }
+      }
+      if (modified) {
+        writeLocalDecisions(currentDecisions);
+      }
+    } catch (cleanErr) {
+      console.warn('[Admin Submissions] Decision pruning warning:', cleanErr.message);
+    }
+
+    if (allSubs.length === 0) {
+      return res.status(200).json({
+        success: true,
+        counts: { pending: 0, approved: 0, rejected: 0, total: 0 },
+        submissions: []
+      });
+    }
+
+    // 2. Extract unique registration IDs
+    const regIds = [...new Set(allSubs.map(s => s.registration_id).filter(Boolean))];
+
+    // 3. Fetch matching registrations & products
+    const [regsResult, prodsResult] = await Promise.all([
+      supabase
+        .from('registrations')
+        .select('*')
+        .in('registration_id', regIds),
+      supabase
+        .from('products')
+        .select('*')
+        .in('legacy_registration_id', regIds)
+    ]);
+
+    const registrations = regsResult.data || [];
+    const products = prodsResult.data || [];
+    const localDecisions = readLocalDecisions();
+
+    // Canonical templates for Utility vs Design
+    const UTILITY_TEMPLATES = [
+      { name: 'Abstract_for_Product.docx', type: 'FIGURE_OF_ABSTRACT' },
+      { name: 'Declaration_Form.docx', type: 'FORM_5' },
+      { name: 'Grant_Form.docx', type: 'FORM_2' },
+      { name: 'List_of_Drawing.docx', type: 'LIST_OF_DRAWINGS' }
+    ];
+    const DESIGN_TEMPLATES = [
+      { name: 'Novelty_Form.docx', type: 'NOVELTY_FORM' },
+      { name: 'Representation_Sheet.docx', type: 'REPRESENTATION_SHEET' }
+    ];
+
+    // 4. Aggregate by team registration
+    const teamSubmissions = regIds.map(regId => {
+      const teamDocs = allSubs.filter(s => s.registration_id === regId);
+      const reg = registrations.find(r => r.registration_id === regId);
+      const prod = products.find(p => p.legacy_registration_id === regId || (reg && p.team_id === reg.id));
+      const localDec = localDecisions[regId];
+
+      // Detect Patent Type
+      let detectedPatentType = 'Utility Patent';
+      if (teamDocs.some(d => (d.original_filename && /novelty|representation/i.test(d.original_filename)) || d.patent_type === 'Design Patent')) {
+        detectedPatentType = 'Design Patent';
+      }
+
+      // Compute aggregate review status
+      let finalStatus = 'PENDING';
+      if (localDec && localDec.status) {
+        finalStatus = localDec.status;
+      } else {
+        const hasRejected = teamDocs.some(d => d.review_status === 'REJECTED');
+        const allApproved = teamDocs.length > 0 && teamDocs.every(d => d.review_status === 'APPROVED');
+        if (hasRejected) finalStatus = 'REJECTED';
+        else if (allApproved) finalStatus = 'APPROVED';
+        else finalStatus = 'PENDING';
+      }
+
+      // Admin Comment & Reviewer Metadata ONLY if status is APPROVED or REJECTED
+      let comment = null;
+      let finalReviewedBy = null;
+      let finalReviewedAt = null;
+
+      if (finalStatus === 'APPROVED' || finalStatus === 'REJECTED') {
+        comment = (localDec && localDec.adminComment !== undefined)
+          ? localDec.adminComment
+          : (teamDocs.find(d => d.admin_comment)?.admin_comment ||
+             (finalStatus === 'REJECTED' ? teamDocs.find(d => d.rejection_reason)?.rejection_reason : null) ||
+             null);
+        finalReviewedBy = localDec?.reviewedBy || teamDocs.find(d => d.reviewed_by)?.reviewed_by || null;
+        finalReviewedAt = localDec?.reviewedAt || teamDocs.find(d => d.reviewed_at)?.reviewed_at || null;
+      }
+
+      // Decision Seen
+      const decisionSeen = localDec ? !!localDec.decisionSeen : teamDocs.every(d => d.decision_seen === true);
+
+      // Assemble document checklist based on patent type
+      const expectedTemplates = detectedPatentType === 'Design Patent' ? DESIGN_TEMPLATES : UTILITY_TEMPLATES;
+      const docs = expectedTemplates.map((tmpl, index) => {
+        // Find if this team uploaded a file matching this template type or filename
+        const match = teamDocs.find(d => {
+          const docTypeNorm = (d.document_type || '').toUpperCase();
+          const fileNorm = (d.original_filename || '').toLowerCase();
+          const tmplNameNorm = tmpl.name.replace(/\.[^/.]+$/, '').toLowerCase();
+          return docTypeNorm === tmpl.type || fileNorm.includes(tmplNameNorm);
+        });
+
+        if (match) {
+          return {
+            id: match.id,
+            slotNumber: String(index + 1).padStart(2, '0'),
+            name: match.original_filename || tmpl.name,
+            templateName: tmpl.name,
+            documentType: match.document_type,
+            status: 'SUBMITTED',
+            fileId: match.google_drive_file_id,
+            webViewLink: match.google_drive_file_id
+              ? `https://drive.google.com/file/d/${match.google_drive_file_id}/view`
+              : null,
+            uploadedAt: match.uploaded_at
+          };
+        } else {
+          return {
+            id: `missing-${regId}-${tmpl.type}`,
+            slotNumber: String(index + 1).padStart(2, '0'),
+            name: tmpl.name,
+            templateName: tmpl.name,
+            documentType: tmpl.type,
+            status: 'NOT SUBMITTED',
+            fileId: null,
+            webViewLink: null,
+            uploadedAt: null
+          };
+        }
+      });
+
+      // Also append any extra documents uploaded that didn't match canonical slots
+      teamDocs.forEach((d, extraIdx) => {
+        const alreadyIncluded = docs.some(doc => doc.id === d.id);
+        if (!alreadyIncluded) {
+          docs.push({
+            id: d.id,
+            slotNumber: String(docs.length + 1).padStart(2, '0'),
+            name: d.original_filename,
+            templateName: d.original_filename,
+            documentType: d.document_type,
+            status: 'SUBMITTED',
+            fileId: d.google_drive_file_id,
+            webViewLink: d.google_drive_file_id
+              ? `https://drive.google.com/file/d/${d.google_drive_file_id}/view`
+              : null,
+            uploadedAt: d.uploaded_at
+          });
+        }
+      });
+
+      // Resolve mentor
+      const mentorObj = {
+        name: reg?.mentor_name || 'Unassigned',
+        department: reg?.mentor_department || reg?.leader_department || 'General'
+      };
+
+      // Resolve team members
+      const membersObj = {
+        leader: {
+          name: reg?.leader_name || 'N/A',
+          email: reg?.leader_email || '',
+          phone: reg?.leader_mobile || '',
+          department: reg?.leader_department || ''
+        },
+        member2: reg?.member2_name ? {
+          name: reg?.member2_name,
+          email: reg?.member2_email || '',
+          phone: reg?.member2_mobile || '',
+          department: reg?.member2_department || ''
+        } : null,
+        member3: reg?.member3_name ? {
+          name: reg?.member3_name,
+          email: reg?.member3_email || '',
+          phone: reg?.member3_mobile || '',
+          department: reg?.member3_department || ''
+        } : null,
+        member4: reg?.member4_name ? {
+          name: reg?.member4_name,
+          email: reg?.member4_email || '',
+          phone: reg?.member4_mobile || '',
+          department: reg?.member4_department || ''
+        } : null
+      };
+
+      // Earliest and latest upload timestamps
+      const dates = teamDocs.map(d => new Date(d.uploaded_at).getTime()).filter(t => !isNaN(t));
+      const latestDate = dates.length > 0 ? new Date(Math.max(...dates)).toISOString() : new Date().toISOString();
+
+      return {
+        id: regId,
+        teamId: regId,
+        dbTeamId: teamDocs[0]?.team_id || null,
+        teamName: reg?.team_name || teamDocs[0]?.team_name || 'Unnamed Team',
+        productTitle: prod?.product_title || reg?.project_title || 'Untitled Project',
+        innovationDomain: prod?.innovation_domain || reg?.innovation_domain || 'General',
+        department: reg?.leader_department || 'General',
+        patentType: detectedPatentType,
+        category: teamDocs[0]?.category || (detectedPatentType === 'Design Patent' ? 'Hardware' : 'Hardware'),
+        trl: Number(prod?.trl_level || reg?.trl_level || 3),
+        mentor: mentorObj,
+        members: membersObj,
+        problemArea: prod?.problem_area || reg?.problem_area || '',
+        proposedSolution: prod?.proposed_solution || reg?.proposed_solution || '',
+        expectedImpact: prod?.expected_impact || reg?.expected_impact || '',
+        submissionDate: latestDate,
+        status: finalStatus, // 'PENDING' | 'APPROVED' | 'REJECTED'
+        adminComment: comment,
+        reviewedBy: finalReviewedBy,
+        reviewedAt: finalReviewedAt,
+        decisionSeen: decisionSeen,
+        documents: docs
+      };
+    });
+
+    // 5. Calculate global status counts
+    const pendingCount = teamSubmissions.filter(s => s.status === 'PENDING').length;
+    const approvedCount = teamSubmissions.filter(s => s.status === 'APPROVED').length;
+    const rejectedCount = teamSubmissions.filter(s => s.status === 'REJECTED').length;
+
+    // 6. Apply filters
+    let filtered = teamSubmissions;
+
+    // Status filter
+    if (status && status !== 'ALL') {
+      const cleanStatus = status.trim().toUpperCase();
+      filtered = filtered.filter(s => s.status === cleanStatus);
+    }
+
+    // Patent Type filter
+    if (patentType && patentType !== 'ALL') {
+      filtered = filtered.filter(s => s.patentType.toLowerCase() === patentType.toLowerCase());
+    }
+
+    // Department filter
+    if (department && department !== 'ALL') {
+      filtered = filtered.filter(s => (s.department || '').toLowerCase() === department.toLowerCase());
+    }
+
+    // Innovation Domain filter
+    if (domain && domain !== 'ALL') {
+      filtered = filtered.filter(s => (s.innovationDomain || '').toLowerCase() === domain.toLowerCase());
+    }
+
+    // Mentor filter
+    if (mentor && mentor !== 'ALL') {
+      filtered = filtered.filter(s => (s.mentor?.name || '').toLowerCase() === mentor.toLowerCase());
+    }
+
+    // TRL filter
+    if (trl && trl !== 'ALL') {
+      const targetTrl = Number(trl);
+      if (!isNaN(targetTrl)) {
+        filtered = filtered.filter(s => s.trl === targetTrl);
+      }
+    }
+
+    // Date range filter
+    if (dateFilter && dateFilter !== 'ALL') {
+      const now = Date.now();
+      if (dateFilter === 'today') {
+        const startOfDay = new Date();
+        startOfDay.setHours(0, 0, 0, 0);
+        filtered = filtered.filter(s => new Date(s.submissionDate).getTime() >= startOfDay.getTime());
+      } else if (dateFilter === '7days') {
+        const past7 = now - 7 * 24 * 60 * 60 * 1000;
+        filtered = filtered.filter(s => new Date(s.submissionDate).getTime() >= past7);
+      } else if (dateFilter === '30days') {
+        const past30 = now - 30 * 24 * 60 * 60 * 1000;
+        filtered = filtered.filter(s => new Date(s.submissionDate).getTime() >= past30);
+      } else if (dateFilter === 'custom') {
+        if (startDate) {
+          const sTime = new Date(startDate).getTime();
+          filtered = filtered.filter(s => new Date(s.submissionDate).getTime() >= sTime);
+        }
+        if (endDate) {
+          const eTime = new Date(endDate);
+          eTime.setHours(23, 59, 59, 999);
+          filtered = filtered.filter(s => new Date(s.submissionDate).getTime() <= eTime.getTime());
+        }
+      }
+    }
+
+    // Global Search filter
+    if (search && search.trim()) {
+      const q = search.trim().toLowerCase();
+      filtered = filtered.filter(s => {
+        const tId = (s.teamId || '').toLowerCase();
+        const tName = (s.teamName || '').toLowerCase();
+        const pTitle = (s.productTitle || '').toLowerCase();
+        const leaderName = (s.members?.leader?.name || '').toLowerCase();
+        const leaderEmail = (s.members?.leader?.email || '').toLowerCase();
+        const leaderPhone = (s.members?.leader?.phone || '').toLowerCase();
+        const m2Name = (s.members?.member2?.name || '').toLowerCase();
+        const m2Email = (s.members?.member2?.email || '').toLowerCase();
+        const m3Name = (s.members?.member3?.name || '').toLowerCase();
+        const m3Email = (s.members?.member3?.email || '').toLowerCase();
+        const m4Name = (s.members?.member4?.name || '').toLowerCase();
+
+        return tId.includes(q) ||
+          tName.includes(q) ||
+          pTitle.includes(q) ||
+          leaderName.includes(q) ||
+          leaderEmail.includes(q) ||
+          leaderPhone.includes(q) ||
+          m2Name.includes(q) ||
+          m2Email.includes(q) ||
+          m3Name.includes(q) ||
+          m3Email.includes(q) ||
+          m4Name.includes(q);
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      counts: {
+        pending: pendingCount,
+        approved: approvedCount,
+        rejected: rejectedCount,
+        total: teamSubmissions.length
+      },
+      submissions: filtered
+    });
+  } catch (err) {
+    console.error('[Admin Submissions Error]:', err.message);
+    return res.status(500).json({ success: false, message: 'Failed to retrieve submissions: ' + err.message });
+  }
+});
+
+// 8. POST /api/phase1/admin/review-team
+// Team-level Phase 1 decision (APPROVE / REJECT) with optional comment
+router.post('/phase1/admin/review-team', authenticateUser, checkAdmin, async (req, res) => {
+  try {
+    const registrationId = req.body.registrationId;
+    const status = (req.body.status || req.body.reviewStatus || '').toUpperCase();
+    const rawComment = req.body.adminComment !== undefined ? req.body.adminComment : req.body.comment;
+
+    if (!registrationId || !status || !['APPROVED', 'REJECTED', 'PENDING'].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid request: registrationId and status (APPROVED, REJECTED, or PENDING) are required.'
+      });
+    }
+
+    const cleanComment = rawComment && typeof rawComment === 'string' ? rawComment.trim() : null;
+    const nowIso = new Date().toISOString();
+
+    // 1. Update Supabase phase1_submissions records for this team
+    const isPending = status === 'PENDING';
+    const targetDbStatus = isPending ? 'PENDING' : status;
+    const finalComment = isPending ? null : cleanComment;
+    const finalReviewer = isPending ? null : req.user.email;
+    const finalReviewedAt = isPending ? null : nowIso;
+
+    const updatePayload = {
+      review_status: targetDbStatus,
+      rejection_reason: status === 'REJECTED' ? finalComment : null,
+      reviewed_by: finalReviewer,
+      reviewed_at: finalReviewedAt,
+      updated_at: nowIso
+    };
+
+    try {
+      const extPayload = {
+        ...updatePayload,
+        admin_comment: finalComment,
+        decision_seen: false
+      };
+      let { error: updErr } = await supabase
+        .from('phase1_submissions')
+        .update(extPayload)
+        .eq('registration_id', registrationId);
+
+      if (updErr && targetDbStatus === 'PENDING') {
+        // Fallback for check constraint if 'PENDING' is represented as 'UPLOADED'
+        extPayload.review_status = 'UPLOADED';
+        updatePayload.review_status = 'UPLOADED';
+        const retry = await supabase
+          .from('phase1_submissions')
+          .update(extPayload)
+          .eq('registration_id', registrationId);
+        updErr = retry.error;
+      }
+
+      if (updErr) {
+        // Fallback without newly added columns if not yet migrated
+        await supabase
+          .from('phase1_submissions')
+          .update(updatePayload)
+          .eq('registration_id', registrationId);
+      }
+    } catch (dbErr) {
+      console.warn('[Review Team DB Update Warning]:', dbErr.message);
+    }
+
+    // 2. Persist to local decisions fallback cache
+    const localDecisions = readLocalDecisions();
+    localDecisions[registrationId] = {
+      status,
+      adminComment: finalComment,
+      reviewedBy: finalReviewer,
+      reviewedAt: finalReviewedAt,
+      decisionSeen: false
+    };
+    writeLocalDecisions(localDecisions);
+
+    console.log(`[Review Team] Admin ${req.user.email} set team ${registrationId} to ${status}`);
+
+    return res.status(200).json({
+      success: true,
+      message: `Team ${registrationId} submission marked as ${status}.`,
+      status,
+      adminComment: finalComment,
+      reviewedBy: finalReviewer,
+      reviewedAt: finalReviewedAt
+    });
+  } catch (err) {
+    console.error('[Review Team Error]:', err.message);
+    return res.status(500).json({ success: false, message: 'Failed to record team decision: ' + err.message });
+  }
+});
+
+// 8b. POST /api/phase1/admin/return-to-pending
+// Focused admin correction endpoint: returns APPROVED or REJECTED team submission back to PENDING
+router.post('/phase1/admin/return-to-pending', authenticateUser, checkAdmin, async (req, res) => {
+  try {
+    const registrationId = (req.body.registrationId || req.body.teamId || '').trim();
+    const rawComment = req.body.adminComment !== undefined ? req.body.adminComment : req.body.comment;
+
+    if (!registrationId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid request: registrationId is required.'
+      });
+    }
+
+    const cleanComment = rawComment && typeof rawComment === 'string' ? rawComment.trim() : null;
+    const nowIso = new Date().toISOString();
+
+    // 1. Update Supabase phase1_submissions records for this team
+    // Return to pending clears all final-decision metadata
+    const updatePayload = {
+      review_status: 'PENDING',
+      rejection_reason: null,
+      reviewed_by: null,
+      reviewed_at: null,
+      updated_at: nowIso
+    };
+
+    try {
+      const extPayload = {
+        ...updatePayload,
+        admin_comment: null,
+        decision_seen: false
+      };
+      let { error: updErr } = await supabase
+        .from('phase1_submissions')
+        .update(extPayload)
+        .eq('registration_id', registrationId);
+
+      if (updErr) {
+        // Fallback for check constraint if 'PENDING' is represented as 'UPLOADED'
+        extPayload.review_status = 'UPLOADED';
+        updatePayload.review_status = 'UPLOADED';
+        const retry = await supabase
+          .from('phase1_submissions')
+          .update(extPayload)
+          .eq('registration_id', registrationId);
+        updErr = retry.error;
+      }
+
+      if (updErr) {
+        // Fallback without newly added columns if not yet migrated
+        await supabase
+          .from('phase1_submissions')
+          .update(updatePayload)
+          .eq('registration_id', registrationId);
+      }
+    } catch (dbErr) {
+      console.warn('[Return to Pending DB Update Warning]:', dbErr.message);
+    }
+
+    // 2. Persist to local decisions fallback cache
+    const localDecisions = readLocalDecisions();
+    localDecisions[registrationId] = {
+      status: 'PENDING',
+      adminComment: null,
+      reviewedBy: null,
+      reviewedAt: null,
+      decisionSeen: false
+    };
+    writeLocalDecisions(localDecisions);
+
+    console.log(`[Return to Pending] Admin ${req.user.email} returned team ${registrationId} to PENDING`);
+
+    return res.status(200).json({
+      success: true,
+      message: `Team ${registrationId} submission returned to Pending Review.`,
+      status: 'PENDING',
+      adminComment: null,
+      reviewedBy: null,
+      reviewedAt: null
+    });
+  } catch (err) {
+    console.error('[Return to Pending Error]:', err.message);
+    return res.status(500).json({ success: false, message: 'Failed to return submission to pending: ' + err.message });
+  }
+});
+
+// 9. POST /api/phase1/decision-seen
+// Student marks their team's decision notification as seen
+router.post('/phase1/decision-seen', authenticateUser, async (req, res) => {
+  try {
+    const { registrationId } = req.body;
+    if (!registrationId) {
+      return res.status(400).json({ success: false, message: 'registrationId is required.' });
+    }
+
+    // Authorize student for registration
+    const authorized = await isAuthorizedForRegistration(req.user.id, req.user.email, registrationId);
+    if (!authorized) {
+      return res.status(403).json({ success: false, message: 'Access denied: You are not authorized for this team.' });
+    }
+
+    try {
+      await supabase
+        .from('phase1_submissions')
+        .update({ decision_seen: true })
+        .eq('registration_id', registrationId);
+    } catch (e) {}
+
+    const localDecisions = readLocalDecisions();
+    if (localDecisions[registrationId]) {
+      localDecisions[registrationId].decisionSeen = true;
+      writeLocalDecisions(localDecisions);
+    }
+
+    return res.status(200).json({ success: true, message: 'Decision marked as seen.' });
+  } catch (err) {
+    console.error('[Decision Seen Error]:', err.message);
+    return res.status(500).json({ success: false, message: 'Failed to mark decision as seen.' });
+  }
+});
+
+// 10. GET /api/phase1/team-status/:registrationId
+// Authoritative decision status endpoint for Student My Submissions
+router.get('/phase1/team-status/:registrationId', authenticateUser, async (req, res) => {
+  try {
+    const { registrationId } = req.params;
+    if (!registrationId) {
+      return res.status(400).json({ success: false, message: 'registrationId is required.' });
+    }
+
+    const authorized = await isAuthorizedForRegistration(req.user.id, req.user.email, registrationId);
+    if (!authorized) {
+      return res.status(403).json({ success: false, message: 'Access denied.' });
+    }
+
+    const { data: subs } = await supabase
+      .from('phase1_submissions')
+      .select('*')
+      .eq('registration_id', registrationId);
+
+    const localDecisions = readLocalDecisions();
+    const localDec = localDecisions[registrationId];
+
+    if (!subs || subs.length === 0) {
+      if (localDecisions[registrationId]) {
+        delete localDecisions[registrationId];
+        writeLocalDecisions(localDecisions);
+      }
+      return res.status(200).json({
+        success: true,
+        hasSubmission: false,
+        status: null,
+        adminComment: null,
+        decisionSeen: true
+      });
+    }
+
+    // Determine status
+    let finalStatus = 'PENDING';
+    if (localDec && localDec.status) {
+      finalStatus = localDec.status;
+    } else {
+      const hasRejected = subs.some(s => s.review_status === 'REJECTED');
+      const allApproved = subs.length > 0 && subs.every(s => s.review_status === 'APPROVED');
+      if (hasRejected) finalStatus = 'REJECTED';
+      else if (allApproved) finalStatus = 'APPROVED';
+      else finalStatus = 'PENDING';
+    }
+
+    let comment = null;
+    if (finalStatus === 'APPROVED' || finalStatus === 'REJECTED') {
+      comment = (localDec && localDec.adminComment !== undefined)
+        ? localDec.adminComment
+        : (subs.find(s => s.admin_comment)?.admin_comment ||
+           (finalStatus === 'REJECTED' ? subs.find(s => s.rejection_reason)?.rejection_reason : null) ||
+           null);
+    }
+
+    const seen = localDec ? !!localDec.decisionSeen : subs.every(s => s.decision_seen === true);
+
+    return res.status(200).json({
+      success: true,
+      hasSubmission: true,
+      status: finalStatus,
+      adminComment: comment,
+      decisionSeen: seen
+    });
+  } catch (err) {
+    console.error('[Team Status Error]:', err.message);
+    return res.status(500).json({ success: false, message: 'Failed to query status.' });
   }
 });
 
