@@ -576,7 +576,9 @@ export default function MySubmissionsPage({
   const fetchTeamSubmissionsData = async (teamId, dept, cat, pt) => {
     if (!teamId) return;
     try {
-      const url = `${API_BASE_URL}/api/patents/submissions?teamId=${encodeURIComponent(teamId)}&department=${encodeURIComponent(dept || "")}&category=${encodeURIComponent(cat)}&patentType=${encodeURIComponent(pt)}&phase=phase%201`;
+      const effectiveCat = cat || (pt === "Design Patent" ? "Hardware" : "Hardware");
+      const effectivePt = pt || "Design Patent";
+      const url = `${API_BASE_URL}/api/patents/submissions?teamId=${encodeURIComponent(teamId)}&department=${encodeURIComponent(dept || "")}&category=${encodeURIComponent(effectiveCat)}&patentType=${encodeURIComponent(effectivePt)}&phase=phase%201`;
       const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
@@ -693,14 +695,19 @@ export default function MySubmissionsPage({
       });
       return;
     }
+    let catToUse = selectedCategory;
+    if (pt === "Design Patent" && !catToUse) {
+      catToUse = "Hardware";
+      setSelectedCategory("Hardware");
+    }
     setSelectedPatentType(pt);
     if (activeRegId) {
-      savePreferences(userEmail, activeRegId, selectedCategory, pt);
+      savePreferences(userEmail, activeRegId, catToUse, pt);
       fetchTemplates(pt);
       fetchTeamSubmissionsData(
         activeRegId,
         activeDepartment,
-        selectedCategory,
+        catToUse,
         pt,
       );
     }
@@ -1805,19 +1812,24 @@ export default function MySubmissionsPage({
                         const normTmpl = cleanTmpl
                           .toLowerCase()
                           .replace(/[^a-z0-9]/g, "");
-                        const submittedFile = teamSubmissions.find((s) => {
-                          const cleanSub = s.name.toLowerCase();
-                          const rawTmplLower = rawTmpl.toLowerCase();
-                          const normTmplLower = normTmpl.toLowerCase();
-                          const altTmplLower = rawTmpl
-                            .replace(/\s+/g, "-")
-                            .toLowerCase();
-                          return (
-                            cleanSub.includes(normTmplLower) ||
-                            cleanSub.includes(altTmplLower) ||
-                            cleanSub.includes(rawTmplLower)
-                          );
-                        });
+                        const submittedFile =
+                          teamSubmissions.find((s) => {
+                            const cleanSub = s.name.toLowerCase();
+                            const rawTmplLower = rawTmpl.toLowerCase();
+                            const normTmplLower = normTmpl.toLowerCase();
+                            const altTmplLower = rawTmpl
+                              .replace(/\s+/g, "-")
+                              .toLowerCase();
+                            return (
+                              cleanSub.includes(normTmplLower) ||
+                              cleanSub.includes(altTmplLower) ||
+                              cleanSub.includes(rawTmplLower)
+                            );
+                          }) ||
+                          (activeTemplates.length === 1 &&
+                          teamSubmissions.length >= 1
+                            ? teamSubmissions[0]
+                            : null);
 
                         return (
                           <div

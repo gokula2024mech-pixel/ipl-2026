@@ -121,10 +121,10 @@ router.get('/submissions', async (req, res) => {
   try {
     let { phase = 'phase 1', department, category, patentType, teamId } = req.query
 
-    if (!teamId || !category || !patentType) {
+    if (!teamId) {
       return res.status(400).json({
         success: false,
-        message: 'teamId, category, and patentType query parameters are required.'
+        message: 'teamId query parameter is required.'
       })
     }
 
@@ -146,13 +146,45 @@ router.get('/submissions', async (req, res) => {
       cleanDept = 'Mechanical Engineering'
     }
 
-    const files = await googleDriveService.listTeamSubmissions({
+    // Category auto-resolution if omitted or empty
+    let cleanCategory = (category || '').trim()
+    let cleanPatentType = (patentType || '').trim()
+
+    if (!cleanCategory) {
+      if (cleanPatentType === 'Design Patent') {
+        cleanCategory = 'Hardware'
+      } else {
+        cleanCategory = 'Hardware'
+      }
+    }
+
+    if (!cleanPatentType) {
+      cleanPatentType = 'Design Patent'
+    }
+
+    let files = await googleDriveService.listTeamSubmissions({
       phase,
       department: cleanDept,
-      category: category.trim(),
-      patentType: patentType.trim(),
+      category: cleanCategory,
+      patentType: cleanPatentType,
       teamId: cleanTeamId
     })
+
+    // If no files found and category was defaulted, also check alternate category (Hardware vs Software) if Utility Patent
+    if ((!files || files.length === 0) && cleanPatentType === 'Utility Patent' && cleanCategory === 'Hardware') {
+      try {
+        const altFiles = await googleDriveService.listTeamSubmissions({
+          phase,
+          department: cleanDept,
+          category: 'Software',
+          patentType: cleanPatentType,
+          teamId: cleanTeamId
+        })
+        if (altFiles && altFiles.length > 0) {
+          files = altFiles
+        }
+      } catch (e) {}
+    }
 
     return res.status(200).json({
       success: true,
