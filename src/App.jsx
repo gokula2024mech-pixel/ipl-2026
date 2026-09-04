@@ -297,6 +297,7 @@ export default function App() {
   }, [loading, viewMode])
 
   const authGenerationRef = useRef(0)
+  const activeUserIdRef = useRef(null)
 
   const handleOpenRegistration = () => {
     // Check if registration is actively open according to authoritative regTimer state
@@ -376,6 +377,7 @@ export default function App() {
 
       const generation = ++authGenerationRef.current
       console.log(`[AUTH] SIGNED_OUT event or null session. Incrementing generation to ${generation}. Resetting states.`)
+      activeUserIdRef.current = null
       setSession(null)
       setProfile(null)
       setViewMode("public")
@@ -384,8 +386,16 @@ export default function App() {
       return
     }
 
-    // Now we have a valid session.
-    // If it is SIGNED_IN, INITIAL_SESSION, or INITIAL_LOAD, we treat it as a new auth lifecycle
+    // Guard: If the user is already authenticated and active (e.g. returning from mobile native file picker
+    // or tab refocus), update session silently without triggering a full unmounting loading screen.
+    const isSameActiveUser = activeUserIdRef.current && activeUserIdRef.current === currentSession.user.id
+    if (isSameActiveUser) {
+      console.log(`[AUTH] Maintaining active session for user ${currentSession.user.email} on ${eventType} (preventing component remount).`)
+      setSession(currentSession)
+      return
+    }
+
+    // Now we have a valid newly establishing session (cold start, initial load, or new sign-in).
     if (
       eventType === "SIGNED_IN" ||
       eventType === "INITIAL_SESSION" ||
@@ -404,6 +414,7 @@ export default function App() {
         if (generation === authGenerationRef.current) {
           console.log('[AUTH] signOut called (invalid email domain)')
           setLoginError('Please sign in using your @sece.ac.in college account.')
+          activeUserIdRef.current = null
           setSession(null)
           setProfile(null)
           setViewMode("public")
@@ -423,6 +434,7 @@ export default function App() {
 
       // Guard check: is this async result still representing the current generation?
       if (generation === authGenerationRef.current) {
+        activeUserIdRef.current = currentSession.user.id
         setSession(currentSession)
         setProfile(userProfile)
 
