@@ -452,11 +452,11 @@ export default function MySubmissionsPage({
   };
 
   useEffect(() => {
-    fetchSubmissions();
-  }, [initialSession]);
+    fetchSubmissions(true);
+  }, [initialUser?.id]);
 
-  const fetchSubmissions = async () => {
-    setLoading(true);
+  const fetchSubmissions = async (showLoader = true) => {
+    if (showLoader) setLoading(true);
     setAuthExpired(false);
     try {
       const token = await getToken();
@@ -774,23 +774,59 @@ export default function MySubmissionsPage({
       return;
     }
 
+    if (!template) {
+      showToast({
+        type: "error",
+        title: "Upload Blocked",
+        message: "Template information is missing. Please try again.",
+      });
+      return;
+    }
+
     uploadingTemplateRef.current = template;
+    try {
+      sessionStorage.setItem("ipl_uploading_template", JSON.stringify(template));
+      if (activeRegId) {
+        sessionStorage.setItem("ipl_uploading_teamId", activeRegId);
+      }
+    } catch (e) {}
+
     if (fileInputRef.current) {
-      // Clear input value before launch so choosing the exact same file fires onChange reliably
       fileInputRef.current.value = "";
       fileInputRef.current.click();
     }
   };
 
   const handleFileInputChange = (e) => {
-    const files = e.target.files;
+    const files = e?.target?.files || (fileInputRef.current && fileInputRef.current.files);
     const file = files && files[0];
+
+    if (!file) {
+      return;
+    }
+
+    // Reset input value AFTER capturing file safely so choosing the same file next time triggers onChange
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+
     let template = uploadingTemplateRef.current;
+    if (!template) {
+      try {
+        const saved = sessionStorage.getItem("ipl_uploading_template");
+        if (saved) template = JSON.parse(saved);
+      } catch (err) {}
+    }
     if (!template && activeTemplates.length === 1) {
       template = activeTemplates[0];
     }
 
-    if (!file || !template) {
+    if (!template) {
+      showToast({
+        type: "error",
+        title: "Upload Blocked",
+        message: "Template information unavailable. Please select a template and try again.",
+      });
       return;
     }
 
@@ -815,10 +851,29 @@ export default function MySubmissionsPage({
       return;
     }
 
+    const teamId = activeRegId || sessionStorage.getItem("ipl_uploading_teamId");
+    if (!teamId) {
+      showToast({
+        type: "error",
+        title: "Upload Blocked",
+        message: "Team information unavailable. Please refresh and try again.",
+      });
+      return;
+    }
+
     // Ensure Software strictly uses Utility Patent
     let finalPatentType = selectedPatentType;
     if (selectedCategory === "Software") {
       finalPatentType = "Utility Patent";
+    }
+
+    if (!selectedCategory || !finalPatentType) {
+      showToast({
+        type: "warning",
+        title: "Selection Required",
+        message: "Please select both Category and Patent Type before uploading.",
+      });
+      return;
     }
 
     setUploadingDocId(template.id);
@@ -840,7 +895,7 @@ export default function MySubmissionsPage({
       formData.append("department", activeDepartment);
       formData.append("category", selectedCategory);
       formData.append("patentType", finalPatentType);
-      formData.append("teamId", activeRegId);
+      formData.append("teamId", teamId);
       formData.append("templateId", template.id);
 
       const response = await fetch(`${API_BASE_URL}/api/patents/upload`, {
@@ -871,17 +926,15 @@ export default function MySubmissionsPage({
         title: isReplacement ? "Document Updated" : "Document Uploaded",
         message: isReplacement
           ? `${file.name} replaced the previous version successfully.`
-          : `${file.name} was uploaded and linked to ${activeRegId} successfully.`,
+          : `${file.name} was uploaded and linked to ${teamId} successfully.`,
       });
 
-      if (activeRegId) {
-        await fetchTeamSubmissionsData(
-          activeRegId,
-          activeDepartment,
-          selectedCategory,
-          finalPatentType,
-        );
-      }
+      await fetchTeamSubmissionsData(
+        teamId,
+        activeDepartment,
+        selectedCategory,
+        finalPatentType,
+      );
     } catch (err) {
       showToast({
         type: "error",
@@ -893,6 +946,23 @@ export default function MySubmissionsPage({
       setUploadingFileInfo(null);
     }
   };
+
+  useEffect(() => {
+    const inputEl = fileInputRef.current;
+    if (!inputEl) return;
+
+    const onNativeChange = (e) => {
+      handleFileInputChange(e);
+    };
+
+    inputEl.addEventListener("change", onNativeChange);
+    inputEl.addEventListener("input", onNativeChange);
+
+    return () => {
+      inputEl.removeEventListener("change", onNativeChange);
+      inputEl.removeEventListener("input", onNativeChange);
+    };
+  }, [activeTemplates, selectedCategory, selectedPatentType, activeRegId, activeDepartment]);
 
   const formatDateTime = (dateStr) => {
     if (!dateStr) return "Not Scheduled";
@@ -1021,6 +1091,26 @@ export default function MySubmissionsPage({
         </aside>,
         document.body
       )}
+
+      {/* Permanent, never-unmounted hidden file input with Word doc preference */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        tabIndex={-1}
+        aria-hidden="true"
+        style={{
+          position: "absolute",
+          top: "-9999px",
+          left: "-9999px",
+          width: "1px",
+          height: "1px",
+          opacity: 0.01,
+          pointerEvents: "none",
+        }}
+        accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        onChange={handleFileInputChange}
+        onInput={handleFileInputChange}
+      />
 
       <div className="mx-auto max-w-7xl">
         {/* Header bar */}
@@ -1655,26 +1745,6 @@ export default function MySubmissionsPage({
                         </span>
                       )}
                   </div>
-
-                  {/* Mobile-Safe hidden single file input: attached to render tree, zero pointerEvents blocks */}
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    tabIndex={-1}
-                    aria-hidden="true"
-                    style={{
-                      position: "fixed",
-                      top: "0px",
-                      left: "0px",
-                      width: "0px",
-                      height: "0px",
-                      opacity: 0,
-                      zIndex: -10,
-                    }}
-                    accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/octet-stream,application/zip,.pdf,*/*"
-                    onChange={handleFileInputChange}
-                    onInput={handleFileInputChange}
-                  />
 
                   {!selectedPatentType ? (
                     <div className="p-12 flex flex-col items-center justify-center text-center gap-3 text-slate-400">
