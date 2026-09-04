@@ -225,6 +225,24 @@ export default function MySubmissionsPage({
   const [toast, setToast] = useState(null);
   const toastTimeoutRef = useRef(null);
 
+  // Temporary Mobile Upload Diagnostic State (Physical Device Real-Time Trace)
+  const [uploadDebug, setUploadDebug] = useState({
+    step1: "WAITING",
+    step2: "WAITING",
+    step3: "WAITING",
+    step4: "WAITING",
+    step5: "WAITING",
+    step6: "WAITING",
+    step7: "WAITING",
+    step8: "WAITING",
+    step9: "WAITING",
+    filename: "None",
+    fileType: "None",
+    fileSize: "0 B",
+    errorDetail: "",
+    lastEvent: "Initialized",
+  });
+
   const [isEditing, setIsEditing] = useState(false);
   const [editProjectTitle, setEditProjectTitle] = useState("");
   const [editProblemArea, setEditProblemArea] = useState("");
@@ -765,7 +783,29 @@ export default function MySubmissionsPage({
   };
 
   const handleUploadClick = (template) => {
+    setUploadDebug({
+      step1: "PASSED",
+      step2: "WAITING",
+      step3: "WAITING",
+      step4: "WAITING",
+      step5: "WAITING",
+      step6: "WAITING",
+      step7: "WAITING",
+      step8: "WAITING",
+      step9: "WAITING",
+      filename: "None",
+      fileType: "None",
+      fileSize: "0 B",
+      errorDetail: "",
+      lastEvent: `Button clicked: ${template?.name}`,
+    });
+
     if (!selectedCategory || !selectedPatentType) {
+      setUploadDebug((prev) => ({
+        ...prev,
+        step1: "FAILED",
+        errorDetail: "Category or Patent Type selection missing",
+      }));
       showToast({
         type: "warning",
         title: "Selection Required",
@@ -773,25 +813,76 @@ export default function MySubmissionsPage({
       });
       return;
     }
+
     uploadingTemplateRef.current = template;
     if (fileInputRef.current) {
-      // Clear input value so choosing the same file always triggers onChange
+      // Clear input value before launch so choosing the exact same file fires onChange reliably
       fileInputRef.current.value = "";
+      setUploadDebug((prev) => ({
+        ...prev,
+        step2: "PASSED",
+        lastEvent: `Native picker requested for ${template?.name}`,
+      }));
       fileInputRef.current.click();
+    } else {
+      setUploadDebug((prev) => ({
+        ...prev,
+        step2: "FAILED",
+        errorDetail: "fileInputRef is null / detached from DOM",
+      }));
     }
   };
 
   const handleFileInputChange = (e) => {
-    const file = e.target.files && e.target.files[0];
+    const fileCount = e.target.files?.length || 0;
+    setUploadDebug((prev) => ({
+      ...prev,
+      step3: fileCount > 0 ? "PASSED" : "FAILED",
+      lastEvent: `change/input fired with ${fileCount} file(s)`,
+    }));
+
+    const files = e.target.files;
+    const file = files && files[0];
     const template = uploadingTemplateRef.current;
-    // Reset input value immediately
-    e.target.value = "";
-    if (!file || !template) return;
+
+    if (!file) {
+      setUploadDebug((prev) => ({
+        ...prev,
+        step4: "FAILED",
+        errorDetail: "e.target.files was empty (picker cancelled or dropped)",
+      }));
+      return;
+    }
+
+    setUploadDebug((prev) => ({
+      ...prev,
+      step4: "PASSED",
+      filename: file.name || "Unnamed",
+      fileType: file.type || "empty",
+      fileSize: `${(file.size / 1024).toFixed(1)} KB`,
+      lastEvent: `File captured: ${file.name}`,
+    }));
+
+    if (!template) {
+      setUploadDebug((prev) => ({
+        ...prev,
+        step6: "FAILED",
+        errorDetail: "uploadingTemplateRef was lost",
+      }));
+      return;
+    }
+
     handleUploadFile(file, template);
   };
 
   const handleUploadFile = async (file, template) => {
     if (!file || !template) return;
+
+    setUploadDebug((prev) => ({
+      ...prev,
+      step6: "PASSED",
+      lastEvent: `Processing: ${file.name}`,
+    }));
 
     // Client-side Word format validation for instant feedback (.doc or .docx)
     const fileName = (file.name || "").trim();
@@ -803,10 +894,23 @@ export default function MySubmissionsPage({
     const isWordDoc = isWordExt || isWordMime;
 
     if (!isWordDoc) {
+      setUploadDebug((prev) => ({
+        ...prev,
+        step5: "FAILED",
+        errorDetail: `Invalid extension for: ${fileName}`,
+        step9: "PASSED (Invalid modal displayed)",
+        lastEvent: "Invalid file format modal shown",
+      }));
       // Primary UI feedback: Dedicated Invalid File Format modal (no duplicate toast)
       setInvalidFileModal({ fileName: fileName || "Selected file" });
       return;
     }
+
+    setUploadDebug((prev) => ({
+      ...prev,
+      step5: "PASSED",
+      lastEvent: "Word validation passed",
+    }));
 
     // Ensure Software strictly uses Utility Patent
     let finalPatentType = selectedPatentType;
@@ -824,8 +928,19 @@ export default function MySubmissionsPage({
     try {
       const token = await getToken();
       if (!token) {
+        setUploadDebug((prev) => ({
+          ...prev,
+          step7: "FAILED",
+          errorDetail: "Authentication token is missing/expired",
+        }));
         throw new Error("Your session has expired. Please sign in again to continue.");
       }
+
+      setUploadDebug((prev) => ({
+        ...prev,
+        step7: "PASSED",
+        lastEvent: "Sending POST /api/patents/upload",
+      }));
 
       const formData = new FormData();
       formData.append("file", file);
@@ -842,14 +957,45 @@ export default function MySubmissionsPage({
         body: formData,
       });
 
-      const result = await response.json();
+      const contentType = response.headers.get("content-type") || "";
+      let result = null;
+      if (contentType.includes("application/json")) {
+        result = await response.json();
+      } else {
+        const rawText = await response.text();
+        setUploadDebug((prev) => ({
+          ...prev,
+          step8: "FAILED",
+          errorDetail: `Non-JSON response (${response.status}): ${rawText.slice(0, 100)}`,
+        }));
+        throw new Error(`Server returned unexpected response (status ${response.status})`);
+      }
+
       if (!response.ok || !result.success) {
         if (result.code === "INVALID_FILE_FORMAT") {
+          setUploadDebug((prev) => ({
+            ...prev,
+            step8: "FAILED",
+            errorDetail: "Backend rejected file format",
+            step9: "PASSED (Invalid modal displayed)",
+          }));
           setInvalidFileModal({ fileName: file.name });
           return;
         }
+        setUploadDebug((prev) => ({
+          ...prev,
+          step8: "FAILED",
+          errorDetail: result.message || "Upload request failed on server",
+        }));
         throw new Error(result.message || "File upload failed.");
       }
+
+      setUploadDebug((prev) => ({
+        ...prev,
+        step8: "PASSED",
+        step9: "PASSED",
+        lastEvent: "Upload succeeded and confirmed",
+      }));
 
       const isReplacement = result.data?.isReplacement || false;
       showToast({
@@ -869,10 +1015,15 @@ export default function MySubmissionsPage({
         );
       }
     } catch (err) {
+      setUploadDebug((prev) => ({
+        ...prev,
+        step9: "FAILED",
+        errorDetail: err.message,
+      }));
       showToast({
         type: "error",
         title: "Upload Failed",
-        message: err.message || "Unable to upload document. Please check your connection and try again.",
+        message: err.message || "An unexpected error occurred while uploading. Please try again.",
       });
     } finally {
       setUploadingDocId(null);
@@ -1642,16 +1793,85 @@ export default function MySubmissionsPage({
                       )}
                   </div>
 
-                  {/* Hidden single file input for reliable programmatic activation across Android / iOS / Desktop */}
+                  {/* Mobile-Safe hidden single file input: attached to render tree, zero pointerEvents blocks */}
                   <input
                     ref={fileInputRef}
                     type="file"
                     tabIndex={-1}
                     aria-hidden="true"
-                    style={{ display: "none" }}
-                    accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    style={{
+                      position: "fixed",
+                      top: "0px",
+                      left: "0px",
+                      width: "0px",
+                      height: "0px",
+                      opacity: 0,
+                      zIndex: -10,
+                    }}
+                    accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/octet-stream,application/zip,.pdf,*/*"
                     onChange={handleFileInputChange}
+                    onInput={handleFileInputChange}
                   />
+
+                  {/* =========================================================
+                      MOBILE UPLOAD DIAGNOSTIC STATUS PANEL (Physical Mobile Device Live Trace)
+                      ========================================================= */}
+                  <div className="rounded-2xl border-2 border-amber-300 bg-amber-50/90 p-4 text-slate-900 shadow-xs space-y-3 select-none">
+                    <div className="flex items-center justify-between border-b border-amber-200/80 pb-2">
+                      <div className="flex items-center gap-2">
+                        <span className="flex h-2.5 w-2.5 rounded-full bg-amber-500 animate-pulse"></span>
+                        <span className="font-mono text-xs font-black uppercase tracking-wider text-amber-950">
+                          MOBILE UPLOAD DEBUG TRACE
+                        </span>
+                      </div>
+                      <span className="font-mono text-[10px] bg-amber-200/80 text-amber-950 px-2 py-0.5 rounded font-bold max-w-[180px] truncate">
+                        {uploadDebug.lastEvent}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5 font-mono text-[11px] bg-white/90 p-2.5 rounded-xl border border-amber-200/60">
+                      <div className="truncate"><strong>File:</strong> <span className="text-slate-700">{uploadDebug.filename}</span></div>
+                      <div className="truncate"><strong>Type:</strong> <span className="text-slate-700">{uploadDebug.fileType}</span></div>
+                      <div><strong>Size:</strong> <span className="text-slate-700">{uploadDebug.fileSize}</span></div>
+                    </div>
+
+                    {uploadDebug.errorDetail && (
+                      <div className="p-2 bg-rose-100 border border-rose-300 rounded-xl text-rose-800 font-mono text-xs font-bold break-words">
+                        Error: {uploadDebug.errorDetail}
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5 font-mono text-[10px]">
+                      {[
+                        { label: "STEP 1 — Upload Click", val: uploadDebug.step1 },
+                        { label: "STEP 2 — Picker Opened", val: uploadDebug.step2 },
+                        { label: "STEP 3 — Change Event", val: uploadDebug.step3 },
+                        { label: "STEP 4 — File Captured", val: uploadDebug.step4 },
+                        { label: "STEP 5 — Validation", val: uploadDebug.step5 },
+                        { label: "STEP 6 — Upload Handler", val: uploadDebug.step6 },
+                        { label: "STEP 7 — Fetch Request", val: uploadDebug.step7 },
+                        { label: "STEP 8 — API Response", val: uploadDebug.step8 },
+                        { label: "STEP 9 — UI Result", val: uploadDebug.step9 },
+                      ].map((s) => {
+                        const isPassed = s.val.startsWith("PASSED");
+                        const isFailed = s.val.startsWith("FAILED");
+                        const bg = isPassed
+                          ? "bg-emerald-100 text-emerald-900 border-emerald-300 font-bold"
+                          : isFailed
+                          ? "bg-rose-100 text-rose-900 border-rose-300 font-bold"
+                          : "bg-white/80 text-slate-600 border-slate-200 font-semibold";
+                        return (
+                          <div
+                            key={s.label}
+                            className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg border ${bg}`}
+                          >
+                            <span>{s.label}</span>
+                            <span>{s.val}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
 
                   {!selectedPatentType ? (
                     <div className="p-12 flex flex-col items-center justify-center text-center gap-3 text-slate-400">
