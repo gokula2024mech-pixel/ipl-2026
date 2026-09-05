@@ -12,10 +12,9 @@ const NAV_LINKS = [
   { label: 'Journey', href: '#journey' },
   { label: 'Timeline', href: '#timeline' },
   { label: 'Leaderboard', href: '#leaderboard' },
+  { label: 'Vote', href: '#vote' },
   { label: 'Contact', href: '#contact' },
 ]
-
-
 
 const MOBILE_NAV_LINKS = [
   { label: 'Home', href: '#' },
@@ -26,6 +25,7 @@ const MOBILE_NAV_LINKS = [
   { label: 'Guidelines', href: '#eligibility' },
   { label: 'FAQs', href: '#' },
   { label: 'Leaderboard', href: '#leaderboard' },
+  { label: 'Live Voting', href: '#vote' },
   { label: 'Contact Us', href: '#contact' },
 ]
 
@@ -367,6 +367,12 @@ export default function Navbar({ onRegisterClick, user, profile, onProfileUpdate
                             <div>
                               <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider leading-none">Email</p>
                               <p className="text-sm font-semibold text-slate-800 mt-1.5 select-all break-all whitespace-normal w-full">{user.email}</p>
+                            </div>
+                            <div>
+                              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider leading-none">Department</p>
+                              <p className="text-xs font-semibold text-primary mt-1 break-words whitespace-normal w-full">
+                                {profile?.department || 'Not Selected (Required for Voting)'}
+                              </p>
                             </div>
                             <div className="flex flex-col gap-1.5 w-full">
                               <button

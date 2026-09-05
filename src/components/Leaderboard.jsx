@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Trophy,
@@ -10,9 +10,19 @@ import {
   Compass,
   Layers,
   Award,
+  Vote,
+  Radio,
+  CheckCircle,
+  Search,
+  Filter,
+  Sparkles,
+  RefreshCw,
+  QrCode,
+  ArrowRight,
 } from "lucide-react";
 import SectionReveal from "./SectionReveal";
 import MechanicalLoader from "./MechanicalLoader";
+import VotingModal from "./VotingModal";
 import { supabase } from "../supabaseClient";
 
 // Reusable SVG Mechanical Gear Helper
@@ -179,7 +189,20 @@ function MechanicalGearsMini({ scrollProgress }) {
   );
 }
 
-export default function Leaderboard() {
+const OFFICIAL_DEPARTMENTS = [
+  'Artificial Intelligence and Data Science',
+  'Artificial Intelligence and Machine Learning',
+  'Computer and Communication Engineering',
+  'Computer Science and Business System',
+  'Computer Science and Engineering',
+  'Cyber Security',
+  'Electrical and Electronics Engineering',
+  'Electronics and Communication Engineering',
+  'Information Technology',
+  'Mechanical Engineering'
+];
+
+export default function Leaderboard({ user, session, profile, onProfileUpdate } = {}) {
   const [activeTab, setActiveTab] = useState("overall");
   const [leaderboardType, setLeaderboardType] = useState("TRL_BASED");
   const [scrollProgress, setScrollProgress] = useState(0);
@@ -205,6 +228,49 @@ export default function Leaderboard() {
   // Pagination for Top Teams Table
   const [teamsPage, setTeamsPage] = useState(1);
   const teamsPerPage = 10;
+
+  // Live Voting States
+  const [votingStats, setVotingStats] = useState({
+    totalVotes: 0,
+    totalTeams: 0,
+    round: 1,
+    teams: []
+  });
+  const [votingLoading, setVotingLoading] = useState(false);
+  const [realtimeStatus, setRealtimeStatus] = useState("syncing");
+  const [recentlyVotedTeamId, setRecentlyVotedTeamId] = useState(null);
+  const [votingSearch, setVotingSearch] = useState("");
+  const [votingDeptFilter, setVotingDeptFilter] = useState("");
+  const [votingPage, setVotingPage] = useState(1);
+  const [votingModalOpen, setVotingModalOpen] = useState(false);
+  const [selectedVotingToken, setSelectedVotingToken] = useState("");
+  const fallbackIntervalRef = useRef(null);
+
+  const fetchVotingRankings = async (silent = false) => {
+    try {
+      if (!silent) setVotingLoading(true);
+      const rawApiUrl = (
+        import.meta.env.VITE_API_BASE_URL || "http://localhost:5000"
+      ).trim().replace(/\/+$/, "");
+      const API_BASE_URL = rawApiUrl.endsWith("/api") ? rawApiUrl.slice(0, -4) : rawApiUrl;
+
+      const res = await fetch(`${API_BASE_URL}/api/voting/leaderboard?round=1`);
+      const json = await res.json();
+
+      if (json.success && json.data) {
+        setVotingStats({
+          totalVotes: json.data.total_votes || 0,
+          totalTeams: json.data.total_teams || 0,
+          round: json.data.voting_round || 1,
+          teams: json.data.teams || []
+        });
+      }
+    } catch (err) {
+      console.warn("[Voting Leaderboard] Fetch error:", err.message);
+    } finally {
+      if (!silent) setVotingLoading(false);
+    }
+  };
 
   // Date Formatter helper: DD MMM YYYY · hh:mm AM/PM (preserved internally)
   const formatTimestamp = (dateStr) => {
@@ -250,23 +316,15 @@ export default function Leaderboard() {
       )
         .trim()
         .replace(/\/+$/, "");
+      const cleanApiBase = rawApiUrl.endsWith("/api") ? rawApiUrl.slice(0, -4) : rawApiUrl;
       // 1. Fetch Leaderboard Configuration (TRL_BASED vs VOTING_BASED)
       try {
-        const { data: appSettingsData } = await supabase
-          .from("app_settings")
-          .select("value")
-          .eq("key", "leaderboard_type")
-          .maybeSingle();
-        if (appSettingsData?.value?.type) {
-          setLeaderboardType(appSettingsData.value.type);
-        } else {
-          const cfgRes = await fetch(`${rawApiUrl}/api/leaderboard-config`);
-          const contentType = cfgRes.headers.get("content-type") || "";
-          if (cfgRes.ok && contentType.includes("application/json")) {
-            const cfgJson = await cfgRes.json();
-            if (cfgJson.leaderboard_type) {
-              setLeaderboardType(cfgJson.leaderboard_type);
-            }
+        const cfgRes = await fetch(`${cleanApiBase}/api/leaderboard-config`);
+        const contentType = cfgRes.headers.get("content-type") || "";
+        if (cfgRes.ok && contentType.includes("application/json")) {
+          const cfgJson = await cfgRes.json();
+          if (cfgJson.leaderboard_type) {
+            setLeaderboardType(cfgJson.leaderboard_type);
           }
         }
       } catch (e) {
@@ -301,7 +359,7 @@ export default function Leaderboard() {
         ) {
           productsData = directProds;
         } else {
-          const response = await fetch(`${rawApiUrl}/api/leaderboard-domains`);
+          const response = await fetch(`${cleanApiBase}/api/leaderboard-domains`);
           const contentType = response.headers.get("content-type") || "";
           if (response.ok && contentType.includes("application/json")) {
             const resJson = await response.json();
@@ -469,6 +527,82 @@ export default function Leaderboard() {
       window.removeEventListener("scroll", handleScroll);
     };
   }, []);
+
+  // Supabase Realtime & Fallback Polling for Live Voting
+  useEffect(() => {
+    if (leaderboardType !== "VOTING_BASED") return;
+
+    fetchVotingRankings();
+
+    const channel = supabase
+      .channel("public-team_votes-live")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "team_votes" },
+        (payload) => {
+          const newVote = payload.new;
+          if (newVote?.team_id) {
+            setRecentlyVotedTeamId(newVote.team_id);
+            setTimeout(() => setRecentlyVotedTeamId(null), 2500);
+
+            setVotingStats((prev) => {
+              const updatedTeams = [...prev.teams];
+              const idx = updatedTeams.findIndex((t) => t.id === newVote.team_id);
+              if (idx !== -1) {
+                updatedTeams[idx] = {
+                  ...updatedTeams[idx],
+                  voteCount: newVote.vote_count,
+                  lastVoteTime: newVote.updated_at
+                };
+              }
+              // Authoritative sort: voteCount DESC, lastVoteTime ASC, id ASC
+              updatedTeams.sort((a, b) => {
+                if (b.voteCount !== a.voteCount) return b.voteCount - a.voteCount;
+                const tA = new Date(a.lastVoteTime).getTime();
+                const tB = new Date(b.lastVoteTime).getTime();
+                if (tA !== tB) return tA - tB;
+                return a.id.localeCompare(b.id);
+              });
+              const reRanked = updatedTeams.map((t, i) => ({ ...t, rank: i + 1 }));
+              const newTotal = reRanked.reduce((sum, t) => sum + (t.voteCount || 0), 0);
+              return {
+                ...prev,
+                totalVotes: newTotal,
+                teams: reRanked
+              };
+            });
+          }
+        }
+      )
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          setRealtimeStatus("connected");
+          if (fallbackIntervalRef.current) {
+            clearInterval(fallbackIntervalRef.current);
+            fallbackIntervalRef.current = null;
+          }
+        } else if (
+          status === "CHANNEL_ERROR" ||
+          status === "TIMED_OUT" ||
+          status === "CLOSED"
+        ) {
+          setRealtimeStatus("fallback");
+          if (!fallbackIntervalRef.current) {
+            fallbackIntervalRef.current = setInterval(() => {
+              fetchVotingRankings(true);
+            }, 20000);
+          }
+        }
+      });
+
+    return () => {
+      supabase.removeChannel(channel);
+      if (fallbackIntervalRef.current) {
+        clearInterval(fallbackIntervalRef.current);
+        fallbackIntervalRef.current = null;
+      }
+    };
+  }, [leaderboardType]);
 
   // Overall View
   const renderOverallView = () => {
@@ -1737,6 +1871,357 @@ export default function Leaderboard() {
     );
   };
 
+  // Live Community Voting Leaderboard View
+  const renderVotingLeaderboard = () => {
+    // Filter teams by search and department
+    const filtered = votingStats.teams.filter((t) => {
+      const matchesSearch =
+        !votingSearch.trim() ||
+        (t.teamName && t.teamName.toLowerCase().includes(votingSearch.toLowerCase().trim())) ||
+        (t.department && t.department.toLowerCase().includes(votingSearch.toLowerCase().trim())) ||
+        (t.leadingProductTitle && t.leadingProductTitle.toLowerCase().includes(votingSearch.toLowerCase().trim()));
+
+      const matchesDept =
+        !votingDeptFilter || t.department === votingDeptFilter;
+
+      return matchesSearch && matchesDept;
+    });
+
+    const totalPages = Math.ceil(filtered.length / teamsPerPage) || 1;
+    const startIndex = (votingPage - 1) * teamsPerPage;
+    const paginatedTeams = filtered.slice(startIndex, startIndex + teamsPerPage);
+
+    // Calculate counts for all 10 official departments
+    const votingDeptCounts = {};
+    OFFICIAL_DEPARTMENTS.forEach((d) => { votingDeptCounts[d] = 0; });
+    const deptVoteCounts = {};
+
+    votingStats.teams.forEach((t) => {
+      if (t.department) {
+        if (votingDeptCounts[t.department] !== undefined) {
+          votingDeptCounts[t.department]++;
+        }
+        deptVoteCounts[t.department] = (deptVoteCounts[t.department] || 0) + (t.voteCount || 0);
+      }
+    });
+
+    let topDeptName = 'None';
+    let topDeptVotes = 0;
+    Object.entries(deptVoteCounts).forEach(([d, v]) => {
+      if (v > topDeptVotes) {
+        topDeptVotes = v;
+        topDeptName = d;
+      }
+    });
+
+    return (
+      <div className="mx-auto w-full max-w-[1400px] px-3 sm:px-4 md:px-6 lg:px-8 mt-6 min-w-0 space-y-8">
+        {/* Realtime Status Bar & Quick Actions */}
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-white p-3 sm:p-4 rounded-2xl border border-slate-200 shadow-2xs">
+          <div className="flex items-center gap-2.5">
+            <div className="relative flex h-3 w-3 items-center justify-center">
+              {realtimeStatus === 'connected' ? (
+                <>
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
+                </>
+              ) : (
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500 animate-pulse" />
+              )}
+            </div>
+            <div className="flex items-center gap-1.5 text-xs font-bold">
+              <span className={realtimeStatus === 'connected' ? 'text-emerald-700' : 'text-amber-700'}>
+                {realtimeStatus === 'connected' ? 'Live Realtime Updates Active' : 'Auto-Sync Active (20s)'}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+            <button
+              type="button"
+              onClick={() => fetchVotingRankings()}
+              disabled={votingLoading}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-50 text-xs font-bold text-slate-700 hover:bg-slate-100 transition cursor-pointer disabled:opacity-50"
+              title="Manually synchronize leaderboard with server"
+            >
+              <RefreshCw size={13} className={votingLoading ? 'animate-spin text-primary' : 'text-slate-500'} />
+              <span>{votingLoading ? 'Syncing...' : 'Sync'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedVotingToken('');
+                setVotingModalOpen(true);
+              }}
+              className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-accent text-xs font-extrabold text-white shadow-sm hover:bg-amber-600 transition cursor-pointer"
+            >
+              <Vote size={14} />
+              <span>Cast Vote</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Voting KPI Grid (3 Columns, No Round Card) */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+          {/* Card 1: Total Votes */}
+          <div className="rounded-2xl bg-white p-4 sm:p-5 border border-slate-200 shadow-2xs space-y-1">
+            <div className="flex items-center justify-between text-slate-400">
+              <span className="text-[11px] font-bold uppercase tracking-wider">Total Community Votes</span>
+              <Sparkles size={16} className="text-amber-500" />
+            </div>
+            <p className="font-heading text-2xl sm:text-3xl font-black text-[#0B1B3A]">
+              {votingStats.totalVotes.toLocaleString()}
+            </p>
+            <p className="text-[10px] text-slate-500 font-medium">Authoritative database verified</p>
+          </div>
+
+          {/* Card 2: Active Teams */}
+          <div className="rounded-2xl bg-white p-4 sm:p-5 border border-slate-200 shadow-2xs space-y-1">
+            <div className="flex items-center justify-between text-slate-400">
+              <span className="text-[11px] font-bold uppercase tracking-wider">Eligible Teams</span>
+              <Users size={16} className="text-primary" />
+            </div>
+            <p className="font-heading text-2xl sm:text-3xl font-black text-[#0B1B3A]">
+              {votingStats.totalTeams || votingStats.teams.length}
+            </p>
+            <p className="text-[10px] text-slate-500 font-medium">Registered project teams</p>
+          </div>
+
+          {/* Card 3: Top Department */}
+          <div className="rounded-2xl bg-white p-4 sm:p-5 border border-slate-200 shadow-2xs space-y-1">
+            <div className="flex items-center justify-between text-slate-400">
+              <span className="text-[11px] font-bold uppercase tracking-wider">Leading Dept</span>
+              <Building size={16} className="text-indigo-600" />
+            </div>
+            <p className="font-heading text-base sm:text-lg font-black text-[#0B1B3A] truncate" title={topDeptName}>
+              {topDeptName}
+            </p>
+            <p className="text-[10px] text-indigo-700 font-bold">
+              {topDeptVotes} accumulated votes
+            </p>
+          </div>
+        </div>
+
+        {/* Search & Filter Bar */}
+        <div className="flex flex-col sm:flex-row gap-3 items-center justify-between bg-white p-3 sm:p-4 rounded-2xl border border-slate-200 shadow-2xs">
+          <div className="relative w-full sm:w-72">
+            <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              value={votingSearch}
+              onChange={(e) => {
+                setVotingSearch(e.target.value);
+                setVotingPage(1);
+              }}
+              placeholder="Search by team name or project..."
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 pl-10 pr-3 py-2 text-xs sm:text-sm text-slate-900 focus:bg-white focus:border-primary focus:outline-none transition"
+            />
+          </div>
+
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            <Filter size={15} className="text-slate-400 shrink-0 hidden sm:inline" />
+            <select
+              value={votingDeptFilter}
+              onChange={(e) => {
+                setVotingDeptFilter(e.target.value);
+                setVotingPage(1);
+              }}
+              className="w-full sm:w-64 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-800 focus:bg-white focus:border-primary focus:outline-none transition"
+            >
+              <option value="">All Departments ({votingStats.teams.length})</option>
+              {OFFICIAL_DEPARTMENTS.map((dept) => (
+                <option key={dept} value={dept}>
+                  {dept} ({votingDeptCounts[dept] || 0})
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {/* Full Leaderboard Table / Cards */}
+        <div className="rounded-3xl bg-white border border-slate-200 shadow-sm overflow-hidden">
+          <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+            <h3 className="font-heading font-extrabold text-sm sm:text-base text-[#0B1B3A]">
+              Live Standings ({filtered.length} Teams)
+            </h3>
+            <span className="text-[11px] text-slate-400 font-medium">
+              Page {votingPage} of {totalPages}
+            </span>
+          </div>
+
+          {paginatedTeams.length === 0 ? (
+            <div className="py-16 text-center space-y-2">
+              <Trophy size={36} className="mx-auto text-slate-300" />
+              <p className="text-sm font-bold text-slate-700">No teams match your search or filter</p>
+              <p className="text-xs text-slate-500">Try adjusting your filters or clearing search criteria.</p>
+            </div>
+          ) : (
+            <>
+              {/* Desktop / Tablet Table View */}
+              <div className="hidden sm:block overflow-x-auto">
+                <table className="w-full text-left text-xs text-slate-700">
+                  <thead className="bg-slate-50 text-[10px] font-black uppercase tracking-wider text-slate-400 border-b border-slate-200">
+                    <tr>
+                      <th className="py-3.5 px-4 w-16 text-center">Rank</th>
+                      <th className="py-3.5 px-4">Team & Innovation</th>
+                      <th className="py-3.5 px-4">Department</th>
+                      <th className="py-3.5 px-4 text-center">Votes</th>
+                      <th className="py-3.5 px-4 text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {paginatedTeams.map((team) => {
+                      const isPulse = recentlyVotedTeamId === team.id;
+
+                      return (
+                        <tr
+                          key={team.id}
+                          className={`transition-colors duration-500 hover:bg-slate-50/80 ${
+                            isPulse ? 'bg-amber-50/80 font-bold' : ''
+                          }`}
+                        >
+                          <td className="py-3.5 px-4 text-center">
+                            <RankBadge rank={team.rank} size={28} />
+                          </td>
+                          <td className="py-3.5 px-4 max-w-xs">
+                            <div className="flex items-center gap-2">
+                              <p className="font-extrabold text-slate-900 truncate" title={team.teamName}>
+                                {team.teamName}
+                              </p>
+                              {isPulse && (
+                                <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-extrabold bg-amber-200 text-amber-900 animate-pulse">
+                                  +1 NEW VOTE
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[11px] text-slate-500 truncate" title={team.leadingProductTitle}>
+                              {team.leadingProductTitle || 'Project Showcase'}
+                            </p>
+                          </td>
+                          <td className="py-3.5 px-4">
+                            <span className="inline-block rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-700 truncate max-w-[200px]" title={team.department}>
+                              {team.department}
+                            </span>
+                          </td>
+                          <td className="py-3.5 px-4 text-center">
+                            <span className="font-heading font-black text-sm sm:text-base text-[#0B1B3A]">
+                              {team.voteCount}
+                            </span>
+                          </td>
+                          <td className="py-3.5 px-4 text-right">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedVotingToken(team.id);
+                                setVotingModalOpen(true);
+                              }}
+                              className="inline-flex items-center gap-1 rounded-lg bg-primary/10 px-3 py-1 text-xs font-bold text-primary hover:bg-primary hover:text-white transition cursor-pointer"
+                            >
+                              <Vote size={13} />
+                              <span>Vote</span>
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Mobile Sleek Cards (360px – 430px Friendly, NO Horizontal Scroll) */}
+              <div className="sm:hidden divide-y divide-slate-100">
+                {paginatedTeams.map((team) => {
+                  const isPulse = recentlyVotedTeamId === team.id;
+
+                  return (
+                    <div
+                      key={team.id}
+                      className={`p-3.5 space-y-2 transition-all duration-500 ${
+                        isPulse ? 'bg-amber-50/90 border-l-4 border-l-amber-500' : ''
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <RankBadge rank={team.rank} size={28} />
+                          <div>
+                            <div className="flex items-center gap-1.5">
+                              <h4 className="font-heading font-extrabold text-xs text-slate-900 truncate max-w-[170px]" title={team.teamName}>
+                                {team.teamName}
+                              </h4>
+                              {isPulse && (
+                                <span className="inline-block px-1.5 py-0.2 rounded-full text-[8px] font-black bg-amber-200 text-amber-900">
+                                  +1
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-[10px] text-slate-500 block truncate max-w-[190px]">
+                              {team.department}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="text-right">
+                          <span className="font-heading font-black text-base text-[#0B1B3A]">
+                            {team.voteCount}
+                          </span>
+                          <span className="block text-[9px] text-slate-400 font-bold uppercase">
+                            Votes
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-1 border-t border-slate-50">
+                        <p className="text-[10px] text-slate-600 truncate max-w-[210px]">
+                          {team.leadingProductTitle || 'Project Showcase'}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedVotingToken(team.id);
+                            setVotingModalOpen(true);
+                          }}
+                          className="rounded-lg bg-primary/10 px-2.5 py-1 text-[11px] font-bold text-primary hover:bg-primary hover:text-white transition cursor-pointer"
+                        >
+                          Vote
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+
+          {/* Pagination Controls */}
+          {totalPages > 1 && (
+            <div className="p-4 border-t border-slate-100 flex items-center justify-between text-xs">
+              <button
+                type="button"
+                onClick={() => setVotingPage((p) => Math.max(1, p - 1))}
+                disabled={votingPage === 1}
+                className="rounded-xl border border-slate-200 px-3 py-1.5 font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition cursor-pointer"
+              >
+                Previous
+              </button>
+              <span className="font-bold text-slate-600">
+                {votingPage} / {totalPages}
+              </span>
+              <button
+                type="button"
+                onClick={() => setVotingPage((p) => Math.min(totalPages, p + 1))}
+                disabled={votingPage === totalPages}
+                className="rounded-xl border border-slate-200 px-3 py-1.5 font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition cursor-pointer"
+              >
+                Next
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="bg-slate-50 min-h-screen pb-20 pt-24 relative overflow-x-hidden">
       <div className="bg-slate-900 text-white py-12 md:py-16 relative overflow-hidden rounded-b-3xl">
@@ -1749,27 +2234,7 @@ export default function Leaderboard() {
       </div>
 
       {leaderboardType === "VOTING_BASED" ? (
-        /* Voting Based Unavailable State */
-        <div className="mx-auto w-full max-w-[1400px] px-3 sm:px-4 md:px-6 lg:px-8 mt-12 min-w-0">
-          <div className="rounded-3xl border border-slate-200 bg-white p-8 sm:p-14 text-center shadow-sm max-w-2xl mx-auto space-y-4">
-            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-purple-50 text-purple-600 border border-purple-200/50 shadow-inner">
-              <Trophy size={32} />
-            </div>
-            <div>
-              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-purple-100 text-purple-800 text-xs font-black uppercase tracking-wider mb-2">
-                Voting Based Leaderboard
-              </div>
-              <h2 className="text-xl sm:text-2xl font-black text-[#0B1B3A] font-heading tracking-tight">
-                Voting evaluation is not available yet.
-              </h2>
-              <p className="mt-2 text-sm text-slate-600 font-bold max-w-md mx-auto leading-relaxed">
-                The community voting evaluation round has not opened. Team
-                rankings will be calculated and displayed once community voting
-                begins.
-              </p>
-            </div>
-          </div>
-        </div>
+        renderVotingLeaderboard()
       ) : (
         /* TRL Based Full Interactive Leaderboard */
         <>
@@ -2019,6 +2484,16 @@ export default function Leaderboard() {
           </div>
         </>
       )}
+
+      <VotingModal
+        isOpen={votingModalOpen}
+        onClose={() => setVotingModalOpen(false)}
+        initialToken={selectedVotingToken}
+        user={user}
+        session={session}
+        profile={profile}
+        onProfileUpdate={onProfileUpdate}
+      />
     </div>
   );
 }

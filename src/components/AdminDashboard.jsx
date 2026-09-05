@@ -20,7 +20,14 @@ import {
   X,
   Timer,
   Trophy,
-  CheckCircle
+  CheckCircle,
+  Vote,
+  Radio,
+  QrCode,
+  ShieldCheck,
+  ShieldAlert,
+  AlertCircle,
+  Sparkles
 } from "lucide-react";
 
 const rawApiUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000').trim().replace(/\/+$/, '')
@@ -598,10 +605,27 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
   const [extMinutes, setExtMinutes] = useState(0);
   const [extSeconds, setExtSeconds] = useState(0);
 
-  // Leaderboard Type Configuration State
   const [leaderboardType, setLeaderboardType] = useState('TRL_BASED');
   const [updatingLeaderboardType, setUpdatingLeaderboardType] = useState(false);
   const [leaderboardTypeSuccess, setLeaderboardTypeSuccess] = useState(false);
+
+  // Voting & QR Admin Controls States
+  const [votingControls, setVotingControls] = useState({
+    isVotingActive: false,
+    isQrGenerationActive: false,
+    currentVotingRound: 1
+  });
+  const [votingMetrics, setVotingMetrics] = useState({
+    totalVotes: 0,
+    activeVoters: 0,
+    votesPerMinute: 0,
+    duplicateAttemptsBlocked: 0
+  });
+  const [updatingVotingControls, setUpdatingVotingControls] = useState(false);
+  const [votingControlsSuccess, setVotingControlsSuccess] = useState(false);
+  const [votingControlsError, setVotingControlsError] = useState('');
+  const [generatingAllQrs, setGeneratingAllQrs] = useState(false);
+  const [batchQrMessage, setBatchQrMessage] = useState('');
 
   // Teams search filter & Pagination
   const [teamsSearch, setTeamsSearch] = useState(() => {
@@ -754,25 +778,42 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
 
       // Fetch Leaderboard Configuration
       try {
-        const { data: appSettingsData } = await supabase
-          .from("app_settings")
-          .select("value")
-          .eq("key", "leaderboard_type")
-          .maybeSingle();
-        if (appSettingsData?.value?.type) {
-          setLeaderboardType(appSettingsData.value.type);
-        } else {
-          const lRes = await fetch(`${API_BASE_URL}/api/leaderboard-config`);
-          const contentType = lRes.headers.get("content-type") || "";
-          if (lRes.ok && contentType.includes("application/json")) {
-            const lJson = await lRes.json();
-            if (lJson.leaderboard_type) {
-              setLeaderboardType(lJson.leaderboard_type);
-            }
+        const lRes = await fetch(`${API_BASE_URL}/api/leaderboard-config`);
+        const contentType = lRes.headers.get("content-type") || "";
+        if (lRes.ok && contentType.includes("application/json")) {
+          const lJson = await lRes.json();
+          if (lJson.leaderboard_type) {
+            setLeaderboardType(lJson.leaderboard_type);
           }
         }
       } catch (lErr) {
         console.warn("[Admin Dashboard] Error reading leaderboard config:", lErr.message);
+      }
+
+      // Fetch Voting Controls & Live Monitoring Metrics
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.access_token) {
+          const vRes = await fetch(`${API_BASE_URL}/api/voting/admin/metrics`, {
+            headers: { 'Authorization': `Bearer ${session.access_token}` }
+          });
+          const vJson = await vRes.json();
+          if (vJson.success && vJson.metrics) {
+            setVotingMetrics({
+              totalVotes: vJson.metrics.totalVotes || 0,
+              activeVoters: vJson.metrics.activeVoters || 0,
+              votesPerMinute: vJson.metrics.votesPerMinute || 0,
+              duplicateAttemptsBlocked: vJson.metrics.duplicateAttemptsBlocked || 0
+            });
+            setVotingControls({
+              isVotingActive: vJson.metrics.isVotingActive || false,
+              isQrGenerationActive: vJson.metrics.isQrGenerationActive || false,
+              currentVotingRound: vJson.metrics.currentVotingRound || 1
+            });
+          }
+        }
+      } catch (vErr) {
+        console.warn("[Admin Dashboard] Error reading voting admin metrics:", vErr.message);
       }
 
       // 2. Fetch profiles
@@ -1920,6 +1961,80 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
     }
   };
 
+  // Voting & QR Controls Operations
+  const handleToggleVotingControl = async (field, value) => {
+    setUpdatingVotingControls(true);
+    setVotingControlsSuccess(false);
+    setVotingControlsError('');
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        setVotingControlsError('Admin session not found or expired. Please re-login.');
+        setTimeout(() => setVotingControlsError(''), 5000);
+        return;
+      }
+
+      const payload = {
+        is_voting_active: field === 'voting' ? value : votingControls.isVotingActive,
+        is_qr_generation_active: field === 'qr' ? value : votingControls.isQrGenerationActive,
+        current_voting_round: field === 'round' ? value : votingControls.currentVotingRound
+      };
+
+      const res = await fetch(`${API_BASE_URL}/api/voting/admin/controls`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const json = await res.json();
+      if (res.ok && json.success) {
+        const ctrl = json.controls || {};
+        setVotingControls({
+          isVotingActive: ctrl.is_voting_active !== undefined ? ctrl.is_voting_active : (field === 'voting' ? value : votingControls.isVotingActive),
+          isQrGenerationActive: ctrl.is_qr_generation_active !== undefined ? ctrl.is_qr_generation_active : (field === 'qr' ? value : votingControls.isQrGenerationActive),
+          currentVotingRound: ctrl.current_voting_round !== undefined ? ctrl.current_voting_round : (field === 'round' ? value : votingControls.currentVotingRound)
+        });
+        setVotingControlsSuccess(true);
+        setTimeout(() => setVotingControlsSuccess(false), 4000);
+      } else {
+        setVotingControlsError(json.message || 'Failed to update voting controls.');
+        setTimeout(() => setVotingControlsError(''), 5000);
+      }
+    } catch (e) {
+      console.error('Error updating voting controls:', e);
+      setVotingControlsError(e.message || 'Network error updating voting controls.');
+      setTimeout(() => setVotingControlsError(''), 5000);
+    } finally {
+      setUpdatingVotingControls(false);
+    }
+  };
+
+  const handleGenerateAllQrs = async () => {
+    setGeneratingAllQrs(true);
+    setBatchQrMessage('');
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) return;
+
+      const res = await fetch(`${API_BASE_URL}/api/voting/admin/generate-all-qrs`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`
+        }
+      });
+      const json = await res.json();
+      setBatchQrMessage(json.message || 'QR generation complete.');
+      setTimeout(() => setBatchQrMessage(''), 5000);
+    } catch (e) {
+      setBatchQrMessage('Error generating QR codes.');
+    } finally {
+      setGeneratingAllQrs(false);
+    }
+  };
+
   // Evaluator Operations
   const handleAddEvaluator = async (e) => {
     e.preventDefault();
@@ -2880,6 +2995,173 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
                         <span className="font-bold text-slate-700">{leaderboardType === 'TRL_BASED' ? 'TRL Evaluation (Live)' : 'Voting Evaluation (Pending)'}</span>
                       </div>
                     </article>
+                  </div>
+
+                  {/* Live Voting & QR Control Center (Stage 10) */}
+                  <div className="space-y-6">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 pb-3">
+                      <div>
+                        <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                          <Vote size={20} className="text-primary" /> Live Community Voting & QR Control Center
+                        </h3>
+                        <p className="text-xs text-slate-500">
+                          Authoritative real-time switches controlling student QR access and voting capabilities.
+                        </p>
+                      </div>
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-blue-50 text-primary border border-blue-200/60">
+                        High-Concurrency Engine Active
+                      </span>
+                    </div>
+
+                    {/* Live Event Monitoring Cards (Part 21) */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      {/* Metric 1: Total Votes */}
+                      <article className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200 space-y-1">
+                        <div className="flex items-center justify-between text-slate-400">
+                          <span className="text-[11px] font-bold uppercase tracking-wider">Total Votes Cast</span>
+                          <Sparkles size={16} className="text-amber-500" />
+                        </div>
+                        <p className="font-heading text-2xl sm:text-3xl font-black text-[#0B1B3A]">
+                          {votingMetrics.totalVotes.toLocaleString()}
+                        </p>
+                        <p className="text-[10px] text-slate-500">Database verified votes</p>
+                      </article>
+
+                      {/* Metric 2: Active Voters */}
+                      <article className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200 space-y-1">
+                        <div className="flex items-center justify-between text-slate-400">
+                          <span className="text-[11px] font-bold uppercase tracking-wider">Active Voters</span>
+                          <Users size={16} className="text-primary" />
+                        </div>
+                        <p className="font-heading text-2xl sm:text-3xl font-black text-[#0B1B3A]">
+                          {votingMetrics.activeVoters.toLocaleString()}
+                        </p>
+                        <p className="text-[10px] text-slate-500">Distinct student voters</p>
+                      </article>
+
+                      {/* Metric 3: Votes / Min */}
+                      <article className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200 space-y-1">
+                        <div className="flex items-center justify-between text-slate-400">
+                          <span className="text-[11px] font-bold uppercase tracking-wider">Velocity</span>
+                          <Radio size={16} className="text-emerald-500 animate-pulse" />
+                        </div>
+                        <p className="font-heading text-2xl sm:text-3xl font-black text-emerald-700">
+                          {votingMetrics.votesPerMinute} <span className="text-xs font-bold text-slate-400">/ min</span>
+                        </p>
+                        <p className="text-[10px] text-slate-500">Sliding window throughput</p>
+                      </article>
+
+                      {/* Metric 4: Duplicate Attempts Blocked */}
+                      <article className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200 space-y-1">
+                        <div className="flex items-center justify-between text-slate-400">
+                          <span className="text-[11px] font-bold uppercase tracking-wider">Duplicates Blocked</span>
+                          <ShieldCheck size={16} className="text-indigo-600" />
+                        </div>
+                        <p className="font-heading text-2xl sm:text-3xl font-black text-indigo-900">
+                          {votingMetrics.duplicateAttemptsBlocked}
+                        </p>
+                        <p className="text-[10px] text-slate-500">Constraint-level protection</p>
+                      </article>
+                    </div>
+
+                    {/* Controls Grid */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {/* Switch A: Community Voting */}
+                      <article className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200 flex flex-col justify-between space-y-4">
+                        <div>
+                          <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-3">
+                            <h4 className="font-bold text-slate-900 flex items-center gap-2">
+                              <Vote size={18} className="text-primary" /> Community Voting Switch
+                            </h4>
+                            <span className={`px-2.5 py-0.5 rounded-full text-xs font-extrabold ${
+                              votingControls.isVotingActive
+                                ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-600/20'
+                                : 'bg-slate-100 text-slate-600'
+                            }`}>
+                              {votingControls.isVotingActive ? 'VOTING OPEN' : 'VOTING CLOSED'}
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-600 leading-relaxed">
+                            When <strong>OPEN</strong>, authenticated students can scan QR codes and cast official votes. When <strong>CLOSED</strong>, all vote submissions are authoritatively rejected by the server.
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-3 pt-2">
+                          <button
+                            type="button"
+                            disabled={updatingVotingControls}
+                            onClick={() => handleToggleVotingControl('voting', !votingControls.isVotingActive)}
+                            className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-extrabold transition cursor-pointer flex items-center justify-center gap-2 shadow-sm ${
+                              votingControls.isVotingActive
+                                ? 'bg-red-600 hover:bg-red-700 text-white'
+                                : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                            } disabled:opacity-50`}
+                          >
+                            <Vote size={15} />
+                            <span>{votingControls.isVotingActive ? 'Disable Voting' : 'Enable Live Voting'}</span>
+                          </button>
+                        </div>
+                      </article>
+
+                      {/* Switch B: QR Generation & Display */}
+                      <article className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200 flex flex-col justify-between space-y-4">
+                        <div>
+                          <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-3">
+                            <h4 className="font-bold text-slate-900 flex items-center gap-2">
+                              <QrCode size={18} className="text-primary" /> QR Generation Switch
+                            </h4>
+                            <span className={`px-2.5 py-0.5 rounded-full text-xs font-extrabold ${
+                              votingControls.isQrGenerationActive
+                                ? 'bg-blue-50 text-blue-700 ring-1 ring-blue-600/20'
+                                : 'bg-slate-100 text-slate-600'
+                            }`}>
+                              {votingControls.isQrGenerationActive ? 'QR GENERATION ON' : 'QR GENERATION OFF'}
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-600 leading-relaxed">
+                            When <strong>ON</strong>, eligible teams can generate and view their permanent QR codes for their stall. Disabling QR generation does NOT delete stored permanent QR tokens.
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-3 pt-2">
+                          <button
+                            type="button"
+                            disabled={updatingVotingControls}
+                            onClick={() => handleToggleVotingControl('qr', !votingControls.isQrGenerationActive)}
+                            className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-extrabold transition cursor-pointer flex items-center justify-center gap-2 shadow-sm ${
+                              votingControls.isQrGenerationActive
+                                ? 'bg-slate-700 hover:bg-slate-800 text-white'
+                                : 'bg-primary hover:bg-primary/90 text-white'
+                            } disabled:opacity-50`}
+                          >
+                            <QrCode size={15} />
+                            <span>{votingControls.isQrGenerationActive ? 'Disable QR Generation' : 'Enable QR Generation'}</span>
+                          </button>
+                        </div>
+                      </article>
+                    </div>
+
+
+                    {votingControlsSuccess && (
+                      <div className="rounded-xl bg-green-50 p-3 text-xs text-green-700 flex items-center gap-2 border border-green-200 animate-fade-in">
+                        <CheckCircle size={14} className="text-green-600 shrink-0" />
+                        <span>Voting controls saved authoritatively to database and broadcast to users.</span>
+                      </div>
+                    )}
+
+                    {votingControlsError && (
+                      <div className="rounded-xl bg-red-50 p-3 text-xs text-red-700 flex items-center gap-2 border border-red-200 animate-fade-in">
+                        <AlertCircle size={14} className="text-red-600 shrink-0" />
+                        <span>{votingControlsError}</span>
+                      </div>
+                    )}
+
+                    {batchQrMessage && (
+                      <div className="rounded-xl bg-blue-50 p-3 text-xs text-blue-700 flex items-center gap-2 border border-blue-200 animate-fade-in">
+                        <CheckCircle size={14} className="text-blue-600 shrink-0" />
+                        <span>{batchQrMessage}</span>
+                      </div>
+                    )}
                   </div>
 
                   {/* Phase Timer Cards */}

@@ -18,9 +18,17 @@ import {
   XCircle,
   Clock,
   MessageSquare,
+  QrCode,
+  Share2,
+  Lock,
+  Copy,
+  Check,
+  ExternalLink,
 } from "lucide-react";
+import QRCode from "qrcode";
 import MechanicalLoader from "./MechanicalLoader";
 import IpTypeFinder from "./IpTypeFinder";
+import TeamQrModal from "./TeamQrModal";
 import { supabase } from "../supabaseClient";
 import {
   getSessionState,
@@ -278,6 +286,191 @@ export default function MySubmissionsPage({
       }
     };
   }, []);
+
+  // Team QR State Map (teamId -> { status, qrToken, hasQr, isActive, qrGenerationEnabled, loading })
+  const [qrStatusMap, setQrStatusMap] = useState({});
+  const [qrDataUrlMap, setQrDataUrlMap] = useState({});
+  const [copiedLinkTeamId, setCopiedLinkTeamId] = useState(null);
+  const [generatingQrTeamId, setGeneratingQrTeamId] = useState(null);
+  const [selectedTeamForQrModal, setSelectedTeamForQrModal] = useState(null);
+
+  // Fetch QR status for a specific team
+  const fetchQrStatusForTeam = useCallback(async (teamId) => {
+    if (!teamId) return;
+    setQrStatusMap((prev) => ({
+      ...prev,
+      [teamId]: { ...(prev[teamId] || {}), loading: true }
+    }));
+    try {
+      const token = await getToken();
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const res = await fetch(`${API_BASE_URL}/api/voting/team-qr-status/${encodeURIComponent(teamId)}`, {
+        headers
+      });
+      const data = await res.json();
+      if (data.success) {
+        setQrStatusMap((prev) => ({
+          ...prev,
+          [teamId]: {
+            status: data.status,
+            qrToken: data.qr_token || null,
+            hasQr: data.has_qr,
+            isActive: data.is_active,
+            qrGenerationEnabled: data.qr_generation_enabled,
+            loading: false
+          }
+        }));
+      } else {
+        setQrStatusMap((prev) => ({
+          ...prev,
+          [teamId]: {
+            status: data.is_mentor ? 'MENTOR_RESTRICTED' : 'ERROR',
+            message: data.message,
+            loading: false
+          }
+        }));
+      }
+    } catch (e) {
+      console.warn('[MySubmissions] Error fetching team QR status:', e);
+      setQrStatusMap((prev) => ({
+        ...prev,
+        [teamId]: { ...(prev[teamId] || {}), loading: false }
+      }));
+    }
+  }, [API_BASE_URL]);
+
+  // Handle generating team QR
+  const handleGenerateTeamQr = async (team) => {
+    if (!team?.teamId) return;
+    setGeneratingQrTeamId(team.teamId);
+    try {
+      const token = await getToken();
+      if (!token) {
+        showToast({
+          type: 'error',
+          title: 'Authentication Required',
+          message: 'Please sign in to generate your team QR code.'
+        });
+        return;
+      }
+      const res = await fetch(`${API_BASE_URL}/api/voting/team-qr/generate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ team_id: team.teamId })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        showToast({
+          type: 'error',
+          title: 'QR Generation Error',
+          message: data.message || 'Failed to generate permanent team QR code.'
+        });
+      } else {
+        setQrStatusMap((prev) => ({
+          ...prev,
+          [team.teamId]: {
+            status: data.status,
+            qrToken: data.qr_token,
+            hasQr: true,
+            isActive: true,
+            qrGenerationEnabled: true,
+            loading: false
+          }
+        }));
+        showToast({
+          type: 'success',
+          title: 'Team QR Ready!',
+          message: 'Permanent team QR code generated successfully.'
+        });
+        setSelectedTeamForQrModal({
+          teamId: team.teamId,
+          teamName: team.teamName,
+          registrationId: team.registrationId,
+          qrToken: data.qr_token
+        });
+      }
+    } catch (err) {
+      showToast({
+        type: 'error',
+        title: 'Network Error',
+        message: 'Unable to connect to voting server.'
+      });
+    } finally {
+      setGeneratingQrTeamId(null);
+    }
+  };
+
+  // Handle sharing QR
+  const handleShareTeamQr = async (team, qrToken) => {
+    const votingUrl = `${window.location.origin}/#vote?token=${qrToken}`;
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: `Vote for ${team.teamName} - IPL 2026`,
+          text: `Scan or open this link to vote for team ${team.teamName} (${team.registrationId}) at IPL 2026!`,
+          url: votingUrl,
+        });
+        return;
+      } catch (e) {
+        if (e.name === 'AbortError') return;
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(votingUrl);
+      showToast({
+        type: 'success',
+        title: 'Voting Link Copied',
+        message: 'Direct voting URL copied to clipboard.'
+      });
+    } catch (e) {
+      console.warn('Clipboard error:', e);
+    }
+  };
+
+  const handleDownloadQrImage = (team) => {
+    const qrInfo = qrStatusMap[team?.teamId];
+    const dataUrl = qrInfo?.qrToken ? qrDataUrlMap[qrInfo.qrToken] : null;
+    if (!dataUrl) {
+      // If thumbnail not generated yet, open full modal
+      setSelectedTeamForQrModal({
+        teamId: team.teamId,
+        teamName: team.teamName,
+        registrationId: team.registrationId,
+        qrToken: qrInfo?.qrToken,
+      });
+      return;
+    }
+    const a = document.createElement("a");
+    a.href = dataUrl;
+    a.download = `IPL2026_${(team.registrationId || "TEAM").replace(/[^a-zA-Z0-9_-]/g, "_")}_QR.png`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    showToast({
+      type: "success",
+      title: "QR Downloaded",
+      message: "High-resolution QR code image saved.",
+    });
+  };
+
+  const handleCopyVotingLink = async (qrToken, teamId) => {
+    const votingUrl = `${window.location.origin}/#vote?token=${qrToken}`;
+    try {
+      await navigator.clipboard.writeText(votingUrl);
+      setCopiedLinkTeamId(teamId);
+      setTimeout(() => setCopiedLinkTeamId(null), 2500);
+      showToast({
+        type: "success",
+        title: "Voting Link Copied",
+        message: "Direct voting URL copied to clipboard.",
+      });
+    } catch (e) {
+      console.warn("Clipboard write failed:", e);
+    }
+  };
 
   // Real-time listener for Admin Phase Timer updates
   useEffect(() => {
@@ -703,6 +896,45 @@ export default function MySubmissionsPage({
       setSelectedPatentType("");
     }
   }, [activeRegId, userEmail]);
+
+  // Load QR status for the active team
+  useEffect(() => {
+    if (currentPage?.team?.teamId) {
+      fetchQrStatusForTeam(currentPage.team.teamId);
+    }
+  }, [currentPage?.team?.teamId, fetchQrStatusForTeam]);
+
+  // Generate QR Data URL thumbnail cache for active team QR
+  useEffect(() => {
+    const currentTeamId = currentPage?.team?.teamId;
+    const currentQrInfo = currentTeamId ? qrStatusMap[currentTeamId] : null;
+    if (
+      currentQrInfo?.status === "ACTIVE" &&
+      currentQrInfo.qrToken &&
+      !qrDataUrlMap[currentQrInfo.qrToken]
+    ) {
+      const votingUrl =
+        typeof window !== "undefined"
+          ? `${window.location.origin}/#vote?token=${currentQrInfo.qrToken}`
+          : `/#vote?token=${currentQrInfo.qrToken}`;
+
+      QRCode.toDataURL(votingUrl, {
+        width: 240,
+        margin: 2,
+        color: { dark: "#0B1B3A", light: "#FFFFFF" },
+        errorCorrectionLevel: "H",
+      })
+        .then((url) => {
+          setQrDataUrlMap((prev) => ({
+            ...prev,
+            [currentQrInfo.qrToken]: url,
+          }));
+        })
+        .catch((err) => {
+          console.warn("QR Thumbnail generation error:", err);
+        });
+    }
+  }, [currentPage?.team?.teamId, qrStatusMap, qrDataUrlMap]);
 
   const handleSelectCategory = (cat) => {
     if (selectedCategory === cat) {
@@ -1402,6 +1634,263 @@ export default function MySubmissionsPage({
               ) : (
                 currentPage && (
                   <div className="space-y-6">
+                    {/* ========================================================================= */}
+                    {/* TEAM QR CODE CARD — TOP OF MY SUBMISSIONS WORKSTATION                     */}
+                    {/* ========================================================================= */}
+                    {(() => {
+                      const currentTeam = currentPage?.team;
+                      if (!currentTeam) return null;
+
+                      const currentTeamId = currentTeam.teamId;
+                      const userEmailLower = (userEmail || "").trim().toLowerCase();
+
+                      // Check if user is mentor (Mentors MUST NOT get QR generation permission)
+                      const isMentor =
+                        (currentTeam.mentor?.email &&
+                          currentTeam.mentor.email.trim().toLowerCase() === userEmailLower) ||
+                        currentTeam.userRole === "Mentor";
+
+                      // Check if user is eligible member (Leader, Member 1, Member 2)
+                      const isEligibleMember =
+                        !isMentor &&
+                        (currentTeam.userRole === "Team Leader" ||
+                          currentTeam.userRole === "Member" ||
+                          userEmailLower === currentTeam.members?.leader?.email?.trim().toLowerCase() ||
+                          userEmailLower === currentTeam.members?.member2?.email?.trim().toLowerCase() ||
+                          userEmailLower === currentTeam.members?.member3?.email?.trim().toLowerCase());
+
+                      const teamQrInfo = qrStatusMap[currentTeamId] || {
+                        status: "NOT_GENERATED",
+                        loading: false,
+                      };
+                      const isGeneratingThis = generatingQrTeamId === currentTeamId;
+                      const qrDataUrl = teamQrInfo.qrToken ? qrDataUrlMap[teamQrInfo.qrToken] : null;
+                      const votingUrl = typeof window !== 'undefined' && teamQrInfo.qrToken
+                        ? `${window.location.origin}/#vote?token=${teamQrInfo.qrToken}`
+                        : `/#vote?token=${teamQrInfo.qrToken || ''}`;
+
+                      return (
+                        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 sm:p-6 transition-all">
+                          {/* Top Bar: Title, Reg ID, and Status Badge */}
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4 mb-4">
+                            <div className="flex items-center gap-3">
+                              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-primary border border-blue-200/70 shadow-2xs">
+                                <QrCode size={20} />
+                              </div>
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <h3 className="text-sm sm:text-base font-black text-slate-900 uppercase tracking-wider">
+                                    Team QR Code
+                                  </h3>
+                                  <span className="font-mono text-xs font-bold text-accent bg-amber-50 border border-amber-200/80 px-2 py-0.5 rounded">
+                                    {currentTeam.registrationId}
+                                  </span>
+                                </div>
+                                <p className="text-xs text-slate-500 font-medium mt-0.5">
+                                  Permanent Live Voting Stall Identifier
+                                </p>
+                              </div>
+                            </div>
+
+                            {/* Status Badge */}
+                            <div>
+                              {teamQrInfo.loading ? (
+                                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-500">
+                                  <div className="h-2 w-2 rounded-full border border-slate-400 border-t-transparent animate-spin" />
+                                  Checking...
+                                </span>
+                              ) : teamQrInfo.status === "ACTIVE" ? (
+                                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-2xs">
+                                  <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                                  QR ACTIVE
+                                </span>
+                              ) : teamQrInfo.status === "DISABLED_BY_ADMIN" ? (
+                                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-rose-50 text-rose-700 border border-rose-200">
+                                  <Lock size={12} className="text-rose-600" />
+                                  QR DISABLED BY ADMIN
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-amber-50 text-amber-700 border border-amber-200">
+                                  QR NOT GENERATED
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* State A: QR NOT GENERATED */}
+                          {teamQrInfo.status === "NOT_GENERATED" && (
+                            <div className="space-y-4 py-1">
+                              <p className="text-xs sm:text-sm text-slate-600 leading-relaxed max-w-2xl">
+                                QR not generated yet. Generate a permanent QR code for your team stall so attendees can scan and vote. Each team receives exactly one permanent QR code that remains consistent across all voting rounds.
+                              </p>
+
+                              {isMentor ? (
+                                <div className="space-y-3">
+                                  <div className="rounded-xl bg-amber-50 p-3.5 border border-amber-200 text-xs text-amber-800 flex items-center gap-2.5">
+                                    <AlertCircle size={16} className="text-amber-600 shrink-0" />
+                                    <span>Only team members (Leader or Member) can generate the team QR code. Mentors cannot generate QR codes.</span>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    disabled
+                                    className="w-full sm:w-auto py-2.5 px-5 rounded-xl bg-slate-200 text-slate-500 text-xs font-bold transition flex items-center justify-center gap-2 cursor-not-allowed opacity-60"
+                                  >
+                                    <QrCode size={15} />
+                                    <span>Generate QR Code (Members Only)</span>
+                                  </button>
+                                </div>
+                              ) : (
+                                <div>
+                                  <button
+                                    type="button"
+                                    disabled={isGeneratingThis || teamQrInfo.loading}
+                                    onClick={() => handleGenerateTeamQr(currentTeam)}
+                                    className="w-full sm:w-auto py-3 px-6 rounded-xl bg-accent hover:bg-amber-600 text-white text-xs sm:text-sm font-extrabold shadow-sm transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                                  >
+                                    {isGeneratingThis ? (
+                                      <>
+                                        <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                                        <span>Generating Permanent QR...</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <QrCode size={16} />
+                                        <span>Generate Team QR Code</span>
+                                      </>
+                                    )}
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* State B: QR ACTIVE */}
+                          {teamQrInfo.status === "ACTIVE" && (
+                            <div className="flex flex-col md:flex-row items-center md:items-start gap-6 pt-1">
+                              {/* QR Image Thumbnail Display */}
+                              <div className="shrink-0 flex flex-col items-center">
+                                <div
+                                  onClick={() =>
+                                    setSelectedTeamForQrModal({
+                                      teamId: currentTeam.teamId,
+                                      teamName: currentTeam.teamName,
+                                      registrationId: currentTeam.registrationId,
+                                      qrToken: teamQrInfo.qrToken,
+                                    })
+                                  }
+                                  className="group relative rounded-2xl bg-white p-2.5 border-2 border-slate-200 shadow-sm cursor-pointer hover:border-primary transition"
+                                  title="Click to view full-size QR"
+                                >
+                                  {qrDataUrl ? (
+                                    <img
+                                      src={qrDataUrl}
+                                      alt={`QR for ${currentTeam.teamName}`}
+                                      className="h-32 w-32 sm:h-36 sm:w-36 object-contain rounded-xl"
+                                    />
+                                  ) : (
+                                    <div className="h-32 w-32 sm:h-36 sm:w-36 flex items-center justify-center bg-slate-50 rounded-xl text-slate-400">
+                                      <QrCode size={36} className="text-slate-300" />
+                                    </div>
+                                  )}
+                                  <div className="absolute inset-0 bg-primary/10 rounded-2xl opacity-0 group-hover:opacity-100 transition flex items-center justify-center">
+                                    <span className="bg-primary text-white text-[10px] font-bold px-2 py-0.5 rounded shadow-sm">
+                                      Click to Enlarge
+                                    </span>
+                                  </div>
+                                </div>
+                                <span className="text-[10px] text-slate-400 font-semibold mt-1.5">
+                                  Permanent Token Preview
+                                </span>
+                              </div>
+
+                              {/* Details and Action Buttons */}
+                              <div className="flex-1 space-y-4 min-w-0 w-full text-center md:text-left">
+                                <div className="space-y-1">
+                                  <p className="text-xs sm:text-sm text-slate-700 leading-relaxed">
+                                    Permanent team QR code is active and ready for live voting. Display this QR code at your team showcase stall so voters can scan directly with their mobile cameras.
+                                  </p>
+                                </div>
+
+                                {/* Voting URL Display */}
+                                <div className="flex items-center gap-2 bg-slate-50 p-2.5 rounded-xl border border-slate-200 w-full max-w-lg">
+                                  <span className="text-[11px] font-mono text-slate-600 truncate flex-1 text-left select-all" title={votingUrl}>
+                                    {votingUrl}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCopyVotingLink(teamQrInfo.qrToken, currentTeamId)}
+                                    className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 text-[11px] font-bold text-slate-700 transition cursor-pointer shadow-2xs"
+                                  >
+                                    {copiedLinkTeamId === currentTeamId ? (
+                                      <>
+                                        <Check size={12} className="text-emerald-600" />
+                                        <span className="text-emerald-700">Copied!</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Copy size={12} />
+                                        <span>Copy</span>
+                                      </>
+                                    )}
+                                  </button>
+                                </div>
+
+                                {/* Actions Grid */}
+                                <div className="flex flex-wrap items-center gap-2.5 pt-1 justify-center md:justify-start">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setSelectedTeamForQrModal({
+                                        teamId: currentTeam.teamId,
+                                        teamName: currentTeam.teamName,
+                                        registrationId: currentTeam.registrationId,
+                                        qrToken: teamQrInfo.qrToken,
+                                      })
+                                    }
+                                    className="py-2.5 px-4 rounded-xl bg-primary hover:bg-primary/90 text-white text-xs font-bold shadow-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
+                                  >
+                                    <QrCode size={14} />
+                                    <span>View Fullscreen QR</span>
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDownloadQrImage(currentTeam)}
+                                    className="py-2.5 px-4 rounded-xl border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
+                                  >
+                                    <Download size={14} />
+                                    <span>Download QR</span>
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => handleShareTeamQr(currentTeam, teamQrInfo.qrToken)}
+                                    className="py-2.5 px-4 rounded-xl border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
+                                  >
+                                    <Share2 size={14} />
+                                    <span>Share Link</span>
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* State C: QR DISABLED BY ADMIN */}
+                          {teamQrInfo.status === "DISABLED_BY_ADMIN" && (
+                            <div className="rounded-xl bg-rose-50/70 p-4 border border-rose-200 text-rose-800 space-y-2">
+                              <div className="flex items-center gap-2 font-bold text-xs sm:text-sm text-rose-900">
+                                <Lock size={16} className="text-rose-600 shrink-0" />
+                                <span>QR Generation & Display is temporarily paused by the Event Administrator</span>
+                              </div>
+                              <p className="text-xs text-rose-700 leading-relaxed max-w-2xl">
+                                QR code generation and access is currently disabled by the administrator. Your permanent team QR record is safely preserved in the database and will reactivate automatically once enabled.
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+
                     <div className="grid gap-6 grid-cols-1 lg:grid-cols-3 items-start">
                       <div className="lg:col-span-2 space-y-6 flex flex-col min-w-0">
                         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-6">
@@ -2414,6 +2903,16 @@ export default function MySubmissionsPage({
           </div>
         </div>,
         document.body
+      )}
+
+      {/* Team QR Display Modal */}
+      {selectedTeamForQrModal && (
+        <TeamQrModal
+          isOpen={Boolean(selectedTeamForQrModal)}
+          onClose={() => setSelectedTeamForQrModal(null)}
+          team={selectedTeamForQrModal}
+          showToast={showToast}
+        />
       )}
     </div>
   );

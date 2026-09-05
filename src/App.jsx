@@ -7,6 +7,7 @@ import RegistrationModal from './components/RegistrationModal'
 import RegistrationClosedModal from './components/RegistrationClosedModal'
 import MySubmissionsModal from './components/MySubmissionsModal'
 import MySubmissionsPage from './components/MySubmissionsPage'
+import VotingModal from './components/VotingModal'
 import EntryCountdown from './components/EntryCountdown'
 import MechanicalLoader from './components/MechanicalLoader'
 import { supabase } from './supabaseClient'
@@ -40,9 +41,25 @@ export default function App() {
   const [isRegistrationOpen, setIsRegistrationOpen] = useState(false)
   const [isRegistrationClosedModalOpen, setIsRegistrationClosedModalOpen] = useState(false)
   const [isMySubmissionsOpen, setIsMySubmissionsOpen] = useState(false)
+  const [isVotingModalOpen, setIsVotingModalOpen] = useState(false)
+  const [votingToken, setVotingToken] = useState('')
   const [viewMode, setViewMode] = useState(() => initialSessionState?.viewMode || "public")
   const [selectedPhase, setSelectedPhase] = useState(() => initialSessionState?.selectedPhase || 'my_submissions')
   const [currentHash, setCurrentHash] = useState(() => window.location.hash || initialSessionState?.currentHash || '')
+
+  // Handle URL query ?token=... or #vote
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search);
+      const tokenParam = urlParams.get('token');
+      if (tokenParam) {
+        setVotingToken(tokenParam);
+        setIsVotingModalOpen(true);
+      } else if (currentHash === '#vote') {
+        setIsVotingModalOpen(true);
+      }
+    }
+  }, [currentHash]);
 
   // Timer UI Panel Open/Close state (persists across session)
   const [timerPanelOpen, setTimerPanelOpen] = useState(() => {
@@ -633,7 +650,17 @@ export default function App() {
               <MechanicalLoader size={40} className="text-accent mx-auto" />
             </div>
           }>
-            <Leaderboard />
+            <Leaderboard
+              user={session?.user}
+              session={session}
+              profile={profile}
+              onProfileUpdate={async () => {
+                if (session?.user) {
+                  const userProfile = await loadProfile(session.user);
+                  setProfile(userProfile);
+                }
+              }}
+            />
           </Suspense>
         ) : (
           <>
@@ -701,6 +728,25 @@ export default function App() {
         </button>
       )}
 
+      <VotingModal
+        isOpen={isVotingModalOpen}
+        onClose={() => {
+          setIsVotingModalOpen(false)
+          setVotingToken('')
+          if (window.location.hash === '#vote') {
+            window.location.hash = ''
+          }
+        }}
+        initialToken={votingToken}
+        user={session?.user}
+        profile={profile}
+        onProfileUpdate={async () => {
+          if (session?.user) {
+            const userProfile = await loadProfile(session.user)
+            setProfile(userProfile)
+          }
+        }}
+      />
     </>
   )
 }

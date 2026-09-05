@@ -110,6 +110,7 @@ export default function RegistrationModal({ isOpen, onClose, onRegistrationClose
   const [selectedMentorType, setSelectedMentorType] = useState('') // '', 'preset', 'other'
 
   useEffect(() => {
+    if (!isOpen) return
     const fetchMentors = async () => {
       try {
         const { data, error } = await supabase
@@ -120,11 +121,11 @@ export default function RegistrationModal({ isOpen, onClose, onRegistrationClose
           setMentorsList(data)
         }
       } catch (err) {
-        console.error('Error fetching mentors list:', err)
+        // Table may not be migrated yet; fallback to manual mentor input
       }
     }
     fetchMentors()
-  }, [])
+  }, [isOpen])
 
   // Load draft from localStorage on mount
   useEffect(() => {

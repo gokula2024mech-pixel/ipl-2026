@@ -37,6 +37,7 @@ app.use(express.urlencoded({ extended: true }))
 app.use('/api', registrationRoutes)
 app.use('/api', require('./routes/phase1Routes'))
 app.use('/api/patents', require('./routes/patentRoutes'))
+app.use('/api/voting', require('./routes/votingRoutes'))
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
