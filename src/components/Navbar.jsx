@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { Menu, X } from 'lucide-react'
 import { REGISTRATION_FORM_URL } from '../data/content'
 import { supabase } from '../supabaseClient'
-import { clearSessionState } from '../utils/sessionNavigationState'
+import { clearSessionState, isRootOrHomeHash, safeFindElement } from '../utils/sessionNavigationState'
 
 const NAV_LINKS = [
   { label: 'About', href: '#about' },
@@ -29,7 +29,7 @@ const MOBILE_NAV_LINKS = [
   { label: 'Contact Us', href: '#contact' },
 ]
 
-export default function Navbar({ onRegisterClick, user, profile, onProfileUpdate, onMySubmissionsClick, timeLeft: _timeLeft, onReturnToAdmin, onNavClick }) {
+export default function Navbar({ onRegisterClick, user, profile, onProfileUpdate, onMySubmissionsClick, timeLeft: _timeLeft, onReturnToAdmin, onNavClick, onVoteClick }) {
   const [mobileOpen, setMobileOpen] = useState(false)
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
@@ -175,10 +175,21 @@ export default function Navbar({ onRegisterClick, user, profile, onProfileUpdate
       onNavClick(href)
     }
 
-    if (!href || href === '#') {
+    if (isRootOrHomeHash(href)) {
       window.scrollTo({ top: 0, behavior: 'smooth' })
       if (window.location.hash) {
-        history.pushState(null, '', window.location.pathname)
+        try {
+          history.replaceState(null, '', window.location.pathname + window.location.search)
+        } catch (e) {}
+      }
+      return
+    }
+
+    if (href === '#vote') {
+      if (onVoteClick) {
+        onVoteClick()
+      } else {
+        window.location.hash = href
       }
       return
     }
@@ -189,8 +200,7 @@ export default function Navbar({ onRegisterClick, user, profile, onProfileUpdate
       return
     }
 
-    const targetId = href.startsWith('#') ? href.slice(1) : href
-    const target = document.getElementById(targetId) || document.querySelector(href)
+    const target = safeFindElement(href)
 
     if (target) {
       const navbarHeight = 80
@@ -204,6 +214,22 @@ export default function Navbar({ onRegisterClick, user, profile, onProfileUpdate
       }
     } else {
       window.location.hash = href
+      let attempts = 0
+      const checkAndScroll = () => {
+        const el = safeFindElement(href)
+        if (el) {
+          const navbarHeight = 80
+          const targetPosition = el.getBoundingClientRect().top + window.scrollY - navbarHeight
+          window.scrollTo({
+            top: Math.max(0, targetPosition),
+            behavior: 'smooth'
+          })
+        } else if (attempts < 10) {
+          attempts++
+          requestAnimationFrame(checkAndScroll)
+        }
+      }
+      requestAnimationFrame(checkAndScroll)
     }
   }
 

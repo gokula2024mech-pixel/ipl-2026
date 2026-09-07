@@ -1,18 +1,18 @@
-import { lazy, Suspense, useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import EmailGate from './components/EmailGate'
-import AdminDashboard from './components/AdminDashboard'
+import AdminDashboard, { clearAdminCache } from './components/AdminDashboard'
 import Navbar from './components/Navbar'
 import Hero from './components/Hero'
 import RegistrationModal from './components/RegistrationModal'
 import RegistrationClosedModal from './components/RegistrationClosedModal'
 import MySubmissionsModal from './components/MySubmissionsModal'
-import MySubmissionsPage from './components/MySubmissionsPage'
+import MySubmissionsPage, { clearSubmissionsCache } from './components/MySubmissionsPage'
 import VotingModal from './components/VotingModal'
 import EntryCountdown from './components/EntryCountdown'
 import MechanicalLoader from './components/MechanicalLoader'
 import { supabase } from './supabaseClient'
 import { getEventState } from './utils/eventTimeline'
-import { getSessionState, saveSessionState, saveViewScroll, getViewScroll, clearSessionState } from './utils/sessionNavigationState'
+import { getSessionState, saveSessionState, saveViewScroll, getViewScroll, clearSessionState, isRootOrHomeHash, normalizeHash, safeFindElement, extractVotingTokenFromUrl, getPendingVotingToken, setPendingVotingToken, clearPendingVotingToken, cleanVotingUrl } from './utils/sessionNavigationState'
 
 import About from './components/About'
 import ProgramHighlights from './components/ProgramHighlights'
@@ -29,37 +29,49 @@ import Mindset from './components/Mindset'
 import Registration from './components/Registration'
 import CTABanner from './components/CTABanner'
 import Footer from './components/Footer'
-
-const Leaderboard = lazy(() => import('./components/Leaderboard'))
+import Leaderboard from './components/Leaderboard'
 
 export default function App() {
   const initialSessionState = getSessionState()
   const [session, setSession] = useState(null)
   const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [isAppInitialized, setIsAppInitialized] = useState(false)
   const [loginError, setLoginError] = useState('')
   const [isRegistrationOpen, setIsRegistrationOpen] = useState(false)
   const [isRegistrationClosedModalOpen, setIsRegistrationClosedModalOpen] = useState(false)
   const [isMySubmissionsOpen, setIsMySubmissionsOpen] = useState(false)
   const [isVotingModalOpen, setIsVotingModalOpen] = useState(false)
-  const [votingToken, setVotingToken] = useState('')
+  const [votingToken, setVotingToken] = useState(() => {
+    return extractVotingTokenFromUrl() || getPendingVotingToken() || ''
+  })
   const [viewMode, setViewMode] = useState(() => initialSessionState?.viewMode || "public")
   const [selectedPhase, setSelectedPhase] = useState(() => initialSessionState?.selectedPhase || 'my_submissions')
-  const [currentHash, setCurrentHash] = useState(() => window.location.hash || initialSessionState?.currentHash || '')
+  const [currentHash, setCurrentHash] = useState(() => normalizeHash(window.location.hash || initialSessionState?.currentHash || ''))
 
-  // Handle URL query ?token=... or #vote
+  // Handle direct QR URL deep-link or #vote
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      const urlParams = new URLSearchParams(window.location.search);
-      const tokenParam = urlParams.get('token');
-      if (tokenParam) {
-        setVotingToken(tokenParam);
-        setIsVotingModalOpen(true);
+      const extractedToken = extractVotingTokenFromUrl()
+      if (extractedToken) {
+        setPendingVotingToken(extractedToken)
+        setVotingToken(extractedToken)
+        setIsVotingModalOpen(true)
+        if (!session) {
+          setShowAuth(true)
+        }
       } else if (currentHash === '#vote') {
-        setIsVotingModalOpen(true);
+        const pending = getPendingVotingToken()
+        if (pending) {
+          setVotingToken(pending)
+        }
+        setIsVotingModalOpen(true)
+        if (!session) {
+          setShowAuth(true)
+        }
       }
     }
-  }, [currentHash]);
+  }, [currentHash, session]);
 
   // Timer UI Panel Open/Close state (persists across session)
   const [timerPanelOpen, setTimerPanelOpen] = useState(() => {
@@ -212,7 +224,8 @@ export default function App() {
 
   useEffect(() => {
     const handleHashChange = () => {
-      setCurrentHash(window.location.hash)
+      const normalized = normalizeHash(window.location.hash)
+      setCurrentHash(normalized)
     }
     window.addEventListener('hashchange', handleHashChange)
     return () => {
@@ -225,7 +238,7 @@ export default function App() {
     saveSessionState({
       viewMode,
       selectedPhase,
-      currentHash: window.location.hash || currentHash
+      currentHash: normalizeHash(window.location.hash || currentHash)
     })
   }, [viewMode, selectedPhase, currentHash])
 
@@ -247,7 +260,7 @@ export default function App() {
         saveSessionState({
           viewMode,
           selectedPhase,
-          currentHash: window.location.hash || currentHash
+          currentHash: normalizeHash(window.location.hash || currentHash)
         })
       }
     }
@@ -268,15 +281,32 @@ export default function App() {
     }
   }, [viewMode, selectedPhase, currentHash])
 
-  // Restore scroll position or scroll to initial URL hash on page load / view switch
+  // Restore scroll position or scroll to initial URL hash on page load / view switch / hash change
   useEffect(() => {
-    if (loading) return
+    if (!isAppInitialized) return
 
     if (viewMode === 'public') {
-      const hash = window.location.hash
-      if (hash && hash !== '#leaderboard') {
-        const targetId = hash.slice(1)
-        const target = document.getElementById(targetId) || document.querySelector(hash)
+      const rawHash = window.location.hash || currentHash
+      
+      // If navigating to root / home (bare '#', empty, '#/'), scroll to top smoothly without querying DOM
+      if (isRootOrHomeHash(rawHash)) {
+        if (rawHash === '#' || rawHash === '#/') {
+          try {
+            history.replaceState(null, '', window.location.pathname + window.location.search)
+          } catch (e) {}
+        }
+        const savedScroll = getViewScroll('public')
+        if (savedScroll && savedScroll > 10 && !rawHash) {
+          window.scrollTo({ top: savedScroll, behavior: 'instant' })
+        } else {
+          window.scrollTo({ top: 0, behavior: 'smooth' })
+        }
+        return
+      }
+
+      const hash = rawHash.trim()
+      if (hash && hash !== '#leaderboard' && hash !== '#vote') {
+        const target = safeFindElement(hash)
         if (target) {
           const navbarHeight = 80
           const targetPosition = target.getBoundingClientRect().top + window.scrollY - navbarHeight
@@ -285,7 +315,7 @@ export default function App() {
               top: Math.max(0, targetPosition),
               behavior: 'smooth'
             })
-          }, 150)
+          }, 50)
           return
         }
       }
@@ -311,7 +341,7 @@ export default function App() {
         }, 80)
       }
     }
-  }, [loading, viewMode])
+  }, [isAppInitialized, viewMode, currentHash])
 
   const authGenerationRef = useRef(0)
   const activeUserIdRef = useRef(null)
@@ -346,6 +376,7 @@ export default function App() {
 
   const loadProfile = async (user) => {
     try {
+      let profileData = null
       const { data, error } = await supabase
         .from('profiles')
         .select('*')
@@ -354,10 +385,23 @@ export default function App() {
 
       if (error) {
         console.error('[AUTH] loadProfile error:', error.message)
-      } else {
-        console.log('[AUTH] loadProfile result:', data)
+      } else if (data) {
+        profileData = data
       }
-      return data
+
+      // Department resolution hierarchy:
+      // 1. Authoritative profiles.department
+      // 2. Synchronized user_metadata.department
+      const resolvedDept = (profileData?.department || user?.user_metadata?.department || '').trim() || null
+      if (resolvedDept) {
+        if (profileData) {
+          profileData.department = resolvedDept
+        } else {
+          profileData = { user_id: user.id, email: user.email, department: resolvedDept, role: 'student' }
+        }
+      }
+
+      return profileData
     } catch (err) {
       console.error('[AUTH] loadProfile error (exception):', err)
       return null
@@ -388,18 +432,19 @@ export default function App() {
       // If we are in the middle of an OAuth callback (hash contains access_token),
       // do NOT reset the state or clear the loading screen yet. We wait for the SIGNED_IN event.
       if (window.location.hash.includes('access_token=')) {
-        console.log(`[AUTH] Ignoring null session during OAuth callback hash parsing (eventType: ${eventType})`)
         return
       }
 
       const generation = ++authGenerationRef.current
-      console.log(`[AUTH] SIGNED_OUT event or null session. Incrementing generation to ${generation}. Resetting states.`)
       activeUserIdRef.current = null
       setSession(null)
       setProfile(null)
       setViewMode("public")
       clearSessionState()
+      clearSubmissionsCache()
+      clearAdminCache()
       setLoading(false)
+      setIsAppInitialized(true)
       return
     }
 
@@ -407,7 +452,6 @@ export default function App() {
     // or tab refocus), update session silently without triggering a full unmounting loading screen.
     const isSameActiveUser = activeUserIdRef.current && activeUserIdRef.current === currentSession.user.id
     if (isSameActiveUser) {
-      console.log(`[AUTH] Maintaining active session for user ${currentSession.user.email} on ${eventType} (preventing component remount).`)
       setSession(currentSession)
       return
     }
@@ -419,17 +463,18 @@ export default function App() {
       eventType === "INITIAL_LOAD"
     ) {
       const generation = ++authGenerationRef.current
-      console.log(`[AUTH] Newly established session via ${eventType}. Incrementing generation to ${generation}.`)
+      activeUserIdRef.current = currentSession.user.id
 
-      setLoading(true)
+      // Only show global loading on cold initial application startup
+      if (!isAppInitialized) {
+        setLoading(true)
+      }
       const email = currentSession.user.email || ''
-      console.log('[AUTH] session user email:', email)
 
       // Email domain validation
       if (!email.toLowerCase().endsWith('@sece.ac.in')) {
         // If this request is still current
         if (generation === authGenerationRef.current) {
-          console.log('[AUTH] signOut called (invalid email domain)')
           setLoginError('Please sign in using your @sece.ac.in college account.')
           activeUserIdRef.current = null
           setSession(null)
@@ -438,8 +483,7 @@ export default function App() {
           clearSessionState()
           await supabase.auth.signOut()
           setLoading(false)
-        } else {
-          console.log(`[AUTH] Stale email domain validation ignored for generation ${generation}. Current is ${authGenerationRef.current}.`)
+          setIsAppInitialized(true)
         }
         return
       }
@@ -486,76 +530,54 @@ export default function App() {
           userEmail: currentSession.user.email
         })
 
-        console.log(`[AUTH] Setting viewMode to ${finalViewMode}`)
-        setLoading(false)
-
-        if (hasHashToken) {
-          console.log('[AUTH] OAuth callback origin:', window.location.origin)
-          console.log('[AUTH] OAuth callback URL:', window.location.href.split('#')[0])
-          console.log('[AUTH] OAuth callback session exists:', true)
-          console.log('[AUTH] OAuth callback user email:', email)
-          console.log('[AUTH] OAuth callback profile:', userProfile ? 'exists' : 'null')
-          console.log('[AUTH] OAuth callback profile role:', userProfile?.role || 'none')
-          console.log('[AUTH] Final viewMode:', finalViewMode)
+        // Check if there was an in-flight direct QR voting token
+        const pendingToken = extractVotingTokenFromUrl() || getPendingVotingToken()
+        if (pendingToken) {
+          setVotingToken(pendingToken)
+          setIsVotingModalOpen(true)
         }
-      } else {
-        console.log(`[AUTH] Stale loadProfile result ignored for generation ${generation}. Current is ${authGenerationRef.current}.`)
+
+        setLoading(false)
+        setIsAppInitialized(true)
       }
     }
     else if (eventType === "TOKEN_REFRESHED") {
       const generation = authGenerationRef.current
-      console.log(`[AUTH] TOKEN_REFRESHED event. Current generation is ${generation}.`)
-
       setSession(currentSession)
 
-      // Load profile to make sure profile state is updated (in case of changes)
+      // Load profile silently in background without triggering loading screen
       const userProfile = await loadProfile(currentSession.user)
       if (generation === authGenerationRef.current) {
         setProfile(userProfile)
-        console.log('[AUTH] Profile state updated on TOKEN_REFRESHED (viewMode unchanged)')
-      } else {
-        console.log(`[AUTH] Stale TOKEN_REFRESHED profile load ignored for generation ${generation}.`)
       }
     }
     else {
       // Any other events (fallback)
-      console.log(`[AUTH] Event ${eventType} fallback. Updating session.`)
       setSession(currentSession)
     }
   }
 
   useEffect(() => {
-    console.log('[AUTH] App.jsx useEffect mounting...')
-
     // Get initial session
     supabase.auth.getSession().then(({ data: { session: initialSession } }) => {
-      console.log('[AUTH] getSession result:', !!initialSession)
-      if (initialSession) {
-        console.log('[AUTH] getSession user email:', initialSession.user?.email)
-      }
       handleSession(initialSession, "INITIAL_LOAD")
     })
 
     // Listen for auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, newSession) => {
-      console.log('[AUTH] auth event:', event)
-      console.log('[AUTH] newSession exists:', !!newSession)
       if (newSession) {
-        console.log('[AUTH] auth state change user email:', newSession.user?.email)
         handleSession(newSession, event)
       } else {
-        console.log('[AUTH] clearing session/profile from onAuthStateChange (newSession is null)')
         handleSession(null, event)
       }
     })
 
     return () => {
-      console.log('[AUTH] App.jsx useEffect cleanup unmounting...')
       subscription.unsubscribe()
     }
   }, [])
 
-  if (loading) {
+  if (!isAppInitialized && loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-primary">
         <div className="text-center text-white">
@@ -631,9 +653,20 @@ export default function App() {
           if (viewMode !== "public") {
             setViewMode("public")
           }
+          if (currentHash === "#leaderboard") {
+            setCurrentHash(normalizeHash(href))
+          } else {
+            setCurrentHash(normalizeHash(href))
+          }
+          if (!normalizeHash(href) && window.location.hash) {
+            try {
+              history.replaceState(null, '', window.location.pathname + window.location.search)
+            } catch (e) {}
+          }
         }}
         timeLeft={timeLeft}
         onReturnToAdmin={() => setViewMode("admin")}
+        onVoteClick={() => setIsVotingModalOpen(true)}
       />
       <main>
         {viewMode === "submissions" ? (
@@ -645,23 +678,17 @@ export default function App() {
             user={session?.user}
           />
         ) : isLeaderboardPage ? (
-          <Suspense fallback={
-            <div className="flex min-h-[60vh] items-center justify-center bg-white py-20">
-              <MechanicalLoader size={40} className="text-accent mx-auto" />
-            </div>
-          }>
-            <Leaderboard
-              user={session?.user}
-              session={session}
-              profile={profile}
-              onProfileUpdate={async () => {
-                if (session?.user) {
-                  const userProfile = await loadProfile(session.user);
-                  setProfile(userProfile);
-                }
-              }}
-            />
-          </Suspense>
+          <Leaderboard
+            user={session?.user}
+            session={session}
+            profile={profile}
+            onProfileUpdate={async () => {
+              if (session?.user) {
+                const userProfile = await loadProfile(session.user);
+                setProfile(userProfile);
+              }
+            }}
+          />
         ) : (
           <>
             <Hero
@@ -698,6 +725,13 @@ export default function App() {
           if (viewMode !== "public") {
             setViewMode("public")
           }
+          const normalized = normalizeHash(href)
+          setCurrentHash(normalized)
+          if (!normalized && window.location.hash) {
+            try {
+              history.replaceState(null, '', window.location.pathname + window.location.search)
+            } catch (e) {}
+          }
         }}
       />
 
@@ -733,17 +767,35 @@ export default function App() {
         onClose={() => {
           setIsVotingModalOpen(false)
           setVotingToken('')
-          if (window.location.hash === '#vote') {
-            window.location.hash = ''
-          }
+          clearPendingVotingToken()
+          cleanVotingUrl()
+        }}
+        onTokenConsumed={() => {
+          clearPendingVotingToken()
+          cleanVotingUrl()
         }}
         initialToken={votingToken}
         user={session?.user}
         profile={profile}
-        onProfileUpdate={async () => {
+        onProfileUpdate={async (savedDept) => {
+          if (savedDept) {
+            setProfile(prev => ({ ...(prev || {}), department: savedDept }))
+            setSession(prev => prev ? ({
+              ...prev,
+              user: {
+                ...prev.user,
+                user_metadata: { ...(prev.user?.user_metadata || {}), department: savedDept }
+              }
+            }) : prev)
+          }
           if (session?.user) {
             const userProfile = await loadProfile(session.user)
-            setProfile(userProfile)
+            if (userProfile) {
+              setProfile(prev => ({
+                ...userProfile,
+                department: userProfile.department || savedDept || prev?.department
+              }))
+            }
           }
         }}
       />

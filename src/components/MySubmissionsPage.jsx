@@ -190,6 +190,17 @@ function normalizeMentorDepartment(val) {
   return val;
 }
 
+// Module-level user-isolated submissions cache for instant UI restoration without private data leakage
+const cachedSubmissionsByUser = {};
+
+export function clearSubmissionsCache(userId) {
+  if (userId) {
+    delete cachedSubmissionsByUser[userId];
+  } else {
+    Object.keys(cachedSubmissionsByUser).forEach(k => delete cachedSubmissionsByUser[k]);
+  }
+}
+
 export default function MySubmissionsPage({
   onBackToHome,
   selectedPhase = "my_submissions",
@@ -197,8 +208,11 @@ export default function MySubmissionsPage({
   session: initialSession,
   user: initialUser,
 }) {
-  const [submissions, setSubmissions] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const currentUserId = initialUser?.id;
+  const userCachedData = currentUserId ? cachedSubmissionsByUser[currentUserId] : null;
+
+  const [submissions, setSubmissions] = useState(() => userCachedData?.submissions || []);
+  const [loading, setLoading] = useState(() => !userCachedData);
   const [authExpired, setAuthExpired] = useState(false);
   const [userEmail, setUserEmail] = useState("");
   const [phasesList, setPhasesList] = useState([]);
@@ -405,7 +419,7 @@ export default function MySubmissionsPage({
 
   // Handle sharing QR
   const handleShareTeamQr = async (team, qrToken) => {
-    const votingUrl = `${window.location.origin}/#vote?token=${qrToken}`;
+    const votingUrl = `${window.location.origin}/?token=${qrToken}#vote`;
     if (navigator.share) {
       try {
         await navigator.share({
@@ -651,8 +665,9 @@ export default function MySubmissionsPage({
   };
 
   useEffect(() => {
-    fetchSubmissions(true);
-  }, [initialUser?.id]);
+    const hasCache = Boolean(currentUserId && cachedSubmissionsByUser[currentUserId]);
+    fetchSubmissions(!hasCache);
+  }, [currentUserId]);
 
   const fetchSubmissions = async (showLoader = true) => {
     if (showLoader) setLoading(true);
@@ -667,7 +682,7 @@ export default function MySubmissionsPage({
         });
         setAuthExpired(true);
         setSubmissions([]);
-        setLoading(false);
+        if (showLoader) setLoading(false);
         return;
       }
 
@@ -689,7 +704,7 @@ export default function MySubmissionsPage({
         });
         setAuthExpired(true);
         setSubmissions([]);
-        setLoading(false);
+        if (showLoader) setLoading(false);
         return;
       }
 
@@ -703,7 +718,14 @@ export default function MySubmissionsPage({
 
       const data = await response.json();
       if (data.success) {
-        setSubmissions(data.submissions || []);
+        const freshSubs = data.submissions || [];
+        setSubmissions(freshSubs);
+        if (currentUserId) {
+          cachedSubmissionsByUser[currentUserId] = {
+            submissions: freshSubs,
+            timestamp: Date.now(),
+          };
+        }
       } else {
         throw new Error(data.message || "Unable to retrieve submissions.");
       }
@@ -736,7 +758,7 @@ export default function MySubmissionsPage({
         message: err.message || "Unable to load your submissions. Please try again.",
       });
     } finally {
-      setLoading(false);
+      if (showLoader) setLoading(false);
     }
   };
 

@@ -13,8 +13,8 @@ export default function TeamQrModal({ isOpen, onClose, team, showToast }) {
   const qrToken = team?.qrToken || team?.qr_token || '';
 
   const votingUrl = typeof window !== 'undefined'
-    ? `${window.location.origin}/#vote?token=${qrToken}`
-    : `/#vote?token=${qrToken}`;
+    ? `${window.location.origin}/?token=${qrToken}#vote`
+    : `/?token=${qrToken}#vote`;
 
   useEffect(() => {
     if (!isOpen || !qrToken) {

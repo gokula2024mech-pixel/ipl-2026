@@ -43,10 +43,11 @@ export default function VotingModal({
   user: propUser,
   session: propSession,
   profile: propProfile,
-  onProfileUpdate
+  onProfileUpdate,
+  onTokenConsumed
 }) {
-  // Navigation steps: 'DEPARTMENT' | 'SCANNER' | 'MANUAL_ENTRY' | 'TEAM_VIEW' | 'SUCCESS'
-  const [step, setStep] = useState('SCANNER');
+  // Navigation steps: 'DEPARTMENT' | 'SCANNER' | 'MANUAL_ENTRY' | 'TEAM_VIEW' | 'SUCCESS' | 'QR_ERROR' | 'RESOLVING'
+  const [step, setStep] = useState(() => (initialToken ? 'RESOLVING' : 'SCANNER'));
 
   // Resolved user & profile state (self-healing for seamless auth across components)
   const [activeUser, setActiveUser] = useState(propUser || null);
@@ -74,6 +75,7 @@ export default function VotingModal({
   const [cameras, setCameras] = useState([]);
   const [selectedCameraId, setSelectedCameraId] = useState('');
   const html5QrCodeRef = useRef(null);
+  const modalSessionCheckedRef = useRef(false);
 
   // Voting action state
   const [voting, setVoting] = useState(false);
@@ -83,9 +85,15 @@ export default function VotingModal({
   const rawApiUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000').trim().replace(/\/+$/, '');
   const API_BASE_URL = rawApiUrl.endsWith('/api') ? rawApiUrl.slice(0, -4) : rawApiUrl;
 
-  // Resolve active authentication and department authoritatively
+  // Resolve active authentication and department authoritatively (once per modal open)
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      modalSessionCheckedRef.current = false;
+      return;
+    }
+
+    if (modalSessionCheckedRef.current) return;
+    modalSessionCheckedRef.current = true;
 
     setErrorInfo(null);
     setVoteSuccess(null);
@@ -97,8 +105,9 @@ export default function VotingModal({
     async function checkAuthSession() {
       setAuthChecking(true);
 
-      let resolvedUser = propUser || null;
-      let resolvedProfile = propProfile || null;
+      let resolvedUser = propUser || activeUser || null;
+      let resolvedProfile = propProfile || activeProfile || null;
+      let resolvedDept = (resolvedProfile?.department || selectedDept || '').trim() || null;
 
       // 1. If user not passed, resolve directly from Supabase session
       if (!resolvedUser) {
@@ -112,26 +121,56 @@ export default function VotingModal({
         }
       }
 
-      // 2. If user is found, check if department is already stored
-      if (resolvedUser) {
-        if (!resolvedProfile?.department) {
-          try {
-            const { data: prof } = await supabase
-              .from('profiles')
-              .select('id, user_id, email, department, role')
-              .eq('user_id', resolvedUser.id)
-              .maybeSingle();
+      // 2. Check user metadata for cached department
+      if (!resolvedDept && resolvedUser?.user_metadata?.department) {
+        resolvedDept = resolvedUser.user_metadata.department.trim();
+      }
 
-            if (prof) {
-              resolvedProfile = prof;
+      // 3. If user is found, query profiles from Supabase
+      if (resolvedUser && !resolvedDept) {
+        try {
+          const { data: prof } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('user_id', resolvedUser.id)
+            .maybeSingle();
+
+          if (prof) {
+            resolvedProfile = prof;
+            if (prof.department) {
+              resolvedDept = prof.department.trim();
             }
-          } catch (e) {
-            console.warn('[Voting Modal] Error resolving profile:', e);
           }
+        } catch (e) {
+          console.warn('[Voting Modal] Error resolving profile:', e);
+        }
+      }
+
+      // 4. Query GET /api/voting/profile/department to ensure authoritative profile value
+      if (resolvedUser && !resolvedDept) {
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          if (session?.access_token) {
+            const res = await fetch(`${API_BASE_URL}/api/voting/profile/department`, {
+              headers: { 'Authorization': `Bearer ${session.access_token}` }
+            });
+            if (res.ok) {
+              const json = await res.json();
+              if (json.department) {
+                resolvedDept = json.department.trim();
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('[Voting Modal] Error fetching profile department:', e);
         }
       }
 
       if (!isMounted) return;
+
+      if (resolvedDept) {
+        resolvedProfile = { ...(resolvedProfile || {}), department: resolvedDept };
+      }
 
       setActiveUser(resolvedUser);
       setActiveProfile(resolvedProfile);
@@ -141,11 +180,13 @@ export default function VotingModal({
       const isSece = email.endsWith('@sece.ac.in');
 
       if (resolvedUser && isSece) {
-        if (resolvedProfile?.department) {
-          setSelectedDept(resolvedProfile.department);
-          if (initialToken) {
-            setActiveToken(initialToken);
-            resolveTeamByIdentifier(initialToken, true);
+        if (resolvedDept) {
+          setSelectedDept(resolvedDept);
+          const tokenToResolve = (activeToken || initialToken || '').trim();
+          if (tokenToResolve) {
+            setActiveToken(tokenToResolve);
+            setStep('RESOLVING');
+            await resolveTeamByIdentifier(tokenToResolve, true);
           } else {
             setStep('SCANNER');
           }
@@ -161,6 +202,13 @@ export default function VotingModal({
       isMounted = false;
     };
   }, [isOpen, propUser, propProfile, initialToken]);
+
+  // Sync activeToken if initialToken changes
+  useEffect(() => {
+    if (initialToken && initialToken !== activeToken) {
+      setActiveToken(initialToken);
+    }
+  }, [initialToken]);
 
   // Sync selectedDept if activeProfile changes
   useEffect(() => {
@@ -239,7 +287,22 @@ export default function VotingModal({
       setScannerActive(true);
     } catch (err) {
       console.warn('[Scanner] Camera start error:', err);
-      setCameraError('Camera access unavailable. You can search by Team ID below.');
+      const isPermissionDenied =
+        err?.name === 'NotAllowedError' ||
+        err?.name === 'PermissionDeniedError' ||
+        String(err?.message || '').toLowerCase().includes('permission denied');
+      const isNotFound =
+        err?.name === 'NotFoundError' ||
+        err?.name === 'DevicesNotFoundError' ||
+        String(err?.message || '').toLowerCase().includes('not found');
+
+      if (isPermissionDenied) {
+        setCameraError('Camera permission denied. Please allow camera access in your browser or enter Team ID below.');
+      } else if (isNotFound) {
+        setCameraError('No camera detected on this device. You can enter Team ID below.');
+      } else {
+        setCameraError('Camera access unavailable. You can enter Team ID below.');
+      }
       setScannerActive(false);
     }
   }, [selectedCameraId, stopScanner]);
@@ -270,7 +333,7 @@ export default function VotingModal({
   useEffect(() => {
     if (isOpen && step === 'SCANNER') {
       const timer = setTimeout(() => {
-        startScanner();
+        startScanner().catch((e) => console.warn('[Scanner] Camera start caught:', e));
       }, 250);
       return () => clearTimeout(timer);
     }
@@ -302,13 +365,26 @@ export default function VotingModal({
       if (!res.ok || !data.success) {
         setErrorInfo({
           code: data.error_code || 'ERROR',
-          title: data.error_code === 'TEAM_NOT_FOUND' ? 'TEAM NOT FOUND' : 'UNABLE TO RESOLVE',
-          message: data.message || 'Please check the Team ID and try again.'
+          title: data.error_code === 'TEAM_NOT_FOUND'
+            ? 'TEAM NOT FOUND'
+            : data.error_code === 'QR_DISABLED'
+            ? 'QR ACCESS DISABLED'
+            : 'INVALID OR INACTIVE QR',
+          message: data.message || 'This QR code is not active or is not associated with an eligible voting team.'
         });
-        setStep('MANUAL_ENTRY');
+        if (isQr) {
+          setStep('QR_ERROR');
+        } else {
+          setStep('MANUAL_ENTRY');
+        }
       } else {
         setTeamData(data);
         setStep('TEAM_VIEW');
+        if (onTokenConsumed) {
+          try {
+            onTokenConsumed();
+          } catch (e) {}
+        }
       }
     } catch (err) {
       setErrorInfo({
@@ -316,7 +392,11 @@ export default function VotingModal({
         title: 'CONNECTION ERROR',
         message: 'Unable to connect to the voting server. Please verify your connection.'
       });
-      setStep('MANUAL_ENTRY');
+      if (isQr) {
+        setStep('QR_ERROR');
+      } else {
+        setStep('MANUAL_ENTRY');
+      }
     } finally {
       setLoading(false);
     }
@@ -351,17 +431,41 @@ export default function VotingModal({
       if (!res.ok || !json.success) {
         setDeptError(json.message || 'Failed to save department.');
       } else {
-        if (onProfileUpdate) await onProfileUpdate();
-        setActiveProfile(prev => ({ ...(prev || {}), department: selectedDept }));
-        // Advance to scanner or team view
-        if (activeToken) {
-          resolveTeamByIdentifier(activeToken, true);
+        const savedDept = (json.department || selectedDept).trim();
+
+        // 1. Immediately update client auth session user_metadata for durable reload persistence
+        try {
+          await supabase.auth.updateUser({ data: { department: savedDept } });
+        } catch (e) {
+          console.warn('[Voting Modal] updateUser metadata error:', e);
+        }
+
+        // 2. Immediately update local modal state
+        setSelectedDept(savedDept);
+        setActiveProfile(prev => ({ ...(prev || {}), department: savedDept }));
+        setActiveUser(prev => prev ? ({
+          ...prev,
+          user_metadata: { ...(prev.user_metadata || {}), department: savedDept }
+        }) : prev);
+
+        // 3. Inform parent App so app-level profile and session stay updated
+        if (onProfileUpdate) {
+          try {
+            await onProfileUpdate(savedDept);
+          } catch (e) {}
+        }
+
+        // 4. Advance directly to team view if direct QR token exists, otherwise to scanner
+        const tokenToResolve = (activeToken || initialToken || '').trim();
+        if (tokenToResolve) {
+          setStep('RESOLVING');
+          await resolveTeamByIdentifier(tokenToResolve, true);
         } else {
           setStep('SCANNER');
         }
       }
     } catch (err) {
-      setDeptError('Network error saving department.');
+      setDeptError('Network error saving department. Please try again.');
     } finally {
       setSavingDept(false);
     }
@@ -455,7 +559,14 @@ export default function VotingModal({
 
   return (
     <AnimatePresence>
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 md:p-6 overflow-y-auto">
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 md:p-6 overflow-y-auto"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) {
+            onClose();
+          }
+        }}
+      >
         {/* Backdrop */}
         <motion.div
           initial={{ opacity: 0 }}
@@ -471,6 +582,7 @@ export default function VotingModal({
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.96, y: 15 }}
           transition={{ duration: 0.2, ease: 'easeOut' }}
+          onClick={(e) => e.stopPropagation()}
           className="relative w-full max-w-lg rounded-3xl bg-white shadow-2xl border border-slate-200 overflow-hidden z-10 my-auto text-slate-800 flex flex-col"
           style={{ maxHeight: '92vh' }}
         >
@@ -483,11 +595,13 @@ export default function VotingModal({
                 </div>
                 <div>
                   <h2 className="font-heading text-lg sm:text-xl font-black tracking-tight">
-                    {step === 'DEPARTMENT' ? 'Voter Setup' : 'IPL 2026 Live Voting'}
+                    IPL 2026 Voting
                   </h2>
-                  <p className="text-[11px] sm:text-xs text-slate-300 font-medium">
-                    {step === 'DEPARTMENT' ? 'One-time verification' : (activeProfile?.department ? `Voter: ${activeProfile.department}` : 'Live Voting')}
-                  </p>
+                  {activeProfile?.department && (
+                    <p className="text-[11px] sm:text-xs text-slate-300 font-medium">
+                      {activeProfile.department}
+                    </p>
+                  )}
                 </div>
               </div>
               <button
@@ -515,6 +629,74 @@ export default function VotingModal({
                   <p className="text-xs text-slate-500">
                     Verifying official college account credentials
                   </p>
+                </div>
+              </div>
+            )}
+
+            {/* STATE: RESOLVING DIRECT QR */}
+            {isOfficialSeceUser && !authChecking && step === 'RESOLVING' && (
+              <div className="py-12 text-center space-y-3 animate-fade-in">
+                <MechanicalLoader size={36} className="text-primary mx-auto" />
+                <div className="space-y-1">
+                  <h3 className="text-sm font-extrabold text-slate-900">
+                    Locating Team Project...
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Connecting to live voting ledger
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* STATE: FRIENDLY QR ERROR STATE (Requirement J) */}
+            {isOfficialSeceUser && !authChecking && step === 'QR_ERROR' && (
+              <div className="py-8 text-center space-y-4 animate-fade-in">
+                <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-50 text-amber-600 border border-amber-200 mx-auto">
+                  <AlertTriangle size={32} />
+                </div>
+                <div className="space-y-1">
+                  <h3 className="text-base font-extrabold text-slate-900">
+                    {errorInfo?.title || 'Unable to Resolve QR Code'}
+                  </h3>
+                  <p className="text-xs text-slate-600 max-w-sm mx-auto leading-relaxed">
+                    {errorInfo?.message || 'This QR code is inactive, expired, or not associated with an eligible voting team.'}
+                  </p>
+                </div>
+
+                <div className="space-y-2 max-w-xs mx-auto pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setErrorInfo(null);
+                      setTeamData(null);
+                      setActiveToken('');
+                      setStep('SCANNER');
+                    }}
+                    className="w-full py-2.5 px-4 rounded-xl bg-primary text-xs font-bold text-white hover:bg-primary/90 transition shadow-sm cursor-pointer flex items-center justify-center gap-2"
+                  >
+                    <Camera size={15} />
+                    <span>Scan Another Team QR</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setErrorInfo(null);
+                      setTeamData(null);
+                      setActiveToken('');
+                      setStep('MANUAL_ENTRY');
+                    }}
+                    className="w-full py-2.5 px-4 rounded-xl border border-slate-300 text-xs font-bold text-slate-700 hover:bg-slate-50 transition cursor-pointer flex items-center justify-center gap-2"
+                  >
+                    <Search size={15} />
+                    <span>Enter Team ID Manually</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="w-full py-2 px-4 text-xs font-semibold text-slate-500 hover:text-slate-800 transition cursor-pointer"
+                  >
+                    Close
+                  </button>
                 </div>
               </div>
             )}
@@ -654,8 +836,19 @@ export default function VotingModal({
                 </div>
 
                 {cameraError ? (
-                  <div className="rounded-2xl bg-amber-50 p-3.5 border border-amber-200 text-center space-y-1">
+                  <div className="rounded-2xl bg-amber-50 p-3.5 border border-amber-200 text-center space-y-2.5">
                     <p className="text-xs font-bold text-amber-900">{cameraError}</p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        stopScanner();
+                        setStep('MANUAL_ENTRY');
+                      }}
+                      className="inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-primary text-white text-xs font-bold shadow-xs hover:bg-primary/90 transition cursor-pointer"
+                    >
+                      <Search size={13} />
+                      <span>Enter Team ID Directly</span>
+                    </button>
                   </div>
                 ) : (
                   <div className="flex items-center justify-between px-2 text-xs text-slate-500">
@@ -760,6 +953,24 @@ export default function VotingModal({
             {/* STEP 4: TEAM SHOWCASE & PRODUCTS CAROUSEL & ELIGIBILITY */}
             {isOfficialSeceUser && !authChecking && step === 'TEAM_VIEW' && teamData && (
               <div className="space-y-4 animate-fade-in">
+                {/* Back to Scanner Navigation */}
+                <div className="flex items-center justify-between pb-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTeamData(null);
+                      setActiveToken('');
+                      setTeamIdentifier('');
+                      setErrorInfo(null);
+                      setStep('SCANNER');
+                    }}
+                    className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-500 hover:text-primary transition cursor-pointer"
+                  >
+                    <ChevronLeft size={16} />
+                    <span>Back to Scanner</span>
+                  </button>
+                </div>
+
                 {/* Team Card Header */}
                 <div className="rounded-2xl bg-gradient-to-br from-slate-50 to-blue-50/40 p-4 border border-slate-200 space-y-1.5">
                   <div className="flex items-center justify-between">
@@ -1006,9 +1217,10 @@ export default function VotingModal({
                       setTeamIdentifier('');
                       setStep('SCANNER');
                     }}
-                    className="py-2.5 px-3 rounded-xl border border-slate-300 text-xs font-bold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
+                    className="py-2.5 px-3 rounded-xl border border-slate-300 text-xs font-bold text-slate-700 hover:bg-slate-50 transition cursor-pointer flex items-center justify-center gap-1"
                   >
-                    Vote for Another
+                    <ChevronLeft size={14} />
+                    <span>Back to Scanner</span>
                   </button>
                   <button
                     type="button"
@@ -1021,12 +1233,6 @@ export default function VotingModal({
               </div>
             )}
 
-          </div>
-
-          {/* Footer Bar */}
-          <div className="bg-slate-50 px-5 py-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-400 shrink-0">
-            <span>IPL 2026 Live Voting Engine</span>
-            <span>SECE Official</span>
           </div>
         </motion.div>
       </div>

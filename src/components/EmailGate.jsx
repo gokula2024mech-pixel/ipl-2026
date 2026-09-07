@@ -1,16 +1,24 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { supabase } from '../supabaseClient'
+import { getPendingVotingToken, setPendingVotingToken, extractVotingTokenFromUrl } from '../utils/sessionNavigationState'
 
 export default function EmailGate({ loginError, onBack }) {
   const [error, setError] = useState('')
   const [isLoggingIn, setIsLoggingIn] = useState(false)
+  const pendingToken = getPendingVotingToken() || extractVotingTokenFromUrl()
 
   const handleGoogleLogin = async () => {
     setError('')
     setIsLoggingIn(false)
     try {
-      const redirectTo = `${window.location.origin}/`
+      if (pendingToken) {
+        setPendingVotingToken(pendingToken)
+      }
+      const redirectTo = pendingToken
+        ? `${window.location.origin}/?token=${encodeURIComponent(pendingToken)}#vote`
+        : `${window.location.origin}/`
+
       const { error: authError } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
@@ -50,7 +58,9 @@ export default function EmailGate({ loginError, onBack }) {
             Sri Eshwar College Access
           </h1>
           <p className="mt-2 text-sm text-slate-600">
-            Please log in with your official college email account to access the IPL 2026 portal.
+            {pendingToken
+              ? 'Sign in with your official @sece.ac.in college email to cast your vote.'
+              : 'Please log in with your official college email account to access the IPL 2026 portal.'}
           </p>
         </div>
 

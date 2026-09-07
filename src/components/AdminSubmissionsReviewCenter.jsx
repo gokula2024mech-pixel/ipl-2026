@@ -63,20 +63,34 @@ const CANONICAL_DOMAINS = [
   "Open Innovation",
 ];
 
+// Module-level isolated cache for admin submissions review center per admin user email
+const cachedSubmissionsByAdmin = {};
+
+export function clearAdminSubmissionsReviewCache(email) {
+  if (email) {
+    delete cachedSubmissionsByAdmin[email];
+  } else {
+    Object.keys(cachedSubmissionsByAdmin).forEach(k => delete cachedSubmissionsByAdmin[k]);
+  }
+}
+
 export default function AdminSubmissionsReviewCenter({
   token,
   userEmail,
   onShowToast,
 }) {
+  const adminCacheKey = (userEmail || "admin").toLowerCase().trim();
+  const adminCache = cachedSubmissionsByAdmin[adminCacheKey];
+
   // State: Data
-  const [submissions, setSubmissions] = useState([]);
-  const [counts, setCounts] = useState({
+  const [submissions, setSubmissions] = useState(() => adminCache?.submissions || []);
+  const [counts, setCounts] = useState(() => adminCache?.counts || {
     pending: 0,
     approved: 0,
     rejected: 0,
     total: 0,
   });
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !adminCache);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
 
@@ -122,7 +136,7 @@ export default function AdminSubmissionsReviewCenter({
   });
 
   // Fetch Submissions from Backend
-  const fetchSubmissions = async (showRefreshIndicator = false) => {
+  const fetchSubmissions = async (showRefreshIndicator = Boolean(adminCacheKey && cachedSubmissionsByAdmin[adminCacheKey])) => {
     if (showRefreshIndicator) setRefreshing(true);
     else setLoading(true);
     setError(null);
@@ -159,14 +173,22 @@ export default function AdminSubmissionsReviewCenter({
         throw new Error(data.message || "Failed to load submissions.");
       }
 
-      setSubmissions(data.submissions || []);
-      if (data.counts) {
-        setCounts(data.counts);
+      const freshSubs = data.submissions || [];
+      const freshCounts = data.counts || { pending: 0, approved: 0, rejected: 0, total: 0 };
+      setSubmissions(freshSubs);
+      setCounts(freshCounts);
+
+      if (adminCacheKey) {
+        cachedSubmissionsByAdmin[adminCacheKey] = {
+          submissions: freshSubs,
+          counts: freshCounts,
+          timestamp: Date.now()
+        };
       }
 
       // If viewing details, update current detail view data if it changed
       if (selectedSubmission) {
-        const updated = (data.submissions || []).find(
+        const updated = freshSubs.find(
           (s) => s.teamId === selectedSubmission.teamId
         );
         if (updated) {
@@ -177,7 +199,7 @@ export default function AdminSubmissionsReviewCenter({
       console.error("[Admin Review Center] Error fetching submissions:", err);
       setError("Unable to load submissions. Please check your network and try again.");
     } finally {
-      setLoading(false);
+      if (!showRefreshIndicator) setLoading(false);
       setRefreshing(false);
     }
   };
@@ -185,7 +207,8 @@ export default function AdminSubmissionsReviewCenter({
   // Re-fetch when tab or filters change
   useEffect(() => {
     if (token) {
-      fetchSubmissions();
+      const hasCache = Boolean(adminCacheKey && cachedSubmissionsByAdmin[adminCacheKey]);
+      fetchSubmissions(hasCache);
     }
   }, [
     token,

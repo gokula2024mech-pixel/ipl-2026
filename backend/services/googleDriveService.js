@@ -470,6 +470,85 @@ async function streamFile(fileId) {
   }
 }
 
+/**
+ * Dedicated Google Drive Folder for IPL 2026 Voting Reports
+ * Isolated under ROOT_FOLDER_ID without touching Phase 1/2/3 student submissions.
+ */
+async function getOrCreateVotingReportsFolder() {
+  const rootId = ROOT_FOLDER_ID
+  const drive = getDriveClient()
+  const folderName = 'IPL 2026 Voting Reports'
+
+  const existing = await findFolderByName(rootId, folderName)
+  if (existing) {
+    return existing
+  }
+
+  const folderMetadata = {
+    name: folderName,
+    mimeType: 'application/vnd.google-apps.folder',
+    parents: [rootId]
+  }
+
+  const response = await drive.files.create({
+    resource: folderMetadata,
+    fields: 'id, name, webViewLink',
+    supportsAllDrives: true
+  })
+
+  return response.data
+}
+
+/**
+ * Upload a generated voting report (.xlsx) to the dedicated Voting Reports folder
+ */
+async function uploadVotingReportToDrive({ fileName, buffer, mimeType }) {
+  const folder = await getOrCreateVotingReportsFolder()
+  const drive = getDriveClient()
+  const cleanName = (fileName || `IPL_2026_Voting_Report_${Date.now()}.xlsx`).trim()
+
+  const mediaStream = new Readable()
+  mediaStream.push(buffer)
+  mediaStream.push(null)
+
+  const fileMetadata = {
+    name: cleanName,
+    parents: [folder.id]
+  }
+
+  const media = {
+    mimeType: mimeType || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    body: mediaStream
+  }
+
+  const response = await drive.files.create({
+    resource: fileMetadata,
+    media: media,
+    fields: 'id, name, mimeType, size, webViewLink, createdTime, modifiedTime',
+    supportsAllDrives: true
+  })
+
+  return {
+    ...response.data,
+    folderId: folder.id,
+    folderName: folder.name
+  }
+}
+
+/**
+ * List existing generated reports from the dedicated Voting Reports folder
+ */
+async function listVotingReportsFromDrive() {
+  try {
+    const folder = await getOrCreateVotingReportsFolder()
+    const children = await listFolderChildren(folder.id)
+    return (children || []).filter(f => f.mimeType !== 'application/vnd.google-apps.folder')
+  } catch (err) {
+    console.warn('[GoogleDrive] Failed to list voting reports:', err.message)
+    return []
+  }
+}
+
 module.exports = {
   ROOT_FOLDER_ID,
   TEMPLATES_FOLDER_ID,
@@ -488,5 +567,8 @@ module.exports = {
   uploadFileToFolder,
   updateOrUploadFileToFolder,
   getFileMetadata,
-  streamFile
+  streamFile,
+  getOrCreateVotingReportsFolder,
+  uploadVotingReportToDrive,
+  listVotingReportsFromDrive
 }

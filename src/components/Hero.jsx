@@ -643,7 +643,7 @@ export default function Hero({
         preload="auto"
         className="absolute inset-0 h-full w-full object-cover object-center pointer-events-none z-0"
       >
-        <source src="/assets/hero-background.mp4" type="video/mp4" />
+        <source src="/assets/hero-background2.mp4" type="video/mp4" />
       </video>
 
       {/* Dark Blue Overlay */}

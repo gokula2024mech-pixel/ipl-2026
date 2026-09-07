@@ -1,4 +1,5 @@
 import { TAGLINE, SUB_TAGLINE } from '../data/content'
+import { isRootOrHomeHash, safeFindElement } from '../utils/sessionNavigationState'
 
 const QUICK_LINKS = [
   { label: 'Home', href: '#' },
@@ -35,10 +36,12 @@ export default function Footer({ onNavClick }) {
       onNavClick(href)
     }
 
-    if (!href || href === '#') {
+    if (isRootOrHomeHash(href)) {
       window.scrollTo({ top: 0, behavior: 'smooth' })
       if (window.location.hash) {
-        history.pushState(null, '', window.location.pathname)
+        try {
+          history.replaceState(null, '', window.location.pathname + window.location.search)
+        } catch (e) {}
       }
       return
     }
@@ -49,8 +52,7 @@ export default function Footer({ onNavClick }) {
       return
     }
 
-    const targetId = href.startsWith('#') ? href.slice(1) : href
-    const target = document.getElementById(targetId) || document.querySelector(href)
+    const target = safeFindElement(href)
 
     if (target) {
       const navbarHeight = 80
@@ -64,7 +66,7 @@ export default function Footer({ onNavClick }) {
       }
     } else {
       setTimeout(() => {
-        const deferred = document.getElementById(targetId) || document.querySelector(href)
+        const deferred = safeFindElement(href)
         if (deferred) {
           const navbarHeight = 80
           const targetPosition = deferred.getBoundingClientRect().top + window.scrollY - navbarHeight
