@@ -3785,6 +3785,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
                   token={authToken}
                   user={user}
                   profile={profile}
+                  apiBaseUrl={API_BASE_URL}
                   onShowToast={({ type, title, message }) => {
                     if (type === "error") setError(`${title}: ${message}`);
                     else setSuccess(`${title}: ${message}`);

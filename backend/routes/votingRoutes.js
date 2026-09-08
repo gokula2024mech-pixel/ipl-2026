@@ -1622,6 +1622,29 @@ router.get('/admin/metrics', authenticateUser, checkAdmin, async (req, res) => {
 });
 
 // -------------------------------------------------------------
+// 8b. GET /api/voting/admin/controls
+// Authoritative Admin fetch for Voting, QR, and Round controls
+// -------------------------------------------------------------
+router.get('/admin/controls', authenticateUser, checkAdmin, async (req, res) => {
+  try {
+    const controls = await getVotingControls();
+    return res.status(200).json({
+      success: true,
+      controls: {
+        id: controls?.id || 1,
+        is_voting_active: Boolean(controls?.is_voting_active),
+        is_qr_generation_active: Boolean(controls?.is_qr_generation_active),
+        current_voting_round: controls?.current_voting_round || 1,
+        updated_at: controls?.updated_at || new Date().toISOString()
+      }
+    });
+  } catch (err) {
+    console.error('[Voting API] /admin/controls GET error:', err.message);
+    return res.status(500).json({ success: false, message: 'Failed to retrieve voting controls.' });
+  }
+});
+
+// -------------------------------------------------------------
 // 9. POST /api/voting/admin/controls
 // Authoritative Admin toggle for Voting, QR, and Round
 // -------------------------------------------------------------

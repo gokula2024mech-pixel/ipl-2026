@@ -128,7 +128,91 @@ function downloadRealExcelWorkbook(sheets, filename) {
   URL.revokeObjectURL(url);
 }
 
-export default function AdminVotingManagement({ token, user, profile, onShowToast }) {
+/**
+ * Safely executes a fetch request and parses JSON responses.
+ * Prevents "Unexpected token" crashes when the server returns HTML/text error pages.
+ * Distinguishes authentication, authorization, 404 route, server, network, and non-JSON errors.
+ */
+async function safeFetchJson(url, options = {}) {
+  try {
+    const res = await fetch(url, options);
+    const contentType = (res.headers.get('content-type') || '').toLowerCase();
+    let data = null;
+
+    if (contentType.includes('application/json')) {
+      try {
+        data = await res.json();
+      } catch (parseErr) {
+        return {
+          ok: false,
+          status: res.status,
+          errorType: 'JSON_PARSE_ERROR',
+          message: `Received invalid JSON from server (HTTP ${res.status}).`,
+          data: null
+        };
+      }
+    } else {
+      // Non-JSON response (e.g., HTML 404 / 500 error page from CDN / reverse proxy)
+      let text = '';
+      try {
+        text = await res.text();
+      } catch {}
+
+      let friendlyMsg = `Server returned non-JSON response (HTTP ${res.status}).`;
+      if (res.status === 404) {
+        friendlyMsg = `Endpoint not found (HTTP 404). Please verify backend route configuration.`;
+      } else if (res.status === 401) {
+        friendlyMsg = `Authentication required (HTTP 401). Please re-login.`;
+      } else if (res.status === 403) {
+        friendlyMsg = `Access forbidden (HTTP 403). Admin authorization required.`;
+      } else if (res.status >= 500) {
+        friendlyMsg = `Server error (HTTP ${res.status}). Please check backend logs.`;
+      }
+
+      return {
+        ok: false,
+        status: res.status,
+        errorType: res.status === 404 ? 'NOT_FOUND' : (res.status === 401 ? 'UNAUTHORIZED' : (res.status === 403 ? 'FORBIDDEN' : (res.status >= 500 ? 'SERVER_ERROR' : 'NON_JSON_RESPONSE'))),
+        message: friendlyMsg,
+        data: null
+      };
+    }
+
+    if (!res.ok) {
+      const errorType = res.status === 401 ? 'UNAUTHORIZED' : (res.status === 403 ? 'FORBIDDEN' : (res.status === 404 ? 'NOT_FOUND' : (res.status >= 500 ? 'SERVER_ERROR' : 'HTTP_ERROR')));
+      const message = (data && (data.message || data.error)) || `Request failed with HTTP status ${res.status}.`;
+      return {
+        ok: false,
+        status: res.status,
+        errorType,
+        message,
+        data
+      };
+    }
+
+    return {
+      ok: true,
+      status: res.status,
+      errorType: null,
+      message: null,
+      data
+    };
+  } catch (netErr) {
+    return {
+      ok: false,
+      status: 0,
+      errorType: 'NETWORK_ERROR',
+      message: `Network error: ${netErr.message || 'Unable to connect to backend server'}.`,
+      data: null
+    };
+  }
+}
+
+export default function AdminVotingManagement({ token, user, profile, onShowToast, apiBaseUrl }) {
+  // Centralized API Base URL resolution (local vs production)
+  const rawApiUrl = (apiBaseUrl || import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000').trim().replace(/\/+$/, '');
+  const API_BASE_URL = rawApiUrl.endsWith('/api') ? rawApiUrl.slice(0, -4) : rawApiUrl;
+
   // Subpage Navigation State (Persisted in sessionStorage with safe fallback)
   const [subTab, setSubTab] = useState(() => {
     try {
@@ -171,6 +255,7 @@ export default function AdminVotingManagement({ token, user, profile, onShowToas
   });
   const [loadingMetrics, setLoadingMetrics] = useState(true);
   const [updatingControls, setUpdatingControls] = useState(false);
+  const [fetchError, setFetchError] = useState(null);
 
   // Voter Reports State
   const [voterSearchQuery, setVoterSearchQuery] = useState('');
@@ -199,13 +284,28 @@ export default function AdminVotingManagement({ token, user, profile, onShowToas
     }
   }, [onShowToast]);
 
-  // 1. Fetch Overview Metrics
+  // 1. Fetch Overview Metrics & Controls
   const fetchMetrics = useCallback(async (silent = false) => {
     if (!silent) setLoadingMetrics(true);
     try {
-      const res = await fetch('/api/voting/admin/metrics', { headers: authHeaders });
-      const data = await res.json();
-      if (data.success && data.metrics) {
+      const [metricsRes, controlsRes] = await Promise.all([
+        safeFetchJson(`${API_BASE_URL}/api/voting/admin/metrics`, { headers: authHeaders }),
+        safeFetchJson(`${API_BASE_URL}/api/voting/admin/controls`, { headers: authHeaders })
+      ]);
+
+      if (!metricsRes.ok) {
+        if (!silent) {
+          setFetchError({ status: metricsRes.status, type: metricsRes.errorType, message: metricsRes.message });
+          notify('error', 'Metrics Error', metricsRes.message);
+        }
+        return;
+      }
+
+      setFetchError(null);
+      const data = metricsRes.data;
+      const ctrlData = controlsRes.ok && controlsRes.data?.controls ? controlsRes.data.controls : null;
+
+      if (data?.success && data?.metrics) {
         setMetrics(prev => ({
           ...prev,
           totalVotes: data.metrics.totalVotes || 0,
@@ -216,16 +316,19 @@ export default function AdminVotingManagement({ token, user, profile, onShowToas
           totalProducts: data.metrics.totalProducts || 292,
           totalEligibleTeams: data.metrics.totalEligibleTeams || 288,
           lastVoteAt: data.metrics.lastVoteAt || null,
-          isVotingActive: Boolean(data.metrics.isVotingActive),
-          isQrGenerationActive: Boolean(data.metrics.isQrGenerationActive)
+          isVotingActive: ctrlData ? Boolean(ctrlData.is_voting_active) : Boolean(data.metrics.isVotingActive),
+          isQrGenerationActive: ctrlData ? Boolean(ctrlData.is_qr_generation_active) : Boolean(data.metrics.isQrGenerationActive)
         }));
       }
     } catch (err) {
       console.warn('[AdminVotingManagement] Failed to fetch metrics:', err);
+      if (!silent) {
+        setFetchError({ status: 0, type: 'UNEXPECTED_ERROR', message: err.message || 'Failed to fetch metrics.' });
+      }
     } finally {
       if (!silent) setLoadingMetrics(false);
     }
-  }, [authHeaders]);
+  }, [API_BASE_URL, authHeaders, notify]);
 
   useEffect(() => {
     fetchMetrics();
@@ -242,13 +345,12 @@ export default function AdminVotingManagement({ token, user, profile, onShowToas
         ? { is_voting_active: nextVal }
         : { is_qr_generation_active: nextVal };
 
-      const res = await fetch('/api/voting/admin/controls', {
+      const result = await safeFetchJson(`${API_BASE_URL}/api/voting/admin/controls`, {
         method: 'POST',
         headers: authHeaders,
         body: JSON.stringify(payload)
       });
-      const data = await res.json();
-      if (data.success) {
+      if (result.ok && result.data?.success) {
         setMetrics(prev => ({
           ...prev,
           isVotingActive: type === 'voting' ? nextVal : prev.isVotingActive,
@@ -259,7 +361,7 @@ export default function AdminVotingManagement({ token, user, profile, onShowToas
           : `Team QR Generation is now ${nextVal ? 'ON' : 'OFF'}.`
         );
       } else {
-        notify('error', 'Update Failed', data.message || 'Could not update control.');
+        notify('error', 'Update Failed', result.message || 'Could not update control.');
       }
     } catch (err) {
       notify('error', 'Update Error', err.message);
@@ -272,30 +374,34 @@ export default function AdminVotingManagement({ token, user, profile, onShowToas
   const fetchVoters = useCallback(async (query = '') => {
     setLoadingVoters(true);
     try {
-      const url = `/api/voting/admin/voter-reports?search=${encodeURIComponent(query)}`;
-      const res = await fetch(url, { headers: authHeaders });
-      const data = await res.json();
-      if (data.success) {
-        setVotersList(data.voters || []);
+      const url = `${API_BASE_URL}/api/voting/admin/voter-reports?search=${encodeURIComponent(query)}`;
+      const result = await safeFetchJson(url, { headers: authHeaders });
+      if (result.ok && result.data?.success) {
+        setVotersList(result.data.voters || []);
+      } else if (!result.ok) {
+        notify('error', 'Voter Reports Error', result.message);
       }
     } catch (err) {
       console.warn('[AdminVotingManagement] Failed to load voters:', err);
+      notify('error', 'Voter Reports Error', err.message);
     } finally {
       setLoadingVoters(false);
     }
-  }, [authHeaders]);
+  }, [API_BASE_URL, authHeaders, notify]);
 
   const handleSelectVoter = async (voter) => {
     setSelectedVoter(voter);
     setLoadingVoterDetail(true);
     try {
-      const res = await fetch(`/api/voting/admin/voter-reports?voter_id=${encodeURIComponent(voter.userId)}`, { headers: authHeaders });
-      const data = await res.json();
-      if (data.success && data.voter) {
-        setSelectedVoter(data.voter);
+      const result = await safeFetchJson(`${API_BASE_URL}/api/voting/admin/voter-reports?voter_id=${encodeURIComponent(voter.userId)}`, { headers: authHeaders });
+      if (result.ok && result.data?.success && result.data?.voter) {
+        setSelectedVoter(result.data.voter);
+      } else if (!result.ok) {
+        notify('error', 'Voter Detail Error', result.message);
       }
     } catch (err) {
       console.warn('[AdminVotingManagement] Failed to fetch voter detail:', err);
+      notify('error', 'Voter Detail Error', err.message);
     } finally {
       setLoadingVoterDetail(false);
     }
@@ -306,29 +412,33 @@ export default function AdminVotingManagement({ token, user, profile, onShowToas
     setLoadingTeams(true);
     try {
       const deptParam = dept === 'All Departments' ? '' : dept;
-      const url = `/api/voting/admin/team-reports?search=${encodeURIComponent(query)}&department=${encodeURIComponent(deptParam)}`;
-      const res = await fetch(url, { headers: authHeaders });
-      const data = await res.json();
-      if (data.success) {
-        setTeamsList(data.teams || []);
+      const url = `${API_BASE_URL}/api/voting/admin/team-reports?search=${encodeURIComponent(query)}&department=${encodeURIComponent(deptParam)}`;
+      const result = await safeFetchJson(url, { headers: authHeaders });
+      if (result.ok && result.data?.success) {
+        setTeamsList(result.data.teams || []);
+      } else if (!result.ok) {
+        notify('error', 'Team Reports Error', result.message);
       }
     } catch (err) {
       console.warn('[AdminVotingManagement] Failed to load teams:', err);
+      notify('error', 'Team Reports Error', err.message);
     } finally {
       setLoadingTeams(false);
     }
-  }, [authHeaders]);
+  }, [API_BASE_URL, authHeaders, notify]);
 
   const handleSelectTeam = async (team) => {
     setSelectedTeam(team);
     try {
-      const res = await fetch(`/api/voting/admin/team-reports?team_id=${encodeURIComponent(team.id)}`, { headers: authHeaders });
-      const data = await res.json();
-      if (data.success && data.team) {
-        setSelectedTeam(data.team);
+      const result = await safeFetchJson(`${API_BASE_URL}/api/voting/admin/team-reports?team_id=${encodeURIComponent(team.id)}`, { headers: authHeaders });
+      if (result.ok && result.data?.success && result.data?.team) {
+        setSelectedTeam(result.data.team);
+      } else if (!result.ok) {
+        notify('error', 'Team Detail Error', result.message);
       }
     } catch (err) {
       console.warn('[AdminVotingManagement] Failed to fetch team detail:', err);
+      notify('error', 'Team Detail Error', err.message);
     }
   };
 
@@ -336,17 +446,19 @@ export default function AdminVotingManagement({ token, user, profile, onShowToas
   const fetchReportHistory = useCallback(async () => {
     setLoadingHistory(true);
     try {
-      const res = await fetch('/api/voting/admin/report-history', { headers: authHeaders });
-      const data = await res.json();
-      if (data.success) {
-        setReportHistory(data.reports || []);
+      const result = await safeFetchJson(`${API_BASE_URL}/api/voting/admin/report-history`, { headers: authHeaders });
+      if (result.ok && result.data?.success) {
+        setReportHistory(result.data.reports || []);
+      } else if (!result.ok) {
+        notify('error', 'Report History Error', result.message);
       }
     } catch (err) {
       console.warn('[AdminVotingManagement] Failed to fetch report history:', err);
+      notify('error', 'Report History Error', err.message);
     } finally {
       setLoadingHistory(false);
     }
-  }, [authHeaders]);
+  }, [API_BASE_URL, authHeaders, notify]);
 
   // Load sub-page data on tab change
   useEffect(() => {
@@ -363,12 +475,12 @@ export default function AdminVotingManagement({ token, user, profile, onShowToas
   const handleDownloadExcel = async (type) => {
     setExportingType(type);
     try {
-      const res = await fetch(`/api/voting/admin/export-data?type=${type}`, { headers: authHeaders });
-      const data = await res.json();
-      if (data.success && data.sheets) {
-        downloadRealExcelWorkbook(data.sheets, data.filename);
-        notify('success', 'Export Ready', `Downloaded genuine Excel workbook: ${data.filename}`);
-      } else if (data.success && data.headers && data.rows) {
+      const result = await safeFetchJson(`${API_BASE_URL}/api/voting/admin/export-data?type=${type}`, { headers: authHeaders });
+      if (result.ok && result.data?.success && result.data?.sheets) {
+        downloadRealExcelWorkbook(result.data.sheets, result.data.filename);
+        notify('success', 'Export Ready', `Downloaded genuine Excel workbook: ${result.data.filename}`);
+      } else if (result.ok && result.data?.success && result.data?.headers && result.data?.rows) {
+        const data = result.data;
         const wb = XLSX.utils.book_new();
         const ws = XLSX.utils.aoa_to_sheet([data.headers, ...data.rows]);
         XLSX.utils.book_append_sheet(wb, ws, 'Voting Report');
@@ -384,7 +496,7 @@ export default function AdminVotingManagement({ token, user, profile, onShowToas
         URL.revokeObjectURL(url);
         notify('success', 'Export Ready', `Downloaded ${data.filename} (${data.totalRows} records).`);
       } else {
-        notify('error', 'Export Failed', data.message || 'Could not export records.');
+        notify('error', 'Export Failed', result.message || 'Could not export records.');
       }
     } catch (err) {
       notify('error', 'Export Error', err.message);
@@ -397,17 +509,16 @@ export default function AdminVotingManagement({ token, user, profile, onShowToas
   const handleSaveToDrive = async (type) => {
     setUploadingDriveType(type);
     try {
-      const res = await fetch('/api/voting/admin/export-upload-drive', {
+      const result = await safeFetchJson(`${API_BASE_URL}/api/voting/admin/export-upload-drive`, {
         method: 'POST',
         headers: authHeaders,
         body: JSON.stringify({ type })
       });
-      const data = await res.json();
-      if (data.success) {
-        notify('success', 'Saved to Google Drive', `${data.fileName} archived in 'IPL 2026 Voting Reports'.`);
+      if (result.ok && result.data?.success) {
+        notify('success', 'Saved to Google Drive', `${result.data.fileName} archived in 'IPL 2026 Voting Reports'.`);
         fetchReportHistory();
       } else {
-        notify('error', 'Drive Upload Failed', data.message || 'Could not save to Google Drive.');
+        notify('error', 'Drive Upload Failed', result.message || 'Could not save to Google Drive.');
       }
     } catch (err) {
       notify('error', 'Drive Error', err.message);
@@ -477,6 +588,26 @@ export default function AdminVotingManagement({ token, user, profile, onShowToas
       {/* ============================================================== */}
       {subTab === 'overview' && (
         <div className="space-y-6">
+          {/* Error Banner if API failed */}
+          {fetchError && (
+            <div className="rounded-2xl border border-red-200 bg-red-50/90 p-4 text-red-800 flex items-start justify-between gap-3 shadow-sm">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="text-red-600 shrink-0 mt-0.5" size={18} />
+                <div className="text-xs sm:text-sm">
+                  <p className="font-bold">Unable to load live voting metrics</p>
+                  <p className="text-red-700 mt-0.5">{fetchError.message}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => fetchMetrics()}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-red-100 hover:bg-red-200 text-red-900 transition shrink-0 cursor-pointer"
+              >
+                Retry
+              </button>
+            </div>
+          )}
+
           {/* Live Monitoring 4 Metrics */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <article className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200 space-y-1">
