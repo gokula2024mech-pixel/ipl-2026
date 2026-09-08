@@ -495,9 +495,10 @@ export default function Navbar({ onRegisterClick, user, profile, onProfileUpdate
             animate={{ opacity: 1, height: 'auto' }}
             exit={{ opacity: 0, height: 0 }}
             transition={{ duration: 0.2 }}
-            className="overflow-hidden border-t border-slate-200 bg-white lg:hidden"
+            className="max-h-[calc(100vh-4.5rem)] max-h-[calc(100dvh-4.5rem)] overflow-y-auto overflow-x-hidden overscroll-contain border-t border-slate-200 bg-white lg:hidden"
+            style={{ WebkitOverflowScrolling: 'touch' }}
           >
-            <ul className="flex flex-col gap-1 px-4 py-4">
+            <ul className="flex flex-col gap-1 px-4 pt-3 pb-8 sm:pb-10">
               {/* Mobile Navigation Links */}
               {MOBILE_NAV_LINKS.map((link) => (
                 <li key={link.label}>
@@ -653,7 +654,7 @@ export default function Navbar({ onRegisterClick, user, profile, onProfileUpdate
                   <button
                     type="button"
                     onClick={handleLogout}
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 text-center text-sm font-semibold text-slate-600 hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors cursor-pointer"
+                    className="w-full min-h-[44px] rounded-xl border border-slate-200 bg-slate-50 py-3 text-center text-sm font-bold text-slate-700 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 active:bg-rose-100 transition-colors cursor-pointer shadow-xs flex items-center justify-center"
                   >
                     Logout
                   </button>
