@@ -250,9 +250,9 @@ export default function Navbar({ onRegisterClick, user, profile, onProfileUpdate
   }
 
   return (
-    <header className="fixed inset-x-0 top-0 z-50 border-b border-slate-200/80 bg-white/95 shadow-lg backdrop-blur-md">
+    <header className={`fixed inset-x-0 top-0 z-50 border-b border-slate-200/80 bg-white/95 shadow-lg backdrop-blur-md ${mobileOpen ? 'bottom-0 flex flex-col lg:bottom-auto lg:block' : ''}`}>
       <nav
-        className="mx-auto flex max-w-7xl items-center justify-between px-4 py-4 md:px-6 lg:px-8"
+        className="mx-auto flex max-w-7xl w-full items-center justify-between px-4 py-4 md:px-6 lg:px-8 shrink-0"
         aria-label="Main navigation"
       >
         {/* ==================== LOGO ==================== */}
@@ -491,14 +491,18 @@ export default function Navbar({ onRegisterClick, user, profile, onProfileUpdate
       <AnimatePresence>
         {mobileOpen && (
           <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
             transition={{ duration: 0.2 }}
-            className="max-h-[calc(100vh-4.5rem)] max-h-[calc(100dvh-4.5rem)] overflow-y-auto overflow-x-hidden overscroll-contain border-t border-slate-200 bg-white lg:hidden"
-            style={{ WebkitOverflowScrolling: 'touch' }}
+            className="flex-1 min-h-0 w-full overflow-hidden border-t border-slate-200 bg-white lg:hidden"
           >
-            <ul className="flex flex-col gap-1 px-4 pt-3 pb-8 sm:pb-10">
+            {/* SCROLLABLE MENU CONTENT */}
+            <div
+              className="h-full w-full overflow-y-auto overflow-x-hidden overscroll-contain touch-pan-y"
+              style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}
+            >
+              <ul className="flex flex-col gap-1 px-4 pt-3 pb-[max(2.5rem,env(safe-area-inset-bottom,2.5rem))]">
               {/* Mobile Navigation Links */}
               {MOBILE_NAV_LINKS.map((link) => (
                 <li key={link.label}>
@@ -671,9 +675,10 @@ export default function Navbar({ onRegisterClick, user, profile, onProfileUpdate
                 </li>
               )}
             </ul>
-          </motion.div>
-        )}
-      </AnimatePresence>
+          </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
 
       {/* Center Modal for Name Change Confirmation - Rendered via Portal directly into document.body */}
       {showConfirmModal && createPortal(
