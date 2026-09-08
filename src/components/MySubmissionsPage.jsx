@@ -834,6 +834,10 @@ export default function MySubmissionsPage({
         if (data.success && data.hasSubmission && data.status) {
           setPhase1Decision({
             status: data.status,
+            isComplete: data.isComplete,
+            uploadedCount: data.uploadedCount,
+            requiredCount: data.requiredCount,
+            missingDocuments: data.missingDocuments || [],
             adminComment: data.adminComment,
             decisionSeen: data.decisionSeen,
           });
@@ -1362,6 +1366,28 @@ export default function MySubmissionsPage({
   const phase2Config = phasesList.find((p) => p.phase_number === 2);
   const phase3Config = phasesList.find((p) => p.phase_number === 3);
 
+  const uploadedRequiredSlotsCount = activeTemplates.filter((tmpl) => {
+    const cleanTmpl = tmpl.name.replace(/\.docx?$/i, "").trim();
+    const rawTmpl = tmpl.rawName
+      ? tmpl.rawName.replace(/\.docx?$/i, "").trim()
+      : cleanTmpl;
+    const normTmpl = cleanTmpl.toLowerCase().replace(/[^a-z0-9]/g, "");
+    return teamSubmissions.some((s) => {
+      const cleanSub = (s.name || "").toLowerCase();
+      const rawTmplLower = rawTmpl.toLowerCase();
+      const normTmplLower = normTmpl.toLowerCase();
+      const altTmplLower = rawTmpl.replace(/\s+/g, "-").toLowerCase();
+      return (
+        cleanSub.includes(normTmplLower) ||
+        cleanSub.includes(altTmplLower) ||
+        cleanSub.includes(rawTmplLower)
+      );
+    });
+  }).length;
+  const isSubmissionComplete =
+    activeTemplates.length > 0 &&
+    uploadedRequiredSlotsCount === activeTemplates.length;
+
   return (
     <div className="min-h-screen bg-slate-50 pt-28 pb-10 px-4 md:px-6 lg:px-8 relative">
       {/* Temporary Toast Popup Notification (Auto-dismisses in 6.5s, portal directly onto document.body) */}
@@ -1499,6 +1525,8 @@ export default function MySubmissionsPage({
                           ? "bg-emerald-50 text-emerald-700 border-emerald-200"
                           : phase1Decision.status === "REJECTED"
                           ? "bg-rose-50 text-rose-700 border-rose-200"
+                          : phase1Decision.status === "INCOMPLETE"
+                          ? "bg-amber-100/80 text-amber-900 border-amber-300"
                           : "bg-amber-50 text-amber-800 border-amber-200"
                       }`}
                     >
@@ -1506,6 +1534,8 @@ export default function MySubmissionsPage({
                         ? "✓ APPROVED"
                         : phase1Decision.status === "REJECTED"
                         ? "! REJECTED"
+                        : phase1Decision.status === "INCOMPLETE"
+                        ? "⚠️ INCOMPLETE"
                         : "● PENDING REVIEW"}
                     </span>
                   )}
@@ -1939,6 +1969,8 @@ export default function MySubmissionsPage({
                                       ? "bg-emerald-50 text-emerald-700 border-emerald-200"
                                       : phase1Decision.status === "REJECTED"
                                       ? "bg-rose-50 text-rose-700 border-rose-200"
+                                      : phase1Decision.status === "INCOMPLETE"
+                                      ? "bg-amber-100/80 text-amber-900 border-amber-300"
                                       : "bg-amber-50 text-amber-700 border-amber-200"
                                   }`}
                                 >
@@ -1948,10 +1980,13 @@ export default function MySubmissionsPage({
                                   {phase1Decision.status === "REJECTED" && (
                                     <XCircle size={12} className="text-rose-600" />
                                   )}
+                                  {phase1Decision.status === "INCOMPLETE" && (
+                                    <Clock size={12} className="text-amber-700" />
+                                  )}
                                   {phase1Decision.status === "PENDING" && (
                                     <Clock size={12} className="text-amber-600" />
                                   )}
-                                  Phase 1: {phase1Decision.status === "APPROVED" ? "Approved" : phase1Decision.status === "REJECTED" ? "Rejected" : "Pending Review"}
+                                  Phase 1: {phase1Decision.status === "APPROVED" ? "Approved" : phase1Decision.status === "REJECTED" ? "Rejected" : phase1Decision.status === "INCOMPLETE" ? "Incomplete" : "Pending Review"}
                                 </span>
                               )}
                               {currentPage.team.userRole === "Team Leader" &&
@@ -2205,13 +2240,15 @@ export default function MySubmissionsPage({
             ) : (
               <div className="space-y-6">
                 {/* Permanent Phase 1 Review Status & Evaluator Remarks */}
-                {phase1Decision?.status && (teamSubmissions.length > 0 || phase1Decision.status === "APPROVED" || phase1Decision.status === "REJECTED") && (
+                {phase1Decision?.status && (teamSubmissions.length > 0 || phase1Decision.status === "APPROVED" || phase1Decision.status === "REJECTED" || phase1Decision.status === "INCOMPLETE") && (
                   <div
                     className={`rounded-2xl border p-5 sm:p-6 transition-all shadow-xs ${
                       phase1Decision.status === "APPROVED"
                         ? "bg-emerald-50/80 border-emerald-200 text-emerald-950"
                         : phase1Decision.status === "REJECTED"
                         ? "bg-rose-50/80 border-rose-200 text-rose-950"
+                        : phase1Decision.status === "INCOMPLETE"
+                        ? "bg-amber-50/90 border-amber-300 text-amber-950"
                         : "bg-amber-50/80 border-amber-200 text-amber-950"
                     }`}
                   >
@@ -2223,11 +2260,14 @@ export default function MySubmissionsPage({
                               ? "bg-emerald-600 text-white"
                               : phase1Decision.status === "REJECTED"
                               ? "bg-rose-600 text-white"
+                              : phase1Decision.status === "INCOMPLETE"
+                              ? "bg-amber-600 text-white"
                               : "bg-amber-500 text-white"
                           }`}
                         >
                           {phase1Decision.status === "APPROVED" && <CheckCircle size={24} />}
                           {phase1Decision.status === "REJECTED" && <XCircle size={24} />}
+                          {phase1Decision.status === "INCOMPLETE" && <AlertTriangle size={24} />}
                           {phase1Decision.status === "PENDING" && <Clock size={24} />}
                         </div>
                         <div>
@@ -2238,6 +2278,8 @@ export default function MySubmissionsPage({
                                   ? "bg-emerald-100 text-emerald-800"
                                   : phase1Decision.status === "REJECTED"
                                   ? "bg-rose-100 text-rose-800"
+                                  : phase1Decision.status === "INCOMPLETE"
+                                  ? "bg-amber-200/80 text-amber-900"
                                   : "bg-amber-100 text-amber-800"
                               }`}
                             >
@@ -2248,6 +2290,8 @@ export default function MySubmissionsPage({
                                 ? "✓ Approved"
                                 : phase1Decision.status === "REJECTED"
                                 ? "✕ Rejected / Revision Needed"
+                                : phase1Decision.status === "INCOMPLETE"
+                                ? "⚠️ Submission Incomplete"
                                 : "● Under Admin Review"}
                             </span>
                           </div>
@@ -2256,6 +2300,8 @@ export default function MySubmissionsPage({
                               ? "Your Phase 1 patent documents have been approved by the committee."
                               : phase1Decision.status === "REJECTED"
                               ? "Your Phase 1 submission requires corrections before it can be approved."
+                              : phase1Decision.status === "INCOMPLETE"
+                              ? `Your submission is incomplete (${phase1Decision.uploadedCount || teamSubmissions.length}/${phase1Decision.requiredCount || (selectedPatentType === "Design Patent" ? 2 : 4)} documents uploaded). Please upload all required documents below to submit for evaluation.`
                               : "Your submitted documents are currently under review by the panel."}
                           </h3>
                         </div>
@@ -2448,15 +2494,79 @@ export default function MySubmissionsPage({
                     {selectedPatentType &&
                       !templatesLoading &&
                       !templatesError && (
-                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-100 px-2.5 py-1 rounded-md border border-slate-200 shrink-0">
-                          {activeTemplates.length}{" "}
-                          {activeTemplates.length === 1
-                            ? "Document"
-                            : "Documents"}{" "}
-                          Required
-                        </span>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span
+                            className={`text-[10px] font-black uppercase px-2.5 py-1 rounded-md border tracking-wider shrink-0 ${
+                              isSubmissionComplete
+                                ? "bg-emerald-100 text-emerald-800 border-emerald-300"
+                                : "bg-amber-100 text-amber-900 border-amber-300"
+                            }`}
+                          >
+                            {isSubmissionComplete
+                              ? "✓ COMPLETE"
+                              : `INCOMPLETE (${uploadedRequiredSlotsCount}/${activeTemplates.length})`}
+                          </span>
+                        </div>
                       )}
                   </div>
+
+                  {/* Prominent Required-Document Completion Banner */}
+                  {selectedPatentType &&
+                    !templatesLoading &&
+                    !templatesError &&
+                    activeTemplates.length > 0 && (
+                      <div
+                        className={`p-4 rounded-xl border transition-all ${
+                          isSubmissionComplete
+                            ? "bg-emerald-50/90 border-emerald-200 text-emerald-950"
+                            : "bg-amber-50/90 border-amber-300 text-amber-950"
+                        }`}
+                      >
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                          <div className="flex items-center gap-3">
+                            <div
+                              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg shadow-2xs ${
+                                isSubmissionComplete
+                                  ? "bg-emerald-600 text-white"
+                                  : "bg-amber-600 text-white"
+                              }`}
+                            >
+                              {isSubmissionComplete ? (
+                                <CheckCircle size={18} />
+                              ) : (
+                                <AlertTriangle size={18} />
+                              )}
+                            </div>
+                            <div>
+                              <p className="text-xs sm:text-sm font-black tracking-tight">
+                                {selectedPatentType === "Utility Patent"
+                                  ? "Please upload all 4 required documents to complete your Phase 1 submission."
+                                  : "Please upload all 2 required documents to complete your Phase 1 submission."}
+                              </p>
+                              <p className="text-[11px] font-semibold text-slate-600 mt-0.5">
+                                {isSubmissionComplete
+                                  ? "All required templates have been uploaded and submitted for committee evaluation."
+                                  : `Documents Uploaded: ${uploadedRequiredSlotsCount} / ${activeTemplates.length} — All required templates must be submitted before your submission can be evaluated.`}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span
+                              className={`text-[10px] font-black uppercase px-2.5 py-1 rounded-full border shadow-2xs ${
+                                isSubmissionComplete
+                                  ? "bg-emerald-100 text-emerald-800 border-emerald-300"
+                                  : "bg-amber-100 text-amber-900 border-amber-300"
+                              }`}
+                            >
+                              {isSubmissionComplete
+                                ? "✓ COMPLETE"
+                                : `⚠️ INCOMPLETE (${uploadedRequiredSlotsCount}/${activeTemplates.length})`}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
 
                   {!selectedPatentType ? (
                     <div className="p-12 flex flex-col items-center justify-center text-center gap-3 text-slate-400">

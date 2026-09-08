@@ -7,6 +7,12 @@ const fs = require('fs')
 const { Readable } = require('stream')
 const { google } = require('googleapis')
 const { supabase } = require('../supabaseClient')
+const {
+  calculatePhase1Completion,
+  UTILITY_TEMPLATES,
+  DESIGN_TEMPLATES,
+  matchesSlot
+} = require('../utils/phase1Completion')
 
 // Configure Multer for in-memory file handling (max 10MB)
 const upload = multer({
@@ -515,16 +521,29 @@ router.post('/phase1/upload', authenticateUser, checkPhase1Active, (req, res) =>
         }
       }
 
-      // Reset team decision to PENDING so new upload is queued for admin review
+      // Recalculate completion dynamically immediately after upload
+      let completionResult = null;
       try {
+        const { data: allTeamDocs } = await supabase
+          .from('phase1_submissions')
+          .select('*')
+          .eq('registration_id', registrationId);
+
+        completionResult = calculatePhase1Completion(allTeamDocs || []);
         const localDecs = readLocalDecisions();
-        localDecs[registrationId] = {
-          status: 'PENDING',
-          adminComment: null,
-          reviewedBy: null,
-          reviewedAt: null,
-          decisionSeen: false
-        };
+
+        if (completionResult.isComplete) {
+          localDecs[registrationId] = {
+            status: 'PENDING',
+            adminComment: null,
+            reviewedBy: null,
+            reviewedAt: null,
+            decisionSeen: false,
+            updatedAt: new Date().toISOString()
+          };
+        } else {
+          delete localDecs[registrationId];
+        }
         writeLocalDecisions(localDecs);
       } catch (cacheErr) {
         console.warn('[Upload Decision Cache Warning]:', cacheErr.message);
@@ -533,7 +552,13 @@ router.post('/phase1/upload', authenticateUser, checkPhase1Active, (req, res) =>
       return res.status(200).json({
         success: true,
         message: 'Document uploaded successfully.',
-        submission
+        submission,
+        completion: completionResult ? {
+          isComplete: completionResult.isComplete,
+          uploadedCount: completionResult.uploadedCount,
+          requiredCount: completionResult.requiredCount,
+          missingSlots: completionResult.missingSlots.map(s => s.name)
+        } : null
       })
     } catch (err) {
       console.error('[Student Upload Error]:', err.message)
@@ -821,18 +846,6 @@ router.get('/phase1/admin/submissions', authenticateUser, checkAdmin, async (req
     const products = prodsResult.data || [];
     const localDecisions = readLocalDecisions();
 
-    // Canonical templates for Utility vs Design
-    const UTILITY_TEMPLATES = [
-      { name: 'Abstract_for_Product.docx', type: 'FIGURE_OF_ABSTRACT' },
-      { name: 'Declaration_Form.docx', type: 'FORM_5' },
-      { name: 'Grant_Form.docx', type: 'FORM_2' },
-      { name: 'List_of_Drawing.docx', type: 'LIST_OF_DRAWINGS' }
-    ];
-    const DESIGN_TEMPLATES = [
-      { name: 'Novelty_Form.docx', type: 'NOVELTY_FORM' },
-      { name: 'Representation_Sheet.docx', type: 'REPRESENTATION_SHEET' }
-    ];
-
     // 4. Aggregate by team registration
     const teamSubmissions = regIds.map(regId => {
       const teamDocs = allSubs.filter(s => s.registration_id === regId);
@@ -840,22 +853,25 @@ router.get('/phase1/admin/submissions', authenticateUser, checkAdmin, async (req
       const prod = products.find(p => p.legacy_registration_id === regId || (reg && p.team_id === reg.id));
       const localDec = localDecisions[regId];
 
-      // Detect Patent Type
-      let detectedPatentType = 'Utility Patent';
-      if (teamDocs.some(d => (d.original_filename && /novelty|representation/i.test(d.original_filename)) || d.patent_type === 'Design Patent')) {
-        detectedPatentType = 'Design Patent';
-      }
+      // Dynamic completion calculation using authoritative phase1Completion module
+      const completion = calculatePhase1Completion(teamDocs);
+      const detectedPatentType = completion.patentType;
 
-      // Compute aggregate review status
-      let finalStatus = 'PENDING';
-      if (localDec && localDec.status) {
-        finalStatus = localDec.status;
+      // Compute aggregate review status dynamically:
+      // Submissions missing required documents are strictly INCOMPLETE and cannot be reviewed
+      let finalStatus = 'INCOMPLETE';
+      if (completion.isComplete) {
+        if (localDec && localDec.status && ['APPROVED', 'REJECTED', 'PENDING'].includes(localDec.status)) {
+          finalStatus = localDec.status;
+        } else {
+          const hasRejected = teamDocs.some(d => d.review_status === 'REJECTED');
+          const allApproved = teamDocs.length > 0 && teamDocs.every(d => d.review_status === 'APPROVED');
+          if (hasRejected) finalStatus = 'REJECTED';
+          else if (allApproved) finalStatus = 'APPROVED';
+          else finalStatus = 'PENDING';
+        }
       } else {
-        const hasRejected = teamDocs.some(d => d.review_status === 'REJECTED');
-        const allApproved = teamDocs.length > 0 && teamDocs.every(d => d.review_status === 'APPROVED');
-        if (hasRejected) finalStatus = 'REJECTED';
-        else if (allApproved) finalStatus = 'APPROVED';
-        else finalStatus = 'PENDING';
+        finalStatus = 'INCOMPLETE';
       }
 
       // Admin Comment & Reviewer Metadata ONLY if status is APPROVED or REJECTED
@@ -879,13 +895,8 @@ router.get('/phase1/admin/submissions', authenticateUser, checkAdmin, async (req
       // Assemble document checklist based on patent type
       const expectedTemplates = detectedPatentType === 'Design Patent' ? DESIGN_TEMPLATES : UTILITY_TEMPLATES;
       const docs = expectedTemplates.map((tmpl, index) => {
-        // Find if this team uploaded a file matching this template type or filename
-        const match = teamDocs.find(d => {
-          const docTypeNorm = (d.document_type || '').toUpperCase();
-          const fileNorm = (d.original_filename || '').toLowerCase();
-          const tmplNameNorm = tmpl.name.replace(/\.[^/.]+$/, '').toLowerCase();
-          return docTypeNorm === tmpl.type || fileNorm.includes(tmplNameNorm);
-        });
+        // Find if this team uploaded a file matching this template slot
+        const match = teamDocs.find(d => matchesSlot(d, tmpl));
 
         if (match) {
           return {
@@ -991,7 +1002,11 @@ router.get('/phase1/admin/submissions', authenticateUser, checkAdmin, async (req
         proposedSolution: prod?.proposed_solution || reg?.proposed_solution || '',
         expectedImpact: prod?.expected_impact || reg?.expected_impact || '',
         submissionDate: latestDate,
-        status: finalStatus, // 'PENDING' | 'APPROVED' | 'REJECTED'
+        status: finalStatus, // 'INCOMPLETE' | 'PENDING' | 'APPROVED' | 'REJECTED'
+        isComplete: completion.isComplete,
+        uploadedCount: completion.uploadedCount,
+        requiredCount: completion.requiredCount,
+        missingSlots: completion.missingSlots.map(s => s.name),
         adminComment: comment,
         reviewedBy: finalReviewedBy,
         reviewedAt: finalReviewedAt,
@@ -1002,6 +1017,7 @@ router.get('/phase1/admin/submissions', authenticateUser, checkAdmin, async (req
 
     // 5. Calculate global status counts
     const pendingCount = teamSubmissions.filter(s => s.status === 'PENDING').length;
+    const incompleteCount = teamSubmissions.filter(s => s.status === 'INCOMPLETE').length;
     const approvedCount = teamSubmissions.filter(s => s.status === 'APPROVED').length;
     const rejectedCount = teamSubmissions.filter(s => s.status === 'REJECTED').length;
 
@@ -1102,6 +1118,7 @@ router.get('/phase1/admin/submissions', authenticateUser, checkAdmin, async (req
       success: true,
       counts: {
         pending: pendingCount,
+        incomplete: incompleteCount,
         approved: approvedCount,
         rejected: rejectedCount,
         total: teamSubmissions.length
@@ -1126,6 +1143,26 @@ router.post('/phase1/admin/review-team', authenticateUser, checkAdmin, async (re
       return res.status(400).json({
         success: false,
         message: 'Invalid request: registrationId and status (APPROVED, REJECTED, or PENDING) are required.'
+      });
+    }
+
+    // Independently verify that this team has all required documents uploaded before allowing review
+    const { data: teamDocs, error: docErr } = await supabase
+      .from('phase1_submissions')
+      .select('*')
+      .eq('registration_id', registrationId);
+
+    if (docErr) throw docErr;
+
+    const completion = calculatePhase1Completion(teamDocs || []);
+    if (!completion.isComplete) {
+      return res.status(400).json({
+        success: false,
+        code: 'INCOMPLETE_SUBMISSION',
+        message: `Submission is incomplete (${completion.uploadedCount} of ${completion.requiredCount} required documents uploaded). All required documents must be uploaded before this submission can be reviewed.`,
+        uploadedCount: completion.uploadedCount,
+        requiredCount: completion.requiredCount,
+        missingDocuments: completion.missingSlots.map(s => s.name)
       });
     }
 
@@ -1218,6 +1255,26 @@ router.post('/phase1/admin/return-to-pending', authenticateUser, checkAdmin, asy
       return res.status(400).json({
         success: false,
         message: 'Invalid request: registrationId is required.'
+      });
+    }
+
+    // Independently verify that this team has all required documents uploaded before returning to pending
+    const { data: teamDocs, error: docErr } = await supabase
+      .from('phase1_submissions')
+      .select('*')
+      .eq('registration_id', registrationId);
+
+    if (docErr) throw docErr;
+
+    const completion = calculatePhase1Completion(teamDocs || []);
+    if (!completion.isComplete) {
+      return res.status(400).json({
+        success: false,
+        code: 'INCOMPLETE_SUBMISSION',
+        message: `Cannot return submission to pending review: Submission is incomplete (${completion.uploadedCount} of ${completion.requiredCount} required documents uploaded). All required documents must be uploaded first.`,
+        uploadedCount: completion.uploadedCount,
+        requiredCount: completion.requiredCount,
+        missingDocuments: completion.missingSlots.map(s => s.name)
       });
     }
 
@@ -1365,16 +1422,24 @@ router.get('/phase1/team-status/:registrationId', authenticateUser, async (req, 
       });
     }
 
-    // Determine status
-    let finalStatus = 'PENDING';
-    if (localDec && localDec.status) {
-      finalStatus = localDec.status;
+    // Dynamic completion calculation using authoritative phase1Completion module
+    const completion = calculatePhase1Completion(subs);
+
+    // Determine status dynamically:
+    // Missing required documents are strictly INCOMPLETE and cannot be evaluated
+    let finalStatus = 'INCOMPLETE';
+    if (completion.isComplete) {
+      if (localDec && localDec.status && ['APPROVED', 'REJECTED', 'PENDING'].includes(localDec.status)) {
+        finalStatus = localDec.status;
+      } else {
+        const hasRejected = subs.some(s => s.review_status === 'REJECTED');
+        const allApproved = subs.length > 0 && subs.every(s => s.review_status === 'APPROVED');
+        if (hasRejected) finalStatus = 'REJECTED';
+        else if (allApproved) finalStatus = 'APPROVED';
+        else finalStatus = 'PENDING';
+      }
     } else {
-      const hasRejected = subs.some(s => s.review_status === 'REJECTED');
-      const allApproved = subs.length > 0 && subs.every(s => s.review_status === 'APPROVED');
-      if (hasRejected) finalStatus = 'REJECTED';
-      else if (allApproved) finalStatus = 'APPROVED';
-      else finalStatus = 'PENDING';
+      finalStatus = 'INCOMPLETE';
     }
 
     let comment = null;
@@ -1391,7 +1456,12 @@ router.get('/phase1/team-status/:registrationId', authenticateUser, async (req, 
     return res.status(200).json({
       success: true,
       hasSubmission: true,
+      isComplete: completion.isComplete,
       status: finalStatus,
+      patentType: completion.patentType,
+      uploadedCount: completion.uploadedCount,
+      requiredCount: completion.requiredCount,
+      missingDocuments: completion.missingSlots.map(s => s.name),
       adminComment: comment,
       decisionSeen: seen
     });

@@ -5,6 +5,7 @@ const path = require('path')
 const fs = require('fs')
 const googleDriveService = require('../services/googleDriveService')
 const { supabase } = require('../supabaseClient')
+const { calculatePhase1Completion } = require('../utils/phase1Completion')
 
 // Configure Multer for in-memory file handling (max 15MB)
 const upload = multer({
@@ -462,22 +463,35 @@ router.post('/upload', upload.single('file'), async (req, res) => {
           console.warn('[PatentRoutes] DB submission sync warning:', dbErr.message);
         }
 
-        // Reset local decisions cache if present
-        const DECISIONS_FILE = path.join(__dirname, '..', 'config', 'team_decisions.json')
-        if (fs.existsSync(DECISIONS_FILE)) {
-          try {
-            const raw = fs.readFileSync(DECISIONS_FILE, 'utf-8')
-            const decisions = JSON.parse(raw)
-            decisions[cleanTeamId] = {
-              status: 'PENDING',
-              adminComment: null,
-              decisionSeen: false,
-              reviewedBy: null,
-              reviewedAt: null,
-              updatedAt: new Date().toISOString()
+        // Check completion dynamically and update local decisions cache
+        let completionResult = null;
+        try {
+          const { data: allTeamDocs } = await supabase
+            .from('phase1_submissions')
+            .select('*')
+            .or(`registration_id.eq.${cleanTeamId},team_id.eq.${cleanTeamId}`);
+
+          completionResult = calculatePhase1Completion(allTeamDocs || [], patentFolder.name);
+          const DECISIONS_FILE = path.join(__dirname, '..', 'config', 'team_decisions.json');
+          if (fs.existsSync(DECISIONS_FILE)) {
+            const raw = fs.readFileSync(DECISIONS_FILE, 'utf-8');
+            const decisions = JSON.parse(raw);
+            if (completionResult.isComplete) {
+              decisions[cleanTeamId] = {
+                status: 'PENDING',
+                adminComment: null,
+                decisionSeen: false,
+                reviewedBy: null,
+                reviewedAt: null,
+                updatedAt: new Date().toISOString()
+              };
+            } else {
+              delete decisions[cleanTeamId];
             }
-            fs.writeFileSync(DECISIONS_FILE, JSON.stringify(decisions, null, 2), 'utf-8')
-          } catch (e) {}
+            fs.writeFileSync(DECISIONS_FILE, JSON.stringify(decisions, null, 2), 'utf-8');
+          }
+        } catch (compErr) {
+          console.warn('[PatentRoutes] Completion calculation warning:', compErr.message);
         }
       } catch (syncErr) {
         console.warn('[PatentRoutes] Post-upload sync warning:', syncErr.message)
@@ -496,7 +510,13 @@ router.post('/upload', upload.single('file'), async (req, res) => {
           patentType: patentFolder.name,
           webViewLink: uploadedFile.webViewLink,
           isNewFolder: teamFolderResult.isNew,
-          isReplacement: !!uploadedFile.isReplacement
+          isReplacement: !!uploadedFile.isReplacement,
+          completion: completionResult ? {
+            isComplete: completionResult.isComplete,
+            uploadedCount: completionResult.uploadedCount,
+            requiredCount: completionResult.requiredCount,
+            missingSlots: completionResult.missingSlots.map(s => s.name)
+          } : null
         }
       })
     } catch (uploadErr) {

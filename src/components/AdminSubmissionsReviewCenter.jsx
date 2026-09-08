@@ -86,6 +86,7 @@ export default function AdminSubmissionsReviewCenter({
   const [submissions, setSubmissions] = useState(() => adminCache?.submissions || []);
   const [counts, setCounts] = useState(() => adminCache?.counts || {
     pending: 0,
+    incomplete: 0,
     approved: 0,
     rejected: 0,
     total: 0,
@@ -174,7 +175,7 @@ export default function AdminSubmissionsReviewCenter({
       }
 
       const freshSubs = data.submissions || [];
-      const freshCounts = data.counts || { pending: 0, approved: 0, rejected: 0, total: 0 };
+      const freshCounts = data.counts || { pending: 0, incomplete: 0, approved: 0, rejected: 0, total: 0 };
       setSubmissions(freshSubs);
       setCounts(freshCounts);
 
@@ -396,6 +397,13 @@ export default function AdminSubmissionsReviewCenter({
   // Decision Handlers: Approve & Reject
   const handleConfirmApprove = async () => {
     if (!approveModalSub) return;
+    if (approveModalSub.status === "INCOMPLETE" || approveModalSub.isComplete === false) {
+      setErrorModal({
+        title: "APPROVAL BLOCKED",
+        message: "Submission is incomplete. All required documents must be uploaded before this submission can be reviewed.",
+      });
+      return;
+    }
     setIsSubmittingApprove(true);
 
     try {
@@ -458,6 +466,13 @@ export default function AdminSubmissionsReviewCenter({
 
   const handleConfirmReject = async () => {
     if (!rejectModalSub) return;
+    if (rejectModalSub.status === "INCOMPLETE" || rejectModalSub.isComplete === false) {
+      setErrorModal({
+        title: "REJECTION BLOCKED",
+        message: "Submission is incomplete. All required documents must be uploaded before this submission can be reviewed.",
+      });
+      return;
+    }
     setIsSubmittingReject(true);
 
     try {
@@ -639,6 +654,18 @@ export default function AdminSubmissionsReviewCenter({
         </span>
       );
     }
+    if (status === "INCOMPLETE") {
+      return (
+        <span
+          className={`inline-flex items-center gap-1.5 font-black uppercase rounded-full border transition-all ${
+            isSmall ? "text-[9px] px-2 py-0.5" : "text-[11px] px-3 py-1"
+          } bg-amber-100/90 text-amber-900 border-amber-300 shadow-xs`}
+        >
+          <Clock size={isSmall ? 10 : 13} className="text-amber-700" />
+          INCOMPLETE
+        </span>
+      );
+    }
     return (
       <span
         className={`inline-flex items-center gap-1.5 font-black uppercase rounded-full border transition-all ${
@@ -755,6 +782,25 @@ export default function AdminSubmissionsReviewCenter({
                       setRejectComment("");
                     }}
                     className="px-4 py-2 rounded-xl text-xs font-black bg-rose-600 hover:bg-rose-700 text-white shadow-sm hover:shadow transition cursor-pointer"
+                  >
+                    Reject
+                  </button>
+                </div>
+              ) : selectedSubmission.status === "INCOMPLETE" ? (
+                <div className="flex items-center gap-2 ml-2">
+                  <button
+                    type="button"
+                    disabled
+                    title="All required documents must be uploaded before this submission can be reviewed."
+                    className="px-4 py-2 rounded-xl text-xs font-black bg-slate-200 text-slate-400 cursor-not-allowed border border-slate-200"
+                  >
+                    Approve
+                  </button>
+                  <button
+                    type="button"
+                    disabled
+                    title="All required documents must be uploaded before this submission can be reviewed."
+                    className="px-4 py-2 rounded-xl text-xs font-black bg-slate-200 text-slate-400 cursor-not-allowed border border-slate-200"
                   >
                     Reject
                   </button>
@@ -943,11 +989,21 @@ export default function AdminSubmissionsReviewCenter({
                 )}
 
                 {/* Admin Decision & Status Details */}
-                {selectedSubmission.status === "PENDING" ? (
+                {selectedSubmission.status === "INCOMPLETE" ? (
+                  <div className="p-4 bg-amber-50 border border-amber-300 rounded-xl space-y-2 shadow-xs">
+                    <div className="flex items-center gap-2 text-amber-900 font-black text-xs uppercase tracking-wider">
+                      <Clock size={16} className="text-amber-600 shrink-0" />
+                      <span>Incomplete Submission ({selectedSubmission.uploadedCount || (selectedSubmission.documents || []).filter(d => d.status === "SUBMITTED").length} of {selectedSubmission.requiredCount || (selectedSubmission.patentType === "Design Patent" ? 2 : 4)} Required Documents Uploaded)</span>
+                    </div>
+                    <p className="text-xs font-semibold text-amber-800 leading-relaxed">
+                      All required documents must be uploaded by the team before this submission can be reviewed or evaluated by administrators.
+                    </p>
+                  </div>
+                ) : selectedSubmission.status === "PENDING" ? (
                   <div className="p-4 bg-amber-50/50 border border-amber-200/60 rounded-xl flex items-center gap-3">
                     <Clock size={16} className="text-amber-600 shrink-0" />
                     <p className="text-xs font-semibold text-amber-900">
-                      This submission is awaiting Admin review.
+                      This submission is complete and awaiting Admin review.
                     </p>
                   </div>
                 ) : selectedSubmission.adminComment ? (
@@ -1058,6 +1114,7 @@ export default function AdminSubmissionsReviewCenter({
             <div className="flex flex-wrap gap-2 w-full sm:w-auto">
               {[
                 { id: "PENDING", label: "Pending", count: counts.pending },
+                { id: "INCOMPLETE", label: "Incomplete", count: counts.incomplete || 0 },
                 { id: "APPROVED", label: "Approved", count: counts.approved },
                 { id: "REJECTED", label: "Rejected", count: counts.rejected },
               ].map((tab) => {
@@ -1358,6 +1415,8 @@ export default function AdminSubmissionsReviewCenter({
               <h3 className="text-base font-black text-slate-800">
                 {activeStatusTab === "PENDING"
                   ? "No pending submissions match your filters."
+                  : activeStatusTab === "INCOMPLETE"
+                  ? "No incomplete submissions found."
                   : activeStatusTab === "APPROVED"
                   ? "No approved submissions found."
                   : "No rejected submissions found."}
@@ -1487,6 +1546,12 @@ export default function AdminSubmissionsReviewCenter({
                           >
                             Reject
                           </button>
+                        </div>
+                      ) : sub.status === "INCOMPLETE" ? (
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[11px] font-black uppercase tracking-wide text-amber-800 bg-amber-50 px-2.5 py-1 rounded-xl border border-amber-200/80 shadow-2xs">
+                            Missing Required Docs ({sub.uploadedCount || 0}/{sub.requiredCount || (sub.patentType === "Design Patent" ? 2 : 4)})
+                          </span>
                         </div>
                       ) : (
                         <div className="flex flex-wrap items-center justify-end gap-2">
