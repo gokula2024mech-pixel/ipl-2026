@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { supabase } from "../supabaseClient";
 import MechanicalLoader from "./MechanicalLoader";
 import AdminSubmissionsReviewCenter from "./AdminSubmissionsReviewCenter";
@@ -577,6 +577,12 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // Stable toast notification callback for embedded admin sub-views
+  const handleShowToast = useCallback(({ type, title, message }) => {
+    if (type === "error") setError(`${title}: ${message}`);
+    else setSuccess(`${title}: ${message}`);
+  }, []);
 
   // DB Data States
   const [phases, setPhases] = useState(() => adminCached?.phases || []);
@@ -3772,10 +3778,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
                 <AdminSubmissionsReviewCenter
                   token={authToken}
                   userEmail={profile?.email}
-                  onShowToast={({ type, title, message }) => {
-                    if (type === "error") setError(`${title}: ${message}`);
-                    else setSuccess(`${title}: ${message}`);
-                  }}
+                  onShowToast={handleShowToast}
                 />
               )}
 
@@ -3786,10 +3789,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
                   user={user}
                   profile={profile}
                   apiBaseUrl={API_BASE_URL}
-                  onShowToast={({ type, title, message }) => {
-                    if (type === "error") setError(`${title}: ${message}`);
-                    else setSuccess(`${title}: ${message}`);
-                  }}
+                  onShowToast={handleShowToast}
                 />
               )}
 

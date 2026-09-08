@@ -44,7 +44,14 @@ function writeLocalVotingControls(controls) {
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
-    fs.writeFileSync(CONTROLS_FILE_PATH, JSON.stringify(controls, null, 2), 'utf-8');
+    const newContent = JSON.stringify(controls, null, 2);
+    if (fs.existsSync(CONTROLS_FILE_PATH)) {
+      const existing = fs.readFileSync(CONTROLS_FILE_PATH, 'utf-8');
+      if (existing === newContent) {
+        return; // Avoid redundant disk writes that touch file mtime
+      }
+    }
+    fs.writeFileSync(CONTROLS_FILE_PATH, newContent, 'utf-8');
   } catch (e) {
     console.warn('[Voting Controls] Local file write error:', e.message);
   }
@@ -179,7 +186,6 @@ async function getVotingControls() {
       .maybeSingle();
 
     if (!error && data) {
-      writeLocalVotingControls(data);
       Object.assign(fallbackControls, data);
       return data;
     }
@@ -189,16 +195,21 @@ async function getVotingControls() {
   return readLocalVotingControls();
 }
 
-async function getTeamQr(teamId) {
+async function getTeamQr(teamId, round = 1) {
   try {
     const { data, error } = await supabase
       .from('team_qr_codes')
-      .select('team_id, qr_token, is_active, created_at')
+      .select('team_id, token, qr_token, is_active, scans_count, voting_round, created_at')
       .eq('team_id', teamId)
+      .eq('voting_round', round)
       .maybeSingle();
 
     if (!error && data) {
-      return data;
+      return {
+        ...data,
+        token: data.token || data.qr_token,
+        qr_token: data.qr_token || data.token
+      };
     }
   } catch (e) {
     // Ignore error and return fallback
@@ -207,20 +218,26 @@ async function getTeamQr(teamId) {
 }
 
 async function getQrByToken(token) {
+  if (!token) return null;
+  const cleanToken = String(token).trim();
   try {
     const { data, error } = await supabase
       .from('team_qr_codes')
-      .select('team_id, qr_token, is_active, created_at')
-      .eq('qr_token', token)
+      .select('team_id, token, qr_token, is_active, scans_count, voting_round, created_at')
+      .or(`token.eq.${cleanToken},qr_token.eq.${cleanToken}`)
       .maybeSingle();
 
     if (!error && data) {
-      return data;
+      return {
+        ...data,
+        token: data.token || data.qr_token,
+        qr_token: data.qr_token || data.token
+      };
     }
   } catch (e) {
     // Ignore error and return fallback
   }
-  return fallbackQrTokenMap.get(token) || null;
+  return fallbackQrTokenMap.get(cleanToken) || null;
 }
 
 /**
@@ -634,18 +651,24 @@ async function buildTeamShowcaseAndEligibility(teamId, voterUser, fromQr = false
 }
 
 // -------------------------------------------------------------
-// 1. GET /api/voting/status
+// 1. GET /api/voting/status & /api/voting/controls
 // Public endpoint: Returns current global voting & QR controls
 // -------------------------------------------------------------
-router.get('/status', async (req, res) => {
+router.get(['/status', '/controls'], async (req, res) => {
   try {
     const controls = await getVotingControls();
-    return res.status(200).json({
-      success: true,
-      is_voting_active: controls.is_voting_active || false,
-      is_qr_generation_active: controls.is_qr_generation_active || false,
+    const ctrlData = {
+      is_voting_active: Boolean(controls.is_voting_active || controls.community_voting_enabled),
+      is_qr_generation_active: Boolean(controls.is_qr_generation_active || controls.qr_generation_enabled),
+      community_voting_enabled: Boolean(controls.community_voting_enabled || controls.is_voting_active),
+      qr_generation_enabled: Boolean(controls.qr_generation_enabled || controls.is_qr_generation_active),
       current_voting_round: controls.current_voting_round || 1,
       updated_at: controls.updated_at || new Date().toISOString()
+    };
+    return res.status(200).json({
+      success: true,
+      controls: ctrlData,
+      ...ctrlData
     });
   } catch (err) {
     console.error('[Voting API] /status error:', err.message);
@@ -720,6 +743,59 @@ router.get('/qr/:token', qrResolutionLimiter, optionalAuthenticateUser, async (r
   }
 });
 
+// 2b. GET /api/voting/resolve-token
+// Query-param alias for QR resolution (?token=...)
+router.get('/resolve-token', qrResolutionLimiter, optionalAuthenticateUser, async (req, res) => {
+  try {
+    const token = req.query.token;
+    if (!token || typeof token !== 'string' || token.trim() === '') {
+      return res.status(400).json({
+        success: false,
+        error_code: 'INVALID_QR_CODE',
+        message: 'A valid QR token is required.'
+      });
+    }
+
+    const controls = await getVotingControls();
+    let isAdmin = req.user?.user_metadata?.role === 'admin';
+    if (!isAdmin && req.user) {
+      const { data: prof } = await supabase.from('profiles').select('role').eq('user_id', req.user.id).maybeSingle();
+      isAdmin = prof?.role === 'admin';
+    }
+
+    if (!controls?.is_qr_generation_active && !isAdmin) {
+      return res.status(403).json({
+        success: false,
+        error_code: 'QR_DISABLED',
+        message: 'QR code access is currently disabled by the administrator.'
+      });
+    }
+
+    const qrRecord = await getQrByToken(token.trim());
+    if (!qrRecord || qrRecord.is_active === false) {
+      return res.status(404).json({
+        success: false,
+        error_code: 'INVALID_QR_CODE',
+        message: 'INVALID QR CODE - This QR code is not active or is not associated with a valid voting team.'
+      });
+    }
+
+    const result = await buildTeamShowcaseAndEligibility(qrRecord.team_id, req.user, true, qrRecord);
+    if (result.error) {
+      return res.status(result.error).json({
+        success: false,
+        error_code: result.error_code,
+        message: result.message
+      });
+    }
+
+    return res.status(200).json(result);
+  } catch (err) {
+    console.error('[Voting API] /resolve-token error:', err.message);
+    return res.status(500).json({ success: false, message: 'Error resolving QR token.' });
+  }
+});
+
 // -------------------------------------------------------------
 // 3. GET /api/voting/team/resolve/:identifier
 // Team ID Fallback Route (resolves registration_id e.g. IPL26-0439 or name)
@@ -778,18 +854,20 @@ router.post('/vote', authenticateUser, voteLimiter, async (req, res) => {
 
     let { team_id, qr_token, team_identifier, voting_round = controls.current_voting_round || 1 } = req.body;
 
-    // Resolve team_id from qr_token if needed
-    if (!team_id && qr_token) {
+    // If qr_token is passed, validate it strictly
+    if (qr_token) {
       const qrRow = await getQrByToken(qr_token.trim());
 
-      if (!qrRow || qrRow.is_active === false) {
+      if (!qrRow || qrRow.is_active === false || (team_id && qrRow.team_id !== team_id)) {
         return res.status(403).json({
           success: false,
           error_code: 'INVALID_QR_CODE',
-          message: 'INVALID QR CODE - This QR code is not active or is not associated with a valid voting team.'
+          message: 'INVALID QR CODE - This QR code is not active or is not associated with this team.'
         });
       }
-      team_id = qrRow.team_id;
+      if (!team_id) {
+        team_id = qrRow.team_id;
+      }
     }
 
     // Resolve team_id from team_identifier if needed
@@ -812,7 +890,8 @@ router.post('/vote', authenticateUser, voteLimiter, async (req, res) => {
     const { data: rpcResult, error: rpcErr } = await supabase.rpc('cast_vote', {
       p_team_id: team_id,
       p_voter_user_id: req.user.id,
-      p_voting_round: voting_round
+      p_voting_round: voting_round,
+      p_qr_token: qr_token || null
     });
 
     if (rpcErr) {
@@ -1132,6 +1211,31 @@ router.post('/profile/department', authenticateUser, async (req, res) => {
       });
     }
 
+    // Check if user already has an authoritative department set (one-time lock)
+    try {
+      const { data: existingProf } = await supabase
+        .from('profiles')
+        .select('department')
+        .eq('user_id', req.user.id)
+        .maybeSingle();
+
+      if (existingProf?.department) {
+        return res.status(200).json({
+          success: true,
+          department: existingProf.department.trim(),
+          message: 'Department is already registered and locked.'
+        });
+      }
+    } catch (e) {}
+
+    if (fallbackVoterDeptMap.has(req.user.id)) {
+      return res.status(200).json({
+        success: true,
+        department: fallbackVoterDeptMap.get(req.user.id),
+        message: 'Department is already registered and locked.'
+      });
+    }
+
     // Always update fallback map for instant availability
     fallbackVoterDeptMap.set(req.user.id, department.trim());
 
@@ -1306,7 +1410,7 @@ router.get('/team-qr-status/:team_id', authenticateUser, async (req, res) => {
 // Generates or retrieves the ONE permanent QR per team
 // Verifies user is Leader, Member 1, or Member 2 (Mentors blocked!)
 // -------------------------------------------------------------
-router.post('/team-qr/generate', authenticateUser, async (req, res) => {
+router.post(['/team-qr/generate', '/generate-team-qr'], authenticateUser, async (req, res) => {
   try {
     const { team_id } = req.body;
     if (!team_id) {
@@ -1377,14 +1481,16 @@ router.post('/team-qr/generate', authenticateUser, async (req, res) => {
         .from('team_qr_codes')
         .insert([{
           team_id,
+          token: newToken,
           qr_token: newToken,
+          voting_round: controls?.current_voting_round || 1,
           is_active: true
         }])
-        .select('qr_token, created_at')
+        .select('token, qr_token, created_at')
         .single();
 
       if (!insertErr && inserted) {
-        qrObj.qr_token = inserted.qr_token;
+        qrObj.qr_token = inserted.token || inserted.qr_token;
         qrObj.created_at = inserted.created_at;
       }
     } catch (e) {
@@ -1654,10 +1760,15 @@ router.post('/admin/controls', authenticateUser, checkAdmin, async (req, res) =>
 
     const current = await getVotingControls();
 
+    const activeVoting = is_voting_active !== undefined ? Boolean(is_voting_active) : (req.body.community_voting_enabled !== undefined ? Boolean(req.body.community_voting_enabled) : Boolean(current.is_voting_active || current.community_voting_enabled));
+    const activeQr = is_qr_generation_active !== undefined ? Boolean(is_qr_generation_active) : (req.body.qr_generation_enabled !== undefined ? Boolean(req.body.qr_generation_enabled) : Boolean(current.is_qr_generation_active || current.qr_generation_enabled));
+
     const payload = {
       id: 1,
-      is_voting_active: is_voting_active !== undefined ? Boolean(is_voting_active) : Boolean(current.is_voting_active),
-      is_qr_generation_active: is_qr_generation_active !== undefined ? Boolean(is_qr_generation_active) : Boolean(current.is_qr_generation_active),
+      community_voting_enabled: activeVoting,
+      is_voting_active: activeVoting,
+      qr_generation_enabled: activeQr,
+      is_qr_generation_active: activeQr,
       current_voting_round: current_voting_round !== undefined ? parseInt(current_voting_round, 10) : (current.current_voting_round || 1),
       updated_at: new Date().toISOString(),
       updated_by: req.user?.id || 'admin'
@@ -1728,10 +1839,16 @@ router.post('/admin/generate-all-qrs', authenticateUser, checkAdmin, async (req,
       });
     }
 
-    const recordsToInsert = missingTeams.map(t => ({
-      team_id: t.id,
-      qr_token: crypto.randomBytes(16).toString('hex')
-    }));
+    const recordsToInsert = missingTeams.map(t => {
+      const tok = crypto.randomBytes(16).toString('hex');
+      return {
+        team_id: t.id,
+        token: tok,
+        qr_token: tok,
+        voting_round: 1,
+        is_active: true
+      };
+    });
 
     const { error: insertErr } = await supabase
       .from('team_qr_codes')
@@ -2101,7 +2218,7 @@ async function getAllVotingRecords() {
       .from('votes')
       .select('id, voter_user_id, voter_department, team_id, created_at')
       .order('created_at', { ascending: false });
-    if (!dbErr && Array.isArray(dbVotes) && dbVotes.length > 0) {
+    if (!dbErr && Array.isArray(dbVotes)) {
       votesList = dbVotes;
     } else {
       votesList = [...fallbackVotes].reverse();
@@ -2334,9 +2451,12 @@ router.get('/admin/team-reports', authenticateUser, checkAdmin, async (req, res)
 // 13. GET /api/voting/admin/export-data
 // On-demand export data generation for the 3 distinct report types
 // -------------------------------------------------------------
-router.get('/admin/export-data', authenticateUser, checkAdmin, async (req, res) => {
+router.get(['/admin/export-data', '/admin/export-binary'], authenticateUser, checkAdmin, async (req, res) => {
   try {
-    const { type = 'complete', format } = req.query;
+    let { type = 'complete', format } = req.query;
+    if (req.path.includes('export-binary')) {
+      format = 'xlsx';
+    }
     const { votes, teamMap, regByTeamName, prodByTeamId, profileMap, teams, registrations } = await getAllVotingRecords();
     const controls = readLocalVotingControls();
 

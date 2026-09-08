@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo,useRef } from 'react';
 import * as XLSX from 'xlsx';
 import {
   Vote,
@@ -277,12 +277,18 @@ export default function AdminVotingManagement({ token, user, profile, onShowToas
   const [reportHistory, setReportHistory] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
 
-  // Toast feedback helper
-  const notify = useCallback((type, title, message) => {
-    if (onShowToast) {
-      onShowToast({ type, title, message });
-    }
+  // Stable ref for onShowToast callback to prevent re-fetch loops on parent re-renders
+  const onShowToastRef = useRef(onShowToast);
+  useEffect(() => {
+    onShowToastRef.current = onShowToast;
   }, [onShowToast]);
+
+  // Toast feedback helper (stable reference)
+  const notify = useCallback((type, title, message) => {
+    if (onShowToastRef.current) {
+      onShowToastRef.current({ type, title, message });
+    }
+  }, []);
 
   // 1. Fetch Overview Metrics & Controls
   const fetchMetrics = useCallback(async (silent = false) => {
@@ -332,8 +338,8 @@ export default function AdminVotingManagement({ token, user, profile, onShowToas
 
   useEffect(() => {
     fetchMetrics();
-    // Non-aggressive 20-second polling for live activity
-    const timer = setInterval(() => fetchMetrics(true), 20000);
+    // Non-aggressive 30-second silent background polling for live activity without page refreshes
+    const timer = setInterval(() => fetchMetrics(true), 30000);
     return () => clearInterval(timer);
   }, [fetchMetrics]);
 
@@ -612,8 +618,7 @@ export default function AdminVotingManagement({ token, user, profile, onShowToas
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <article className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200 space-y-1">
               <div className="flex items-center justify-between text-slate-400">
-                <span className="text-[11px] font-bold uppercase tracking-wider">Total Votes Cast</span>
-                <Sparkles size={16} className="text-amber-500" />
+                <span className="text-[11px] font-bold uppercase tracking-wider">Total Votes Recorded</span>
               </div>
               <p className="font-heading text-2xl sm:text-3xl font-black text-[#0B1B3A]">
                 {metrics.totalVotes.toLocaleString()}
@@ -673,7 +678,7 @@ export default function AdminVotingManagement({ token, user, profile, onShowToas
                   </span>
                 </div>
                 <p className="text-xs text-slate-600 leading-relaxed">
-                  When <strong>OPEN</strong>, authenticated students can scan QR codes and cast official votes. When <strong>CLOSED</strong>, voting submissions are paused.
+                  When <strong>OPEN</strong>, authenticated students can scan QR codes and submit votes. When <strong>CLOSED</strong>, voting submissions are paused.
                 </p>
               </div>
 
@@ -1057,7 +1062,7 @@ export default function AdminVotingManagement({ token, user, profile, onShowToas
 
                     {(!selectedTeam.voters || selectedTeam.voters.length === 0) ? (
                       <div className="py-8 text-center text-slate-400 text-xs">
-                        No votes have been cast for this team yet.
+                        No votes have been recorded for this team yet.
                       </div>
                     ) : (
                       <div className="overflow-x-auto">
@@ -1122,7 +1127,7 @@ export default function AdminVotingManagement({ token, user, profile, onShowToas
                 </div>
                 <h3 className="text-base font-bold text-slate-900">Complete Voting Records</h3>
                 <p className="text-xs text-slate-500 leading-relaxed">
-                  Full audit log of every individual vote cast, including Voter ID, Name, Email, Department, Team ID, Team Name, Product Title, and Timestamp.
+                  Full audit log of every individual vote recorded, including Voter ID, Name, Email, Department, Team ID, Team Name, Product Title, and Timestamp.
                 </p>
               </div>
 
@@ -1190,7 +1195,7 @@ export default function AdminVotingManagement({ token, user, profile, onShowToas
                 </div>
                 <h3 className="text-base font-bold text-slate-900">Voter Summary</h3>
                 <p className="text-xs text-slate-500 leading-relaxed">
-                  Student-centric summary aggregating each distinct student voter, their department, total votes cast, and list of teams voted for.
+                  Student-centric summary aggregating each distinct student voter, their department, total votes submitted, and list of teams voted for.
                 </p>
               </div>
 

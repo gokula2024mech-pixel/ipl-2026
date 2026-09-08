@@ -1,0 +1,945 @@
+<USER_REQUEST>
+IPL 2026 — CRITICAL GLOBAL WEBSITE RELOAD LOOP DIAGNOSTIC & FIX
+
+CURRENT BRANCH:
+feature/high-concurrency-voting-system
+
+IMPORTANT:
+Work ONLY on the current branch.
+
+DO NOT:
+- create a new branch
+- switch branches
+- checkout main
+- commit
+- push
+- merge
+- reset
+- rebase
+
+I will handle Git operations later.
+
+==================================================
+PROBLEM
+==================================================
+
+The entire IPL 2026 website is now visibly reloading/reinitializing approximately every 1 second.
+
+This is happening in BOTH:
+
+1. Student/User Portal
+2. Admin Portal
+
+The screenshot shows the public leaderboard repeatedly appearing to refresh/reinitialize.
+
+This is a CRITICAL regression.
+
+The website must NOT perform a full application reload every second.
+
+IMPORTANT:
+Do NOT assume this is merely normal React re-rendering.
+
+We need to determine whether the following are being repeatedly remounted/reinitialized:
+
+- App
+- Navbar
+- Home
+- Leaderboard
+- Student portal
+- My Submissions
+- Admin Dashboard
+- Admin Voting Management
+- Authentication/session initialization
+- Supabase subscriptions
+- Voting status
+- Profile loading
+- Global loading state
+
+==================================================
+PRIMARY OBJECTIVE
+==================================================
+
+Find the EXACT root cause of the approximately 1-second global reload/reinitialization loop.
+
+Then fix ONLY the root cause.
+
+Do NOT redesign the website.
+
+Do NOT change the existing IPL UI.
+
+Do NOT remove legitimate countdown functionality.
+
+Do NOT remove voting functionality.
+
+Do NOT remove Realtime.
+
+Do NOT remove the 30-second fallback polling.
+
+Do NOT introduce a new loading system unless absolutely necessary.
+
+==================================================
+PHASE 1 — REPRODUCE THE PROBLEM
+==================================================
+
+Run the application locally.
+
+Test BOTH:
+
+STUDENT:
+- Home
+- Leaderboard
+- Timeline
+- Domains
+- My Submissions
+- Vote
+
+ADMIN:
+- Overview
+- Teams
+- Submissions
+- Evaluations
+- Voting Management
+
+Observe for at least 15–20 seconds.
+
+Record:
+
+- network requests
+- component remounts
+- console messages
+- state changes
+- auth events
+- Supabase channel events
+- polling intervals
+- timer intervals
+
+Determine whether the browser is performing an actual page reload or whether React is repeatedly remounting the application.
+
+Do not guess.
+
+==================================================
+PHASE 2 — DETERMINE WHETHER THIS IS A REAL PAGE RELOAD
+==================================================
+
+Check:
+
+- window.location changes
+- browser reload events
+- Vite HMR activity
+- React root mounting
+- App component mount/unmount
+- browser navigation events
+- history.pushState
+- history.replaceState
+- hash changes
+
+Add TEMPORARY diagnostic logging if necessary.
+
+For example, temporarily identify:
+
+APP MOUNT
+APP UNMOUNT
+AUTH INITIALIZATION
+AUTH STATE CHANGE
+PROFILE LOAD
+GLOBAL LOADING CHANGE
+LEADERBOARD MOUNT
+LEADERBOARD UNMOUNT
+ADMIN MOUNT
+ADMIN UNMOUNT
+VOTING MANAGEMENT MOUNT
+VOTING MANAGEMENT UNMOUNT
+
+These logs are diagnostic only.
+
+Remove them after the root cause is identified/fixed.
+
+==================================================
+PHASE 3 — INSPECT APP.JSX FIRST
+==================================================
+
+Carefully inspect:
+
+src/App.jsx
+
+Look for effects involving:
+
+- supabase.auth.getSession()
+- supabase.auth.onAuthStateChange()
+- loadProfile()
+- session
+- user
+- profile
+- loading
+- viewMode
+- currentHash
+- navigation
+- session restoration
+- timers
+- voting status
+- API polling
+
+Pay special attention to effects such as:
+
+useEffect(..., [somethingThatChangesEverySecond])
+
+or:
+
+useEffect(..., [profile])
+
+or:
+
+useEffect(..., [session])
+
+where the effect itself changes session/profile/loading.
+
+Determine whether there is a cycle:
+
+state change
+→ effect
+→ state update
+→ render
+→ dependency changes
+→ effect
+→ repeat
+
+==================================================
+PHASE 4 — AUTHENTICATION LOOP AUDIT
+==================================================
+
+Inspect all authentication lifecycle code.
+
+Especially:
+
+supabase.auth.onAuthStateChange()
+
+Verify that:
+
+- the listener is registered ONLY ONCE
+- it is cleaned up ONLY on actual App unmount
+- it does NOT re-register every second
+- it does NOT call setLoading(true) on ordinary SIGNED_IN events
+- it does NOT call refreshSession repeatedly
+- it does NOT repeatedly call updateUser
+- it does NOT repeatedly modify user metadata
+- it does NOT repeatedly call loadProfile
+
+IMPORTANT:
+
+Do NOT reintroduce:
+
+supabase.auth.refreshSession()
+
+The existing architecture intentionally relies on Supabase's built-in session lifecycle.
+
+Preserve that.
+
+==================================================
+PHASE 5 — GLOBAL LOADING AUDIT
+==================================================
+
+This is extremely important.
+
+Find every place that changes the global application loading state.
+
+Search for:
+
+setLoading(
+setAppLoading(
+loading =
+isLoading
+setIsLoading
+
+Determine exactly which code path causes the initial full-page loader.
+
+The initial global loader should happen ONLY during genuine application initialization.
+
+It must NOT be triggered by:
+
+- leaderboard polling
+- voting status polling
+- countdown timer updates
+- Admin countdown updates
+- Realtime events
+- profile refresh
+- background metrics polling
+- navigation between existing views
+- returning to Home
+- returning to Admin Overview
+
+Background refresh must use LOCAL loading states.
+
+For example:
+
+fetchMetrics(true)
+
+must not activate the global application loader.
+
+==================================================
+PHASE 6 — 1-SECOND TIMER AUDIT
+==================================================
+
+Inspect all 1-second intervals.
+
+Search the project for:
+
+setInterval
+1000
+1000)
+1000,
+
+Identify every one-second timer.
+
+The existing Admin countdown is allowed to update every second.
+
+BUT:
+
+The countdown must NOT cause:
+
+- App remount
+- Navbar remount
+- AdminDashboard remount
+- VotingManagement remount
+- API refetch loop
+- authentication initialization
+- global loading
+- profile reload
+- Supabase subscription recreation
+
+The timer should update only the necessary timer/countdown state.
+
+Use refs/memoization/stable callbacks where appropriate.
+
+Do NOT simply remove the countdown.
+
+==================================================
+PHASE 7 — ADMIN DASHBOARD AUDIT
+==================================================
+
+Inspect:
+
+AdminDashboard.jsx
+
+We previously fixed a continuous refresh problem caused by:
+
+1-second timer
+→ parent re-render
+→ inline callback recreation
+→ child effect dependency change
+→ metrics fetch
+→ rerender loop
+
+Verify that this fix still exists.
+
+Specifically inspect:
+
+handleShowToast
+onShowToast
+notify
+fetchMetrics
+fetchVoters
+fetchTeams
+fetchReportHistory
+
+Verify callback identities remain stable.
+
+Do NOT create functions inline if they are dependencies of child effects unless there is a clear reason.
+
+The Admin Dashboard countdown must NOT cause Admin Voting Management to remount.
+
+==================================================
+PHASE 8 — ADMIN VOTING MANAGEMENT AUDIT
+==================================================
+
+Inspect:
+
+AdminVotingManagement.jsx
+
+Verify:
+
+onShowToastRef
+notify
+fetchMetrics
+fetchVoters
+fetchTeams
+fetchReportHistory
+
+Check all useEffect dependency arrays.
+
+Expected behavior:
+
+INITIAL LOAD:
+fetch required data.
+
+BACKGROUND:
+silent polling approximately every 30 seconds.
+
+NOT:
+every second.
+
+NOT:
+every parent render.
+
+NOT:
+every callback identity change.
+
+NOT:
+every countdown tick.
+
+Also verify:
+
+fetchMetrics(true)
+
+does NOT call:
+
+setLoadingMetrics(true)
+
+or any global loading state.
+
+==================================================
+PHASE 9 — LEADERBOARD AUDIT
+==================================================
+
+Inspect:
+
+src/components/Leaderboard.jsx
+
+There must be:
+
+- Supabase Realtime subscription
+- silent fallback polling
+- no 1-second polling
+
+Expected fallback:
+
+approximately 30 seconds.
+
+Verify the Realtime channel is created exactly once for the component lifecycle.
+
+It must NOT be recreated every second.
+
+Check effect dependencies.
+
+Bad pattern:
+
+useEffect(() => {
+   createChannel();
+}, [rankings, timer, profile, someChangingState])
+
+Good pattern:
+
+useEffect(() => {
+   createChannel();
+   return cleanup;
+}, [stableDependenciesOnly])
+
+Do not remove Realtime.
+
+Do not remove fallback polling.
+
+==================================================
+PHASE 10 — VOTING STATUS AUDIT
+==================================================
+
+Inspect:
+
+backend/routes/votingRoutes.js
+
+and all frontend voting status calls.
+
+Search for:
+
+/api/voting/status
+/api/voting/controls
+/api/voting/admin/controls
+
+Determine:
+
+- how often they are requested
+- which components request them
+- whether they update global state
+- whether they trigger parent rerenders
+- whether they trigger another fetch
+
+Voting status should NOT be requested every second.
+
+==================================================
+PHASE 11 — SUPABASE REALTIME AUDIT
+==================================================
+
+Search the entire frontend for:
+
+supabase.channel(
+.channel(
+.subscribe(
+
+Identify every channel.
+
+For each channel record:
+
+- component
+- creation effect
+- dependencies
+- cleanup
+- event type
+
+Verify that a Realtime event does not cause:
+
+- full App reload
+- global loading
+- auth initialization
+- channel recreation
+- repeated subscription
+
+Realtime should update only the relevant local data.
+
+==================================================
+PHASE 12 — SESSION NAVIGATION AUDIT
+==================================================
+
+Inspect:
+
+src/utils/sessionNavigationState.js
+App.jsx
+Navbar.jsx
+MySubmissionsPage.jsx
+AdminDashboard.jsx
+
+The existing global session restoration architecture must remain intact.
+
+Do NOT reintroduce:
+
+- full application remount on navigation
+- global loading on navigation
+- repeated session initialization
+- repeated scroll restoration
+- repeated hash navigation
+
+Navigation should be:
+
+App shell remains mounted
+↓
+view changes
+↓
+only relevant content changes
+
+==================================================
+PHASE 13 — CHECK FOR API POLLING LOOPS
+==================================================
+
+Search entire project for:
+
+setInterval(
+setTimeout(
+setInterval
+fetch(
+axios
+supabase.from(
+supabase.rpc(
+
+Create an inventory of recurring requests.
+
+For each request:
+
+REQUEST
+FREQUENCY
+COMPONENT
+STATE UPDATED
+CAN IT TRIGGER RERENDER?
+
+Identify anything accidentally running every second.
+
+IMPORTANT:
+
+Do not simply replace all polling with no polling.
+
+Preserve intended:
+
+- 30-second silent Admin metrics polling
+- 30-second leaderboard fallback polling
+
+==================================================
+PHASE 14 — CHECK FOR STATE UPDATE LOOPS
+==================================================
+
+Search for patterns like:
+
+useEffect(() => {
+   setSomething(...)
+}, [something])
+
+Especially where the effect modifies its own dependency.
+
+Also inspect:
+
+useMemo
+useCallback
+useEffect
+useRef
+
+Look for unstable object/function dependencies.
+
+Examples:
+
+const options = {}
+const profile = {...}
+const handler = () => {}
+
+being recreated every render and used as effect dependencies.
+
+==================================================
+PHASE 15 — CHECK SUPABASE DATABASE MIGRATION EFFECT
+==================================================
+
+IMPORTANT:
+
+The production migration work recently added:
+
+- voting_controls
+- team_qr_codes
+- votes
+- team_votes
+- profiles.department
+- cast_vote
+
+Verify that the frontend/backend does NOT attempt to repeatedly detect whether these tables exist.
+
+There must NOT be a loop such as:
+
+render
+→ query table
+→ error
+→ set fallback state
+→ render
+→ query table
+→ error
+→ set fallback state
+
+Database capability detection must be performed in a controlled manner.
+
+Do not perform schema-existence checks every render.
+
+==================================================
+PHASE 16 — CHECK FALLBACK SWITCHING
+==================================================
+
+Inspect:
+
+fallbackVotes
+fallbackQrStore
+fallbackVoterDeptMap
+voting_controls.json
+
+Verify that fallback selection does NOT repeatedly update React state.
+
+The architecture should be:
+
+Supabase available
+→ use Supabase
+
+Supabase unavailable
+→ controlled fallback
+
+NOT:
+
+Supabase
+→ fallback
+→ Supabase
+→ fallback
+→ rerender
+→ repeat
+
+Also verify the fallback does not create duplicate vote records.
+
+==================================================
+PHASE 17 — NETWORK PANEL VERIFICATION
+==================================================
+
+Use browser DevTools Network panel.
+
+Observe for 20 seconds.
+
+Create a table:
+
+REQUEST | EXPECTED FREQUENCY | ACTUAL FREQUENCY
+
+Pay special attention to:
+
+/api/voting/status
+/api/voting/leaderboard
+/api/voting/admin/metrics
+/api/voting/admin/controls
+/api/voting/my-votes
+/api/voting/voter/department
+Supabase REST calls
+Supabase Auth calls
+Realtime connections
+
+There must be NO request storm every second.
+
+==================================================
+PHASE 18 — FIX
+==================================================
+
+After identifying the exact root cause:
+
+Fix ONLY that cause.
+
+Preferred architecture:
+
+INITIAL APPLICATION LOAD
+    ↓
+Auth initialization ONCE
+    ↓
+Profile initialization ONCE
+    ↓
+App shell mounted
+    ↓
+Normal navigation without global reinitialization
+
+BACKGROUND SYSTEMS:
+
+Countdown
+→ local timer state only
+
+Leaderboard
+→ Realtime + 30-second silent fallback
+
+Admin metrics
+→ 30-second silent fallback
+
+Voting controls
+→ controlled fetch / Realtime where applicable
+
+Auth
+→ one persistent listener
+
+==================================================
+PHASE 19 — IMPORTANT PERFORMANCE RULE
+==================================================
+
+A React re-render is NOT automatically a problem.
+
+Do not attempt to prevent every render.
+
+The requirement is:
+
+NO FULL APPLICATION REMOUNT
+NO GLOBAL LOADING LOOP
+NO API REQUEST LOOP
+NO AUTH INITIALIZATION LOOP
+NO REALTIME SUBSCRIPTION LOOP
+
+Normal child re-renders are acceptable.
+
+==================================================
+PHASE 20 — MOBILE REGRESSION
+==================================================
+
+Test:
+
+360px
+390px
+430px
+
+Verify:
+
+- no horizontal scrolling
+- no layout flashing
+- no repeated loader
+- no modal reopening
+- no navigation reset
+- no QR scanner reset
+- no department modal reopening
+
+==================================================
+PHASE 21 — ADMIN REGRESSION
+==================================================
+
+Test:
+
+Admin Overview
+→ Teams
+→ Submissions
+→ Evaluations
+→ Voting Management
+→ Teams
+→ Overview
+
+Remain on each page for at least 15–20 seconds.
+
+There must be:
+
+NO full-page reload
+NO global loader
+NO repeated authentication initialization
+NO UI flashing
+
+The Admin countdown may continue updating normally.
+
+==================================================
+PHASE 22 — STUDENT REGRESSION
+==================================================
+
+Test:
+
+Home
+→ Leaderboard
+→ Timeline
+→ Domains
+→ My Submissions
+→ Vote
+→ Leaderboard
+→ Home
+
+Remain on each page for 15–20 seconds.
+
+There must be:
+
+NO full-page reload
+NO global loader
+NO authentication restart
+NO repeated department prompt
+NO QR flow reset
+
+==================================================
+PHASE 23 — DO NOT BREAK EXISTING FEATURES
+==================================================
+
+Preserve:
+
+- IPL branding
+- Hero
+- Navbar
+- Timeline
+- Leaderboard podium
+- Mechanical gear visuals
+- Voting flow
+- QR flow
+- Team ID fallback
+- My Submissions
+- Admin Dashboard
+- Admin Voting Management
+- Phase 1 review system
+- Google Drive document workflow
+- session restoration
+- timer functionality
+- mobile responsiveness
+
+Do not redesign anything.
+
+==================================================
+PHASE 24 — TEMPORARY DIAGNOSTIC CLEANUP
+==================================================
+
+After fixing the issue:
+
+REMOVE all temporary diagnostic console logs added during investigation.
+
+Do not leave noisy logs in production code.
+
+Do not suppress legitimate errors.
+
+==================================================
+PHASE 25 — VERIFICATION
+==================================================
+
+Run:
+
+npm run build
+
+Run existing regression tests:
+
+testVotingManagementAdmin.js
+testRefinedVotingManagement.js
+testDirectQrVotingFlow.js
+testNavigationAndAdminFix.js
+testGlobalLoadingArchitecture.js
+
+Also run any relevant tests already present for:
+
+- session restoration
+- leaderboard
+- Admin dashboard
+- voting
+
+Do not modify tests just to make them pass.
+
+==================================================
+FINAL REPORT
+==================================================
+
+Provide:
+
+1. EXACT ROOT CAUSE
+2. HOW IT CREATED THE 1-SECOND LOOP
+3. FILE(S) RESPONSIBLE
+4. EXACT FIX
+5. WHY THE FIX STOPS THE LOOP
+6. AUTH LIFECYCLE STATUS
+7. GLOBAL LOADING STATUS
+8. ADMIN TIMER STATUS
+9. LEADERBOARD REALTIME STATUS
+10. POLLING FREQUENCY
+11. API REQUEST FREQUENCY BEFORE/AFTER
+12. SUPABASE SUBSCRIPTION STATUS
+13. STUDENT REGRESSION RESULT
+14. ADMIN REGRESSION RESULT
+15. MOBILE REGRESSION RESULT
+16. BUILD RESULT
+17. TEST RESULTS
+18. ANY REMAINING RISKS
+
+Also explicitly report:
+
+FULL APPLICATION REMOUNT EVERY SECOND:
+YES/NO
+
+GLOBAL LOADING TRIGGERED EVERY SECOND:
+YES/NO
+
+AUTH INITIALIZED EVERY SECOND:
+YES/NO
+
+API REQUEST LOOP:
+YES/NO
+
+REALTIME SUBSCRIPTION LOOP:
+YES/NO
+
+PRODUCTION DATABASE RECORDS MODIFIED:
+0
+
+COMMITS:
+0
+
+PUSHES:
+0
+
+MERGES:
+0
+
+MAIN TOUCHED:
+NO
+
+CURRENT BRANCH:
+feature/high-concurrency-voting-system
+
+FINAL RULE:
+
+Do not declare the issue fixed merely because npm run build passes.
+
+The issue must be verified through:
+
+- runtime observation
+- Network panel/request frequency
+- component lifecycle observation
+- student navigation
+- admin navigation
+- 15–20 second stability test
+
+The website must remain continuously mounted and usable without a full reload every second.
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-09-08T17:55:42+05:30.
+</ADDITIONAL_METADATA>

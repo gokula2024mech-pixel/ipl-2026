@@ -121,12 +121,7 @@ export default function VotingModal({
         }
       }
 
-      // 2. Check user metadata for cached department
-      if (!resolvedDept && resolvedUser?.user_metadata?.department) {
-        resolvedDept = resolvedUser.user_metadata.department.trim();
-      }
-
-      // 3. If user is found, query profiles from Supabase
+      // 2. Query authoritative public.profiles from Supabase first
       if (resolvedUser && !resolvedDept) {
         try {
           const { data: prof } = await supabase
@@ -144,6 +139,11 @@ export default function VotingModal({
         } catch (e) {
           console.warn('[Voting Modal] Error resolving profile:', e);
         }
+      }
+
+      // 3. Fallback: check user metadata for cached department
+      if (!resolvedDept && resolvedUser?.user_metadata?.department) {
+        resolvedDept = resolvedUser.user_metadata.department.trim();
       }
 
       // 4. Query GET /api/voting/profile/department to ensure authoritative profile value
@@ -1045,7 +1045,7 @@ export default function VotingModal({
                   )}
 
                   <p className="text-[10px] text-slate-400 italic text-center">
-                    Note: Voting is cast at the TEAM level. One vote per student per team.
+                    Note: Voting is at the TEAM level. One vote per student per team.
                   </p>
                 </div>
 
@@ -1096,7 +1096,7 @@ export default function VotingModal({
                       </div>
                       <div className="space-y-1">
                         <h4 className="font-heading text-base font-extrabold text-slate-900">
-                          CAST YOUR VOTE?
+                          CONFIRM YOUR VOTE
                         </h4>
                         <p className="text-xs text-slate-600">
                           Team: <strong>{teamData.team.team_name}</strong> ({teamData.team.registration_id})
@@ -1138,7 +1138,7 @@ export default function VotingModal({
                       </div>
                     </div>
                   ) : (
-                    /* Step 4A: Cast Vote Trigger Button */
+                    /* Step 4A: Vote Trigger Button */
                     <div className="space-y-3">
                       <div className="rounded-2xl bg-emerald-50 p-3 border border-emerald-200 flex items-center gap-2">
                         <ShieldCheck size={18} className="text-emerald-600 shrink-0" />
@@ -1153,7 +1153,7 @@ export default function VotingModal({
                         className="w-full rounded-2xl bg-accent py-3.5 text-sm font-black text-white shadow-md hover:bg-amber-600 active:scale-[0.99] transition cursor-pointer flex items-center justify-center gap-2"
                       >
                         <Vote size={18} />
-                        <span>Cast Official Vote for Team</span>
+                        <span>Vote for Team</span>
                       </button>
                     </div>
                   )}

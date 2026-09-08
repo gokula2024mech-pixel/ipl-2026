@@ -25,7 +25,7 @@ const MOBILE_NAV_LINKS = [
   { label: 'Guidelines', href: '#eligibility' },
   { label: 'FAQs', href: '#' },
   { label: 'Leaderboard', href: '#leaderboard' },
-  { label: 'Live Voting', href: '#vote' },
+  { label: 'Vote', href: '#vote' },
   { label: 'Contact Us', href: '#contact' },
 ]
 

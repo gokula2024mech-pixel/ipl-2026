@@ -59,7 +59,7 @@ export default function EmailGate({ loginError, onBack }) {
           </h1>
           <p className="mt-2 text-sm text-slate-600">
             {pendingToken
-              ? 'Sign in with your official @sece.ac.in college email to cast your vote.'
+              ? 'Sign in with your official @sece.ac.in college email to vote.'
               : 'Please log in with your official college email account to access the IPL 2026 portal.'}
           </p>
         </div>

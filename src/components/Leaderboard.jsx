@@ -822,9 +822,11 @@ export default function Leaderboard({ user, session, profile, onProfileUpdate } 
       .subscribe((status) => {
         if (status === "SUBSCRIBED") {
           setRealtimeStatus("connected");
-          if (fallbackIntervalRef.current) {
-            clearInterval(fallbackIntervalRef.current);
-            fallbackIntervalRef.current = null;
+          // Keep a safe 30s background poll so leaderboard always reflects live votes
+          if (!fallbackIntervalRef.current) {
+            fallbackIntervalRef.current = setInterval(() => {
+              fetchVotingRankings(true);
+            }, 30000);
           }
         } else if (
           status === "CHANNEL_ERROR" ||
