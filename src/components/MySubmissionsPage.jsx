@@ -1648,23 +1648,37 @@ export default function MySubmissionsPage({
         throw new Error(friendlyMessage);
       }
 
+      setRemoveFileModal(null);
+
+      // Optimistically remove document from local submissions state for instant UI update
+      setTeamSubmissions((prev) =>
+        (prev || []).filter(
+          (sub) =>
+            sub.id !== fileId &&
+            sub.file_id !== fileId &&
+            sub.google_drive_file_id !== fileId
+        )
+      );
+
       showToast({
         type: "success",
         title: "DOCUMENT REMOVED",
-        message: `${fileName || "Document"} was removed successfully.`,
+        message: `${fileName || "Document"} was successfully deleted.`,
       });
 
-      setRemoveFileModal(null);
-
       // In Both mode, fetch all submissions for Both, rather than scoping to a single track
-      await fetchTeamSubmissionsData(
-        teamId,
-        activeDepartment,
-        selectedCategory,
-        selectedPatentType || finalPatentType,
-        activeProductId,
-      );
-      await fetchPhase1Decision(teamId);
+      try {
+        await fetchTeamSubmissionsData(
+          teamId,
+          activeDepartment,
+          selectedCategory,
+          selectedPatentType || finalPatentType,
+          activeProductId,
+        );
+        await fetchPhase1Decision(teamId);
+      } catch (refetchErr) {
+        console.warn("[MySubmissions] Background re-fetch after remove warning:", refetchErr);
+      }
     } catch (err) {
       console.error("[MySubmissions] Remove file error:", err);
       let msg = err.message;

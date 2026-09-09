@@ -854,6 +854,8 @@ const handleRemoveFile = async (req, res) => {
     const cleanTeamId = (req.body?.teamId || req.query?.teamId || '').trim();
     const cleanFileId = (req.body?.fileId || req.query?.fileId || '').trim();
     const cleanProductId = (req.body?.productId || req.query?.productId || '').trim();
+    const cleanPatentType = (req.body?.patentType || req.query?.patentType || '').trim();
+    const cleanPatentMode = (req.body?.patentMode || req.query?.patentMode || '').trim();
 
     if (!cleanTeamId || !cleanFileId) {
       return res.status(400).json({
