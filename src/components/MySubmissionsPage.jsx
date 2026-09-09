@@ -304,6 +304,17 @@ export default function MySubmissionsPage({
   const [phase1Decision, setPhase1Decision] = useState(null);
   const [isDecisionPopupOpen, setIsDecisionPopupOpen] = useState(false);
 
+  // Phase 2 states
+  const [phase2Template, setPhase2Template] = useState(null);
+  const [phase2TemplateLoading, setPhase2TemplateLoading] = useState(false);
+  const [phase2Submission, setPhase2Submission] = useState(null);
+  const [phase2Loading, setPhase2Loading] = useState(false);
+  const [phase2Uploading, setPhase2Uploading] = useState(false);
+  const [phase2RemoveModal, setPhase2RemoveModal] = useState(null);
+  const [phase2IsRemoving, setPhase2IsRemoving] = useState(false);
+  const [phase2Downloading, setPhase2Downloading] = useState(false);
+  const phase2FileInputRef = useRef(null);
+
   // Derive counts & classification locking strictly from backend teamSubmissions data
   const utilityUploadsCount = (teamSubmissions || []).filter((s) => {
     const pt = s.patentType || s.patent_type;
@@ -1697,6 +1708,186 @@ export default function MySubmissionsPage({
       });
     } finally {
       setIsRemovingFile(false);
+    }
+  };
+
+  const fetchPhase2Data = useCallback(async () => {
+    if (!activeRegId) return;
+    setPhase2Loading(true);
+    try {
+      const token = await getToken();
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+      // 1. Fetch template
+      setPhase2TemplateLoading(true);
+      try {
+        const tmplRes = await fetch(`${API_BASE_URL}/api/phase2/template`, { headers });
+        const tmplData = await tmplRes.json();
+        if (tmplData.success && tmplData.template) {
+          setPhase2Template(tmplData.template);
+        } else {
+          setPhase2Template(null);
+        }
+      } catch (tmplErr) {
+        console.warn("[Phase2] Template fetch warning:", tmplErr);
+      } finally {
+        setPhase2TemplateLoading(false);
+      }
+
+      // 2. Fetch submission
+      const subRes = await fetch(`${API_BASE_URL}/api/phase2/submission?teamId=${encodeURIComponent(activeRegId)}`, { headers });
+      const subData = await subRes.json();
+      if (subData.success) {
+        setPhase2Submission(subData);
+      } else {
+        setPhase2Submission(null);
+      }
+    } catch (err) {
+      console.error("[Phase2] Error fetching Phase 2 data:", err);
+    } finally {
+      setPhase2Loading(false);
+    }
+  }, [activeRegId]);
+
+  useEffect(() => {
+    if (selectedPhase === "phase_2" && activeRegId) {
+      fetchPhase2Data();
+    }
+  }, [selectedPhase, activeRegId, fetchPhase2Data]);
+
+  const handleDownloadPhase2Template = async () => {
+    setPhase2Downloading(true);
+    try {
+      const token = await getToken();
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const res = await fetch(`${API_BASE_URL}/api/phase2/template/download`, { headers });
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.message || "Failed to download Phase 2 template.");
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = phase2Template?.name || "IPL 2026 – Product + Business Pitch Deck.pptx";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("[Phase2] Download error:", err);
+      showToast({
+        type: "error",
+        title: "Download Failed",
+        message: err.message || "Unable to download Phase 2 template. Please try again.",
+      });
+    } finally {
+      setPhase2Downloading(false);
+    }
+  };
+
+  const handlePhase2FileInputChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !activeRegId) return;
+
+    const ext = "." + file.name.split(".").pop().toLowerCase();
+    const allowed = [".pptx", ".ppt", ".pdf"];
+    if (!allowed.includes(ext)) {
+      showToast({
+        type: "error",
+        title: "Invalid File Format",
+        message: "Please upload your presentation document (.pptx, .ppt, .pdf).",
+      });
+      if (phase2FileInputRef.current) {
+        phase2FileInputRef.current.value = "";
+      }
+      return;
+    }
+
+    setPhase2Uploading(true);
+    try {
+      const token = await getToken();
+      const formData = new FormData();
+      formData.append("teamId", activeRegId);
+      formData.append("file", file);
+
+      const res = await fetch(`${API_BASE_URL}/api/phase2/upload`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: formData,
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || "Upload failed. Please try again.");
+      }
+
+      showToast({
+        type: "success",
+        title: "File Uploaded",
+        message: "Your Phase 2 document was uploaded successfully.",
+      });
+
+      await fetchPhase2Data();
+    } catch (err) {
+      console.error("[Phase2] Upload error:", err);
+      showToast({
+        type: "error",
+        title: "Upload Failed",
+        message: err.message || "Could not upload file. Please try again.",
+      });
+    } finally {
+      setPhase2Uploading(false);
+      if (e.target) e.target.value = "";
+    }
+  };
+
+  const handleConfirmRemovePhase2File = async () => {
+    if (!phase2RemoveModal || !activeRegId) return;
+    setPhase2IsRemoving(true);
+    try {
+      const token = await getToken();
+      const res = await fetch(`${API_BASE_URL}/api/phase2/remove-file`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          teamId: activeRegId,
+          fileId: phase2RemoveModal.fileId,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || "Failed to remove document. Please try again.");
+      }
+
+      setPhase2RemoveModal(null);
+      setPhase2Submission({
+        hasSubmission: false,
+        status: "INCOMPLETE",
+        file: null,
+        completion: { uploadedCount: 0, requiredCount: 1, isComplete: false },
+      });
+
+      showToast({
+        type: "success",
+        title: "File Removed",
+        message: "Your Phase 2 document was successfully deleted.",
+      });
+
+      await fetchPhase2Data();
+    } catch (err) {
+      console.error("[Phase2] Remove error:", err);
+      showToast({
+        type: "error",
+        title: "Removal Failed",
+        message: err.message || "Could not remove file. Please try again.",
+      });
+    } finally {
+      setPhase2IsRemoving(false);
     }
   };
 
@@ -3282,6 +3473,7 @@ export default function MySubmissionsPage({
           ) : selectedPhase === "phase_2" ? (
             /* ==================== PHASE 2 PAGE ==================== */
             <div className="space-y-6">
+              {/* Existing Header Card (PRESERVED) */}
               <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-slate-100 pb-4">
                   <div>
@@ -3318,6 +3510,190 @@ export default function MySubmissionsPage({
                       {formatDateTime(phase2Config?.scheduled_end_at)}
                     </strong>
                   </span>
+                </div>
+              </div>
+
+              {/* Phase 2 Document Workspace */}
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-6">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
+                  <div>
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block leading-none">
+                      DOCUMENT SUBMISSION
+                    </span>
+                    <h3 className="text-sm font-black text-slate-900 uppercase tracking-wide mt-0.5">
+                      Phase 2 Pitch Deck & Documentation
+                    </h3>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span
+                      className={`text-[10px] font-black uppercase px-2.5 py-1 rounded-md border tracking-wider shrink-0 ${
+                        phase2Submission?.hasSubmission
+                          ? "bg-emerald-100 text-emerald-800 border-emerald-300"
+                          : "bg-amber-100 text-amber-900 border-amber-300"
+                      }`}
+                    >
+                      {phase2Submission?.hasSubmission ? "✓ 1/1 SUBMITTED" : "0/1 INCOMPLETE"}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Status Banner */}
+                <div
+                  className={`p-4 rounded-xl border transition-all ${
+                    phase2Submission?.hasSubmission
+                      ? "bg-emerald-50/90 border-emerald-200 text-emerald-950"
+                      : "bg-amber-50/90 border-amber-300 text-amber-950"
+                  }`}
+                >
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div
+                        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg shadow-2xs ${
+                          phase2Submission?.hasSubmission
+                            ? "bg-emerald-600 text-white"
+                            : "bg-amber-600 text-white"
+                        }`}
+                      >
+                        {phase2Submission?.hasSubmission ? (
+                          <CheckCircle size={18} />
+                        ) : (
+                          <AlertTriangle size={18} />
+                        )}
+                      </div>
+                      <div>
+                        <p className="text-xs sm:text-sm font-black tracking-tight">
+                          {phase2Submission?.hasSubmission
+                            ? "Phase 2 document uploaded successfully. Your submission is currently Pending Review."
+                            : "Please download the official template, complete your pitch deck, and upload your document."}
+                        </p>
+                        <p className="text-[11px] font-medium opacity-80 mt-0.5">
+                          {phase2Submission?.hasSubmission
+                            ? "You may edit or replace your submitted document at any time before the deadline."
+                            : "1 presentation document required for Phase 2 validation."}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Template & Document Slots */}
+                <div className="space-y-4">
+                  {/* Template Row */}
+                  <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div className="flex items-start gap-3 min-w-0">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600 border border-blue-100">
+                        <FileText size={20} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block leading-none mb-1">
+                          OFFICIAL TEMPLATE
+                        </span>
+                        <h4
+                          className="text-sm font-bold text-slate-800 truncate"
+                          title={phase2Template?.name || "IPL 2026 – Product + Business Pitch Deck"}
+                        >
+                          {phase2Template?.name || "IPL 2026 – Product + Business Pitch Deck"}
+                        </h4>
+                        <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+                          {phase2Template
+                            ? "Official 7-page presentation template for Phase 2 validation"
+                            : "Template file configured in Google Drive"}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="shrink-0 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleDownloadPhase2Template}
+                        disabled={phase2Downloading || (!phase2Template && phase2TemplateLoading)}
+                        className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 shadow-2xs transition-all disabled:opacity-50 min-h-[38px] cursor-pointer"
+                      >
+                        <Download size={14} className={phase2Downloading ? "animate-bounce" : ""} />
+                        <span>{phase2Downloading ? "Downloading..." : "Download Template"}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Submission Row */}
+                  <div className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-2xs">
+                    <div className="flex items-start gap-3 min-w-0">
+                      <div
+                        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border ${
+                          phase2Submission?.hasSubmission
+                            ? "bg-emerald-50 text-emerald-600 border-emerald-200"
+                            : "bg-slate-100 text-slate-400 border-slate-200"
+                        }`}
+                      >
+                        {phase2Submission?.hasSubmission ? <CheckCircle size={20} /> : <Upload size={20} />}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block leading-none mb-1">
+                          {phase2Submission?.hasSubmission ? "SUBMITTED FILE" : "DOCUMENT SLOT"}
+                        </span>
+                        <h4 className="text-sm font-bold text-slate-900 truncate">
+                          {phase2Submission?.hasSubmission
+                            ? phase2Submission.file?.name
+                            : "Phase 2 Presentation & Pitch Deck"}
+                        </h4>
+                        <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+                          {phase2Submission?.hasSubmission
+                            ? `Status: ${
+                                phase2Submission.status === "PENDING"
+                                  ? "Pending Review"
+                                  : phase2Submission.status
+                              }`
+                            : "No document submitted yet. Supported formats: .pptx, .ppt, .pdf"}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="shrink-0 flex items-center gap-2">
+                      {phase2Submission?.hasSubmission ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => phase2FileInputRef.current?.click()}
+                            disabled={phase2Uploading || phase2IsRemoving}
+                            className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 shadow-2xs transition-all disabled:opacity-50 min-h-[38px] cursor-pointer"
+                          >
+                            <Edit3 size={14} />
+                            <span>{phase2Uploading ? "Uploading..." : "Edit File"}</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setPhase2RemoveModal({
+                                fileId: phase2Submission.file?.id,
+                                fileName: phase2Submission.file?.name,
+                              })
+                            }
+                            disabled={phase2Uploading || phase2IsRemoving}
+                            className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 shadow-2xs transition-all disabled:opacity-50 min-h-[38px] cursor-pointer"
+                          >
+                            <Trash2 size={14} />
+                            <span>Remove File</span>
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => phase2FileInputRef.current?.click()}
+                          disabled={phase2Uploading}
+                          className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-primary hover:bg-primary/90 text-white shadow-2xs transition-all disabled:opacity-50 min-h-[38px] cursor-pointer"
+                        >
+                          <Upload size={14} className={phase2Uploading ? "animate-bounce" : ""} />
+                          <span>{phase2Uploading ? "Uploading..." : "Upload File"}</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <input
+                    ref={phase2FileInputRef}
+                    type="file"
+                    accept=".pptx,.ppt,.pdf"
+                    onChange={handlePhase2FileInputChange}
+                    className="hidden"
+                  />
                 </div>
               </div>
             </div>
@@ -3511,6 +3887,109 @@ export default function MySubmissionsPage({
                 className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-xs font-bold text-white transition cursor-pointer disabled:opacity-75 shadow-xs"
               >
                 {isRemovingFile ? (
+                  <>
+                    <MechanicalLoader size={14} className="text-white shrink-0" />
+                    <span>Removing...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 size={14} className="shrink-0" />
+                    <span>Remove File</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Phase 2 Remove File Custom Confirmation Modal - rendered via Portal */}
+      {phase2RemoveModal && createPortal(
+        <div
+          className="fixed inset-0 z-[99999] flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-xs animate-in fade-in"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="phase2-remove-file-modal-title"
+        >
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 sm:p-7 shadow-2xl border border-slate-200 space-y-4 text-left transform animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-100 text-rose-600 shrink-0">
+                  <Trash2 size={20} />
+                </div>
+                <div>
+                  <span className="text-[10px] font-black uppercase tracking-widest text-rose-600 block">
+                    CONFIRM FILE REMOVAL
+                  </span>
+                  <h3
+                    id="phase2-remove-file-modal-title"
+                    className="text-base font-black text-slate-900"
+                  >
+                    Remove Phase 2 Document?
+                  </h3>
+                </div>
+              </div>
+              {!phase2IsRemoving && (
+                <button
+                  type="button"
+                  onClick={() => setPhase2RemoveModal(null)}
+                  className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition cursor-pointer"
+                  aria-label="Close modal"
+                >
+                  <X size={18} />
+                </button>
+              )}
+            </div>
+
+            <div className="space-y-3 text-xs text-slate-600">
+              <p className="font-semibold text-slate-800">
+                Are you sure you want to remove your uploaded Phase 2 document?
+              </p>
+
+              <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200/70 space-y-2">
+                <div>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                    Submission:
+                  </span>
+                  <span className="font-bold text-slate-800 text-xs block mt-0.5">
+                    Phase 2 – Product + Business Pitch Deck
+                  </span>
+                </div>
+                <div className="pt-2 border-t border-slate-200/60">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                    Uploaded File:
+                  </span>
+                  <span className="font-mono font-bold text-rose-600 text-xs break-all block mt-0.5">
+                    {phase2RemoveModal.fileName}
+                  </span>
+                </div>
+              </div>
+
+              <div className="p-3 bg-amber-50 border border-amber-200/80 rounded-xl text-amber-900 text-[11px] leading-relaxed flex items-start gap-2">
+                <AlertTriangle size={15} className="text-amber-600 shrink-0 mt-0.5" />
+                <span>
+                  This file will be permanently deleted and Your Phase 2 status will immediately return to Incomplete (0/1) until a new document is uploaded.
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                disabled={phase2IsRemoving}
+                onClick={() => setPhase2RemoveModal(null)}
+                className="px-4 py-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-xs font-bold text-slate-700 transition cursor-pointer disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={phase2IsRemoving}
+                onClick={handleConfirmRemovePhase2File}
+                className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-xs font-bold text-white transition cursor-pointer disabled:opacity-75 shadow-xs"
+              >
+                {phase2IsRemoving ? (
                   <>
                     <MechanicalLoader size={14} className="text-white shrink-0" />
                     <span>Removing...</span>

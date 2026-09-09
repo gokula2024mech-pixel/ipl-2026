@@ -603,6 +603,9 @@ async function listVotingReportsFromDrive() {
 /**
  * Permanently delete a specific file by its fileId
  */
+/**
+ * Permanently delete a specific file by its fileId
+ */
 async function deleteFile(fileId) {
   if (!fileId) {
     throw new Error('fileId is required to delete a file')
@@ -613,6 +616,372 @@ async function deleteFile(fileId) {
     supportsAllDrives: true
   })
   return true
+}
+
+/**
+ * =============================================================================
+ * PHASE 2 GOOGLE DRIVE SERVICE METHODS
+ * =============================================================================
+ */
+
+/**
+ * Resolves the existing 'phase 2' root folder
+ */
+async function getPhase2RootFolder() {
+  const rootId = ROOT_FOLDER_ID
+  const drive = getDriveClient()
+  const children = await drive.files.list({
+    q: `'${rootId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+    fields: 'files(id, name)',
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true
+  })
+  const folders = children.data.files || []
+  const matched = folders.find(f => normalizeName(f.name) === 'phase 2' || normalizeName(f.name).replace(/\s+/g, '') === 'phase2')
+  if (!matched) {
+    throw new Error("Phase 2 folder ('phase 2') not found in root Google Drive folder.")
+  }
+  return matched
+}
+
+/**
+ * Resolves the existing 'Templete' folder inside 'phase 2'
+ */
+async function getPhase2TemplateFolder() {
+  const p2Folder = await getPhase2RootFolder()
+  const drive = getDriveClient()
+  const children = await drive.files.list({
+    q: `'${p2Folder.id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+    fields: 'files(id, name)',
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true
+  })
+  const folders = children.data.files || []
+  // Matches "Templete" (exact or normalized)
+  const matched = folders.find(f => normalizeName(f.name) === 'templete' || normalizeName(f.name) === 'templates')
+  if (!matched) {
+    throw new Error("Phase 2 template folder ('Templete') not found inside 'phase 2'.")
+  }
+  return matched
+}
+
+/**
+ * Discovers the official Phase 2 template file inside 'phase 2 → Templete'
+ */
+async function getPhase2Template() {
+  const templeteFolder = await getPhase2TemplateFolder()
+  const drive = getDriveClient()
+  const filesRes = await drive.files.list({
+    q: `'${templeteFolder.id}' in parents and mimeType != 'application/vnd.google-apps.folder' and trashed = false`,
+    fields: 'files(id, name, mimeType, size, modifiedTime, webViewLink, webContentLink)',
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true
+  })
+  const files = filesRes.data.files || []
+  if (files.length === 0) {
+    return null
+  }
+  // Return the first template file found
+  const t = files[0]
+  return {
+    id: t.id,
+    name: t.name,
+    mimeType: t.mimeType,
+    size: t.size,
+    modifiedTime: t.modifiedTime,
+    webViewLink: t.webViewLink,
+    webContentLink: t.webContentLink
+  }
+}
+
+/**
+ * Resolves the existing department folder under 'phase 2'
+ * Uses normalized matching to safely match existing manually created folders like 'computer Science and Engineering'.
+ * NEVER creates a duplicate department folder.
+ */
+async function getPhase2DepartmentFolder(departmentName) {
+  const p2Folder = await getPhase2RootFolder()
+  const drive = getDriveClient()
+  const children = await drive.files.list({
+    q: `'${p2Folder.id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+    fields: 'files(id, name)',
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true
+  })
+  const folders = children.data.files || []
+  const targetNorm = normalizeName(departmentName)
+  const matched = folders.find(f => normalizeName(f.name) === targetNorm)
+  if (!matched) {
+    throw new Error(`Department folder for '${departmentName}' not found in 'phase 2'.`)
+  }
+  return matched
+}
+
+/**
+ * Finds or creates ONLY the student's Team ID folder inside the department folder.
+ * NEVER creates duplicate folders.
+ */
+async function getOrCreatePhase2TeamFolder(deptFolderId, teamId) {
+  const cleanTeamId = (teamId || '').trim()
+  if (!cleanTeamId) {
+    throw new Error('Team ID is required to resolve or create team folder.')
+  }
+  const drive = getDriveClient()
+  const existing = await findFolderByName(deptFolderId, cleanTeamId)
+  if (existing) {
+    return {
+      id: existing.id,
+      name: existing.name,
+      isNew: false
+    }
+  }
+  // Create ONLY the team folder inside deptFolderId
+  const response = await drive.files.create({
+    resource: {
+      name: cleanTeamId,
+      mimeType: 'application/vnd.google-apps.folder',
+      parents: [deptFolderId]
+    },
+    fields: 'id, name',
+    supportsAllDrives: true
+  })
+  return {
+    id: response.data.id,
+    name: response.data.name,
+    isNew: true
+  }
+}
+
+/**
+ * Reads the current Phase 2 submission for a given department and team from Google Drive
+ */
+async function getPhase2Submission(departmentName, teamId) {
+  const deptFolder = await getPhase2DepartmentFolder(departmentName)
+  const cleanTeamId = (teamId || '').trim()
+  const teamFolder = await findFolderByName(deptFolder.id, cleanTeamId)
+  if (!teamFolder) {
+    return {
+      hasSubmission: false,
+      file: null,
+      status: 'INCOMPLETE',
+      completion: { uploadedCount: 0, requiredCount: 1, isComplete: false }
+    }
+  }
+  const drive = getDriveClient()
+  const children = await drive.files.list({
+    q: `'${teamFolder.id}' in parents and mimeType != 'application/vnd.google-apps.folder' and trashed = false`,
+    fields: 'files(id, name, mimeType, size, modifiedTime, webViewLink, webContentLink)',
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true
+  })
+  const files = (children.data.files || []).sort((a, b) => new Date(b.modifiedTime) - new Date(a.modifiedTime))
+  if (files.length === 0) {
+    return {
+      hasSubmission: false,
+      file: null,
+      status: 'INCOMPLETE',
+      completion: { uploadedCount: 0, requiredCount: 1, isComplete: false }
+    }
+  }
+  const file = files[0]
+  return {
+    hasSubmission: true,
+    status: 'PENDING',
+    file: {
+      id: file.id,
+      name: file.name,
+      mimeType: file.mimeType,
+      size: file.size,
+      modifiedTime: file.modifiedTime,
+      webViewLink: file.webViewLink,
+      webContentLink: file.webContentLink
+    },
+    completion: { uploadedCount: 1, requiredCount: 1, isComplete: true }
+  }
+}
+
+/**
+ * Uploads or replaces the Phase 2 file in the team folder.
+ * Ensures strictly ONE file exists by deleting any existing files in the team folder first.
+ */
+async function uploadOrReplacePhase2File(departmentName, teamId, fileBuffer, originalFilename, mimeType) {
+  const cleanTeamId = (teamId || '').trim()
+  const deptFolder = await getPhase2DepartmentFolder(departmentName)
+  const teamFolder = await getOrCreatePhase2TeamFolder(deptFolder.id, cleanTeamId)
+  const drive = getDriveClient()
+
+  // 1. Check and clean up any existing files in the team folder (no duplicates)
+  const existingFilesRes = await drive.files.list({
+    q: `'${teamFolder.id}' in parents and mimeType != 'application/vnd.google-apps.folder' and trashed = false`,
+    fields: 'files(id, name)',
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true
+  })
+  const existingFiles = existingFilesRes.data.files || []
+  for (const ef of existingFiles) {
+    try {
+      await deleteFile(ef.id)
+    } catch (delErr) {
+      console.warn(`[GoogleDrive] Failed to delete old Phase 2 file ${ef.id}:`, delErr.message)
+    }
+  }
+
+  // 2. Canonical upload filename: TEAM-ID_<TEMPLATE BASE NAME>.<uploaded-extension>
+  let templateBaseName = 'IPL 2026 – Product + Business Pitch Deck'
+  try {
+    const template = await getPhase2Template()
+    if (template && template.name) {
+      templateBaseName = template.name.replace(/\.[^/.]+$/, '')
+    }
+  } catch (tErr) {
+    console.warn('[GoogleDrive] Could not dynamically fetch template name for canonical naming:', tErr.message)
+  }
+  const ext = path.extname(originalFilename || '') || '.pptx'
+  const canonicalName = `${cleanTeamId}_${templateBaseName}${ext}`
+
+  const response = await drive.files.create({
+    resource: {
+      name: canonicalName,
+      parents: [teamFolder.id]
+    },
+    media: {
+      mimeType: mimeType || 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      body: Readable.from(fileBuffer)
+    },
+    fields: 'id, name, mimeType, size, modifiedTime, webViewLink, webContentLink',
+    supportsAllDrives: true
+  })
+
+  return response.data
+}
+
+/**
+ * Removes the Phase 2 submission file for a team
+ */
+async function removePhase2File(departmentName, teamId, fileId) {
+  const cleanTeamId = (teamId || '').trim()
+  const deptFolder = await getPhase2DepartmentFolder(departmentName)
+  const teamFolder = await findFolderByName(deptFolder.id, cleanTeamId)
+  if (!teamFolder) {
+    return true
+  }
+  const drive = getDriveClient()
+  if (fileId) {
+    try {
+      await deleteFile(fileId)
+    } catch (err) {
+      const status = err.status || err.code
+      if (status !== 404 && (!err.message || !err.message.toLowerCase().includes('not found'))) {
+        throw err
+      }
+    }
+  } else {
+    // Delete all files in team folder
+    const filesRes = await drive.files.list({
+      q: `'${teamFolder.id}' in parents and mimeType != 'application/vnd.google-apps.folder' and trashed = false`,
+      fields: 'files(id)',
+      supportsAllDrives: true,
+      includeItemsFromAllDrives: true
+    })
+    for (const f of (filesRes.data.files || [])) {
+      try {
+        await deleteFile(f.id)
+      } catch (err) {
+        console.warn(`[GoogleDrive] Failed to delete file ${f.id}:`, err.message)
+      }
+    }
+  }
+  return true
+}
+
+let cachedP2DeptFolders = null
+let cachedP2DeptTimestamp = 0
+const DEPT_CACHE_TTL = 5 * 60 * 1000 // 5 minutes
+
+async function getPhase2DepartmentFoldersList() {
+  const now = Date.now()
+  if (cachedP2DeptFolders && (now - cachedP2DeptTimestamp < DEPT_CACHE_TTL)) {
+    return cachedP2DeptFolders
+  }
+  const p2Folder = await getPhase2RootFolder()
+  const drive = getDriveClient()
+  const res = await drive.files.list({
+    q: `'${p2Folder.id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+    fields: 'files(id, name)',
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true
+  })
+  const folders = (res.data.files || []).filter(f => normalizeName(f.name) !== 'templete' && normalizeName(f.name) !== 'templates')
+  cachedP2DeptFolders = folders
+  cachedP2DeptTimestamp = now
+  return folders
+}
+
+/**
+ * Retrieves all Phase 2 submissions across all departments and teams in Google Drive
+ */
+async function getAllPhase2Submissions() {
+  const drive = getDriveClient()
+  const deptFolders = await getPhase2DepartmentFoldersList()
+  if (!deptFolders || deptFolders.length === 0) return {}
+
+  const deptMap = {}
+  deptFolders.forEach(d => { deptMap[d.id] = d.name })
+
+  const deptFolderIds = deptFolders.map(d => d.id)
+  const parentQuery = deptFolderIds.map(id => `'${id}' in parents`).join(' or ')
+
+  const teamFoldersRes = await drive.files.list({
+    q: `(${parentQuery}) and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+    fields: 'files(id, name, parents)',
+    pageSize: 1000,
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true
+  })
+
+  const teamFolders = teamFoldersRes.data.files || []
+  if (teamFolders.length === 0) return {}
+
+  const teamFolderMap = {}
+  teamFolders.forEach(tf => {
+    const parentDeptId = tf.parents ? tf.parents[0] : null
+    const deptName = parentDeptId ? deptMap[parentDeptId] : null
+    teamFolderMap[tf.id] = { teamId: tf.name, department: deptName }
+  })
+
+  const tfIds = teamFolders.map(t => t.id)
+  const tfQuery = tfIds.map(id => `'${id}' in parents`).join(' or ')
+
+  const filesRes = await drive.files.list({
+    q: `(${tfQuery}) and mimeType != 'application/vnd.google-apps.folder' and trashed = false`,
+    fields: 'files(id, name, mimeType, size, modifiedTime, webViewLink, webContentLink, parents)',
+    pageSize: 1000,
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true
+  })
+
+  const files = filesRes.data.files || []
+  const resultMap = {}
+  files.forEach(f => {
+    const parentTfId = f.parents ? f.parents[0] : null
+    const meta = teamFolderMap[parentTfId]
+    if (meta && meta.teamId) {
+      resultMap[meta.teamId] = {
+        department: meta.department,
+        file: {
+          id: f.id,
+          name: f.name,
+          mimeType: f.mimeType,
+          size: f.size,
+          modifiedTime: f.modifiedTime,
+          webViewLink: f.webViewLink,
+          webContentLink: f.webContentLink
+        }
+      }
+    }
+  })
+
+  return resultMap
 }
 
 module.exports = {
@@ -637,5 +1006,15 @@ module.exports = {
   deleteFile,
   getOrCreateVotingReportsFolder,
   uploadVotingReportToDrive,
-  listVotingReportsFromDrive
+  listVotingReportsFromDrive,
+  // Phase 2 exports
+  getPhase2RootFolder,
+  getPhase2TemplateFolder,
+  getPhase2Template,
+  getPhase2DepartmentFolder,
+  getOrCreatePhase2TeamFolder,
+  getPhase2Submission,
+  uploadOrReplacePhase2File,
+  removePhase2File,
+  getAllPhase2Submissions
 }

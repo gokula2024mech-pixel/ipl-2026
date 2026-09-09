@@ -1,0 +1,180 @@
+<USER_REQUEST>
+BRO, THIS IS THE FINAL PHASE 2 IMPLEMENTATION + ADMIN SUBMISSIONS INTEGRATION TASK.
+
+CURRENT BRANCH:
+
+feature/phase2-template-upload
+
+CONTINUE ON THIS BRANCH.
+
+DO NOT CREATE ANOTHER BRANCH.
+
+DO NOT COMMIT.
+DO NOT PUSH.
+DO NOT MERGE.
+
+============================================================
+GLOBAL RULE — EXISTING BEHAVIOR IS LOCKED
+============================================================
+
+Phase 1 and all existing working features are LOCKED.
+
+Do NOT modify existing behavior unless explicitly required below.
+
+Do NOT modify:
+
+- Stage 12
+- Stage 13
+- Phase 1 student workflow
+- Phase 1 patent workflow
+- Phase 1 Google Drive folders/files
+- Voting
+- Leaderboard
+- Registration
+- Timer
+- Authentication
+- Navbar
+- Footer
+- Phase 3 existing behavior
+- Existing global UI/UX
+- Existing database behavior
+- Existing pagination behavior
+
+Use existing Phase 1 Admin Submission architecture wherever possible.
+
+Make only the minimum changes required for Phase 2.
+
+============================================================
+PHASE 2 OFFICIAL TEMPLATE
+============================================================
+
+The official Phase 2 template is:
+
+IPL 2026 – Product + Business Pitch Deck.pptx
+
+It is stored in the EXISTING Google Drive folder:
+
+phase 2
+→ Templete
+→ official template
+
+Do NOT:
+
+- create another phase 2 folder
+- create another Templete folder
+- rename Templete
+- create another Templates folder
+- rename the official template
+
+The website must dynamically detect the actual template file.
+
+If the template filename changes in Google Drive, the website must show the current filename.
+
+============================================================
+PHASE 2 GOOGLE DRIVE STRUCTURE
+============================================================
+
+The folders have already been manually created.
+
+Use the existing structure:
+
+phase 2
+│
+├── Templete
+│
+├── Mechanical Engineering
+├── Information Technology
+
+<truncated 14017 bytes>
+dmin deletion is reflected.
+14. Admin approval persists.
+15. Admin rejection persists.
+16. Search works within selected phase.
+17. Filters work within selected phase.
+18. Pagination remains 10 per page.
+19. Changing phase resets page to 1.
+20. Mobile Admin phase selector works.
+
+============================================================
+PHASE 1 REGRESSION
+============================================================
+
+Run all existing Phase 1 regression tests.
+
+At minimum:
+
+- Phase 1 Product Isolation tests
+- Phase 1 Admin Status tests
+- Phase 1 Pagination tests
+- Phase 1 upload/edit/remove tests
+
+Expected:
+
+No regression.
+
+============================================================
+BUILD
+============================================================
+
+Run:
+
+npm run build
+
+Expected:
+
+0 errors.
+
+============================================================
+FINAL REPORT
+============================================================
+
+Return:
+
+1. Branch
+2. Exact files changed
+3. Phase 2 template detection
+4. Download result
+5. Accepted formats
+6. Arbitrary filename acceptance
+7. Actual Drive stored filename example
+8. Upload result
+9. Edit result
+10. Remove result
+11. Re-upload result
+12. Phase 2 Admin integration
+13. Phase 1 Admin verification
+14. Phase 3 selector verification
+15. Admin search/filter verification
+16. Admin pagination verification
+17. Admin approval/rejection verification
+18. Drive current-state verification
+19. Mobile verification
+20. Phase 1 regression results
+21. Automated test results
+22. Build result
+23. Database mutations
+24. Google Drive mutations
+25. Git commits
+26. Git pushes
+
+FINAL STATUS:
+
+READY FOR REVIEW
+
+ONLY if all actual tests pass.
+
+If anything fails:
+
+BLOCKED — FIX REQUIRED
+
+IMPORTANT:
+
+DO NOT COMMIT.
+DO NOT PUSH.
+DO NOT MERGE.
+
+STOP AFTER THE REPORT AND WAIT FOR MY EXPLICIT INSTRUCTION.
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-09-10T04:29:45+05:30.
+</ADDITIONAL_METADATA>

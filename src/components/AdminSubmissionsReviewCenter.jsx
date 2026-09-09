@@ -97,6 +97,7 @@ export default function AdminSubmissionsReviewCenter({
   const [error, setError] = useState(null);
 
   // State: Navigation & View
+  const [selectedPhase, setSelectedPhase] = useState("phase_1");
   const [activeStatusTab, setActiveStatusTab] = useState("PENDING");
   const [selectedSubmission, setSelectedSubmission] = useState(null);
 
@@ -148,6 +149,14 @@ export default function AdminSubmissionsReviewCenter({
     setError(null);
 
     try {
+      if (selectedPhase === "phase_3") {
+        setSubmissions([]);
+        setCounts({ pending: 0, incomplete: 0, approved: 0, rejected: 0, total: 0 });
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
+
       const queryParams = new URLSearchParams({
         status: activeStatusTab,
         search: searchQuery,
@@ -161,8 +170,12 @@ export default function AdminSubmissionsReviewCenter({
         endDate: endDate,
       });
 
+      const endpoint = selectedPhase === "phase_2"
+        ? `${API_BASE_URL}/api/phase2/admin/submissions?${queryParams.toString()}`
+        : `${API_BASE_URL}/api/phase1/admin/submissions?${queryParams.toString()}`;
+
       const res = await fetch(
-        `${API_BASE_URL}/api/phase1/admin/submissions?${queryParams.toString()}`,
+        endpoint,
         {
           headers: {
             Authorization: `Bearer ${token}`,
@@ -218,6 +231,7 @@ export default function AdminSubmissionsReviewCenter({
     }
   }, [
     token,
+    selectedPhase,
     activeStatusTab,
     patentTypeFilter,
     departmentFilter,
@@ -467,7 +481,11 @@ export default function AdminSubmissionsReviewCenter({
     setIsSubmittingApprove(true);
 
     try {
-      const res = await fetch(`${API_BASE_URL}/api/phase1/admin/review-team`, {
+      const endpoint = selectedPhase === "phase_2"
+        ? `${API_BASE_URL}/api/phase2/admin/review-team`
+        : `${API_BASE_URL}/api/phase1/admin/review-team`;
+
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -536,7 +554,11 @@ export default function AdminSubmissionsReviewCenter({
     setIsSubmittingReject(true);
 
     try {
-      const res = await fetch(`${API_BASE_URL}/api/phase1/admin/review-team`, {
+      const endpoint = selectedPhase === "phase_2"
+        ? `${API_BASE_URL}/api/phase2/admin/review-team`
+        : `${API_BASE_URL}/api/phase1/admin/review-team`;
+
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -622,7 +644,11 @@ export default function AdminSubmissionsReviewCenter({
     }
 
     try {
-      const res = await fetch(`${API_BASE_URL}/api/phase1/admin/return-to-pending`, {
+      const endpoint = selectedPhase === "phase_2"
+        ? `${API_BASE_URL}/api/phase2/admin/return-to-pending`
+        : `${API_BASE_URL}/api/phase1/admin/return-to-pending`;
+
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -769,8 +795,65 @@ export default function AdminSubmissionsReviewCenter({
           <h1 className="font-heading text-xl sm:text-2xl font-black tracking-tight text-slate-900 truncate">
             SUBMISSIONS
           </h1>
-          <p className="text-xs sm:text-sm text-slate-500 font-medium mt-1">
-            Review, approve, and manage Phase 1 patent document submissions.
+          <div className="flex items-center gap-1.5 mt-2.5 p-1 bg-slate-100 rounded-xl w-fit">
+            <button
+              type="button"
+              onClick={() => {
+                if (selectedPhase !== "phase_1") {
+                  setSelectedPhase("phase_1");
+                  setSelectedSubmission(null);
+                  setCurrentPage(1);
+                }
+              }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                selectedPhase === "phase_1"
+                  ? "bg-white text-slate-900 shadow-xs"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              Phase 1 (Patents)
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (selectedPhase !== "phase_2") {
+                  setSelectedPhase("phase_2");
+                  setSelectedSubmission(null);
+                  setCurrentPage(1);
+                }
+              }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                selectedPhase === "phase_2"
+                  ? "bg-white text-slate-900 shadow-xs"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              Phase 2 (Pitch Deck)
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (selectedPhase !== "phase_3") {
+                  setSelectedPhase("phase_3");
+                  setSelectedSubmission(null);
+                  setCurrentPage(1);
+                }
+              }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                selectedPhase === "phase_3"
+                  ? "bg-white text-slate-900 shadow-xs"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              Phase 3 (Showcase)
+            </button>
+          </div>
+          <p className="text-xs sm:text-sm text-slate-500 font-medium mt-2">
+            {selectedPhase === "phase_3"
+              ? "Phase 3 showcase and commercialization submissions will appear here once Phase 3 is active."
+              : selectedPhase === "phase_2"
+              ? "Review, evaluate, and manage Phase 2 pitch deck document submissions."
+              : "Review, approve, and manage Phase 1 patent document submissions."}
           </p>
         </div>
 
@@ -1093,7 +1176,11 @@ export default function AdminSubmissionsReviewCenter({
               <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
                 <div className="border-b border-slate-100 pb-3">
                   <span className="text-[10px] font-black uppercase tracking-widest text-accent block">
-                    PHASE 1 DOCUMENTS
+                    {selectedPhase === "phase_2"
+                      ? "PHASE 2 DOCUMENTS"
+                      : selectedPhase === "phase_3"
+                      ? "PHASE 3 DOCUMENTS"
+                      : "PHASE 1 DOCUMENTS"}
                   </span>
                   <h3 className="text-base font-black text-slate-900 mt-0.5">
                     Document Checklist
@@ -1350,22 +1437,24 @@ export default function AdminSubmissionsReviewCenter({
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 text-xs">
-                {/* 1. Patent Type */}
-                <div>
-                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-wider mb-1">
-                    Patent Type
-                  </label>
-                  <select
-                    value={patentTypeFilter}
-                    onChange={(e) => setPatentTypeFilter(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 font-bold text-slate-800 outline-none focus:border-accent cursor-pointer"
-                  >
-                    <option value="ALL">All Patent Types</option>
-                    <option value="Utility Patent">Utility Patent</option>
-                    <option value="Design Patent">Design Patent</option>
-                    <option value="Both">Both (Utility + Design)</option>
-                  </select>
-                </div>
+                {/* 1. Patent Type (Phase 1 Only) */}
+                {selectedPhase === "phase_1" && (
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-wider mb-1">
+                      Patent Type
+                    </label>
+                    <select
+                      value={patentTypeFilter}
+                      onChange={(e) => setPatentTypeFilter(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 font-bold text-slate-800 outline-none focus:border-accent cursor-pointer"
+                    >
+                      <option value="ALL">All Patent Types</option>
+                      <option value="Utility Patent">Utility Patent</option>
+                      <option value="Design Patent">Design Patent</option>
+                      <option value="Both">Both (Utility + Design)</option>
+                    </select>
+                  </div>
+                )}
 
                 {/* 2. Department */}
                 <div>
@@ -1549,6 +1638,19 @@ export default function AdminSubmissionsReviewCenter({
                 Loading submissions...
               </p>
             </div>
+          ) : selectedPhase === "phase_3" ? (
+            /* Phase 3 Placeholder State */
+            <div className="py-20 flex flex-col items-center justify-center gap-3 bg-white rounded-2xl border border-slate-200 p-8 text-center shadow-xs">
+              <div className="w-14 h-14 rounded-2xl bg-indigo-50 flex items-center justify-center text-indigo-600 mb-2 shadow-xs">
+                <FileText size={26} />
+              </div>
+              <h3 className="text-base font-black text-slate-900">
+                Phase 3 Submissions Not Yet Active
+              </h3>
+              <p className="text-xs text-slate-500 max-w-md">
+                Phase 3 (Showcase & Commercialization) submission and evaluation workflows will be enabled when Phase 3 is officially started.
+              </p>
+            </div>
           ) : submissions.length === 0 ? (
             /* Empty State */
             <div className="py-20 flex flex-col items-center justify-center gap-3 bg-white rounded-2xl border border-slate-200 p-8 text-center shadow-xs">
@@ -1620,9 +1722,11 @@ export default function AdminSubmissionsReviewCenter({
                           <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md truncate max-w-[180px]">
                             {sub.department}
                           </span>
-                          <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md">
-                            {sub.patentType === "Both" ? "Both (Utility + Design)" : sub.patentType}
-                          </span>
+                          {selectedPhase === "phase_1" && sub.patentType && (
+                            <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md">
+                              {sub.patentType === "Both" ? "Both (Utility + Design)" : sub.patentType}
+                            </span>
+                          )}
                           <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md">
                             TRL {sub.trl}
                           </span>
