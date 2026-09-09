@@ -180,7 +180,8 @@ const EXPORT_COLUMN_GROUPS = [
       { key: "registration_id", label: "Registration ID", isCenter: true, width: 100 },
       { key: "created_at", label: "Registration Date", isCenter: true, width: 200 },
       { key: "status", label: "Status", isCenter: true, width: 100 },
-      { key: "product_number", label: "Product Number", isCenter: true, width: 110 }
+      { key: "products_count", label: "Total Products", isCenter: true, width: 110 },
+      { key: "product_number", label: "Product Number(s)", isCenter: true, width: 120 }
     ]
   },
   {
@@ -769,6 +770,8 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
   // Statistics State
   const [stats, setStats] = useState(() => adminCached?.stats || {
     totalTeams: 0,
+    totalProducts: 0,
+    totalRegistrations: 0,
     totalStudents: 0,
     totalEvaluators: 0,
     activePhaseName: "None",
@@ -895,37 +898,66 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
         regsMap[r.registration_id] = r;
       });
 
-      // Map each product to a virtual registration record
-      const normalizedRecords = (productsData || []).map(prod => {
-        const team = (teamsData || []).find(t => t.id === prod.team_id) || {};
-        const prodMembers = (membersData || []).filter(m => m.product_id === prod.id) || [];
+      // Group products by team_id
+      const productsByTeamId = {};
+      (productsData || []).forEach(prod => {
+        if (!productsByTeamId[prod.team_id]) {
+          productsByTeamId[prod.team_id] = [];
+        }
+        productsByTeamId[prod.team_id].push(prod);
+      });
 
-        const leader = prodMembers.find(m => m.is_team_leader || m.role === 'Team Leader') || {};
-        const otherMembers = prodMembers.filter(m => !m.is_team_leader && m.role !== 'Team Leader');
-        const m2 = otherMembers[0] || {};
-        const m3 = otherMembers[1] || {};
-        const m4 = otherMembers[2] || {};
+      // Map each distinct team to a normalized team record
+      const normalizedRecords = (teamsData || []).map(team => {
+        const teamProducts = (productsByTeamId[team.id] || []).slice().sort((a, b) => (a.product_number || 1) - (b.product_number || 1));
+        const primaryProd = teamProducts[0] || {};
+        const teamProductIds = new Set(teamProducts.map(p => p.id));
+        const teamMembers = (membersData || []).filter(m => teamProductIds.has(m.product_id));
+
+        const leader = teamMembers.find(m => m.is_team_leader || m.role === 'Team Leader') || {};
+        const otherMembersRaw = teamMembers.filter(m => !m.is_team_leader && m.role !== 'Team Leader');
+
+        const uniqueOtherMembers = [];
+        const seenMemberKeys = new Set();
+        for (const m of otherMembersRaw) {
+          const key = (m.member_email || m.member_name || '').trim().toLowerCase();
+          if (key && !seenMemberKeys.has(key)) {
+            seenMemberKeys.add(key);
+            uniqueOtherMembers.push(m);
+          } else if (!key) {
+            uniqueOtherMembers.push(m);
+          }
+        }
+
+        const m2 = uniqueOtherMembers[0] || {};
+        const m3 = uniqueOtherMembers[1] || {};
+        const m4 = uniqueOtherMembers[2] || {};
 
         let mentorName = '';
         let mentorDept = '';
-        let regDate = prod.created_at || new Date().toISOString();
-        let displayRegId = prod.legacy_registration_id || '';
+        let regDate = primaryProd.created_at || team.created_at || new Date().toISOString();
+        let displayRegId = primaryProd.legacy_registration_id || '';
 
-        if (prod.legacy_registration_id && regsMap[prod.legacy_registration_id]) {
-          const origReg = regsMap[prod.legacy_registration_id];
+        // Fallback: check if any other product has legacy_registration_id
+        if (!displayRegId) {
+          const prodWithRegId = teamProducts.find(p => p.legacy_registration_id);
+          if (prodWithRegId) {
+            displayRegId = prodWithRegId.legacy_registration_id;
+          }
+        }
+
+        if (displayRegId && regsMap[displayRegId]) {
+          const origReg = regsMap[displayRegId];
           mentorName = origReg.mentor_name || '';
           mentorDept = origReg.mentor_department || '';
           regDate = origReg.created_at || regDate;
         } else {
-          // Fallback to first product for existing-team new idea submissions
-          const firstProd = (productsData || []).find(p => p.team_id === prod.team_id && p.product_number === 1);
-          if (firstProd && firstProd.legacy_registration_id) {
-            displayRegId = firstProd.legacy_registration_id;
-            if (regsMap[firstProd.legacy_registration_id]) {
-              const origReg = regsMap[firstProd.legacy_registration_id];
-              mentorName = origReg.mentor_name || '';
-              mentorDept = origReg.mentor_department || '';
-            }
+          const origReg = (registrationsData || []).find(r => r.team_name && r.team_name.trim().toLowerCase() === (team.team_name || '').trim().toLowerCase());
+          if (origReg) {
+            if (!displayRegId) displayRegId = origReg.registration_id;
+            mentorName = origReg.mentor_name || '';
+            mentorDept = origReg.mentor_department || '';
+            regDate = origReg.created_at || regDate;
           }
         }
 
@@ -940,19 +972,36 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
           : null;
         const evalComments = prodEvals.map(ev => ev.comments).filter(Boolean).join('; ');
 
+        const projectTitle = teamProducts.length > 1
+          ? teamProducts.map((p, idx) => `[Product ${p.product_number || idx + 1}] ${p.product_title}`).join('\n')
+          : (primaryProd.product_title || '');
+
+        const innovationDomain = teamProducts.length > 1
+          ? Array.from(new Set(teamProducts.map(p => p.innovation_domain).filter(Boolean))).join(', ')
+          : (primaryProd.innovation_domain || '');
+
+        const allDomains = Array.from(new Set(teamProducts.map(p => p.innovation_domain).filter(Boolean)));
+        const allTrls = teamProducts.map(p => p.trl_level).filter(val => val !== null && val !== undefined);
+        const allSdgs = Array.from(new Set(teamProducts.flatMap(p => p.sdg_goals || [])));
+
         return {
-          id: prod.id,
+          id: team.id,
+          team_id: team.id,
           registration_id: displayRegId,
           team_name: team.team_name || '',
-          project_title: prod.product_title || '',
-          innovation_domain: prod.innovation_domain || '',
-          trl_level: prod.trl_level,
-          sdg_goals: prod.sdg_goals || [],
-          problem_area: prod.problem_area || '',
-          proposed_solution: prod.proposed_solution || '',
-          expected_impact: prod.expected_impact || '',
-          product_number: prod.product_number || 1,
-          status: prod.status || 'active',
+          products: teamProducts,
+          products_count: teamProducts.length,
+          project_title: projectTitle,
+          innovation_domain: innovationDomain,
+          innovation_domains: allDomains,
+          trl_level: primaryProd.trl_level !== null && primaryProd.trl_level !== undefined ? primaryProd.trl_level : null,
+          trl_levels: allTrls,
+          sdg_goals: allSdgs,
+          problem_area: teamProducts.map(p => p.problem_area).filter(Boolean).join('\n---\n'),
+          proposed_solution: teamProducts.map(p => p.proposed_solution).filter(Boolean).join('\n---\n'),
+          expected_impact: teamProducts.map(p => p.expected_impact).filter(Boolean).join('\n---\n'),
+          product_number: teamProducts.length > 1 ? teamProducts.map(p => p.product_number || 1).join(', ') : (primaryProd.product_number || 1),
+          status: primaryProd.status || 'active',
 
           leader_name: leader.member_name || '',
           leader_email: leader.member_email || '',
@@ -999,6 +1048,8 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
       // Update statistics
       const calculatedStats = {
         totalTeams: teamsData?.length || 0,
+        totalProducts: (productsData || []).filter(p => p.status === 'active' || !p.status).length,
+        totalRegistrations: (registrationsData || []).length,
         totalStudents: students.length,
         totalEvaluators: evals.length,
         activePhaseName: activePhase ? `Phase ${activePhase.phase_number}: ${activePhase.name}` : "None",
@@ -2325,7 +2376,16 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
 
         // Custom formatting for specific columns
         if (col.key === 'trl_level') {
+          if (t.products && t.products.length > 1) {
+            return t.products.map((p, idx) => `P${p.product_number || idx + 1}: TRL ${p.trl_level ?? 'N/A'}`).join(', ');
+          }
           return val !== null && val !== undefined ? val : 'N/A';
+        }
+        if (col.key === 'product_number') {
+          if (t.products && t.products.length > 1) {
+            return t.products.map((p, idx) => p.product_number || idx + 1).join(', ');
+          }
+          return val !== null && val !== undefined ? val : 1;
         }
         if (col.key === 'sdg_goals') {
           return val && Array.isArray(val) ? val.join('; ') : 'N/A';
@@ -2430,12 +2490,24 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
         return String(val).toLowerCase().includes(searchLower);
       };
 
-      const matchesTrlOrProductNumber = queryNum !== null && (r.trl_level === queryNum || r.product_number === queryNum);
+      const matchesTrlOrProductNumber = queryNum !== null && (
+        r.trl_level === queryNum ||
+        (r.trl_levels && r.trl_levels.includes(queryNum)) ||
+        r.product_number === queryNum ||
+        (r.products && r.products.some(p => p.trl_level === queryNum || p.product_number === queryNum))
+      );
 
       const matchesText =
         includesQuery(r.team_name) ||
         includesQuery(r.project_title) ||
         includesQuery(r.innovation_domain) ||
+        (r.products && r.products.some(p =>
+          includesQuery(p.product_title) ||
+          includesQuery(p.innovation_domain) ||
+          includesQuery(p.problem_area) ||
+          includesQuery(p.proposed_solution) ||
+          includesQuery(p.expected_impact)
+        )) ||
         includesQuery(r.problem_area) ||
         includesQuery(r.proposed_solution) ||
         includesQuery(r.expected_impact) ||
@@ -2481,13 +2553,23 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
     }
 
     // 3. Domain Filter
-    if (filterDomain && r.innovation_domain !== filterDomain) {
-      return false;
+    if (filterDomain) {
+      const matchesDomain = r.innovation_domain === filterDomain ||
+        (r.innovation_domains && r.innovation_domains.includes(filterDomain)) ||
+        (r.products && r.products.some(p => p.innovation_domain === filterDomain));
+      if (!matchesDomain) {
+        return false;
+      }
     }
 
     // 4. TRL Filter
-    if (filterTrl && String(r.trl_level) !== String(filterTrl)) {
-      return false;
+    if (filterTrl) {
+      const matchesTrl = String(r.trl_level) === String(filterTrl) ||
+        (r.trl_levels && r.trl_levels.some(lvl => String(lvl) === String(filterTrl))) ||
+        (r.products && r.products.some(p => String(p.trl_level) === String(filterTrl)));
+      if (!matchesTrl) {
+        return false;
+      }
     }
 
     return true;
@@ -3482,7 +3564,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
                           className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 sm:px-2 sm:py-1.5 text-sm sm:text-xs outline-none focus:border-primary text-slate-700 font-semibold sm:font-medium cursor-pointer"
                         >
                           <option value="">All Domains</option>
-                          {Array.from(new Set(registrations.map(r => r.innovation_domain).filter(Boolean))).sort().map(domain => (
+                          {Array.from(new Set(registrations.flatMap(r => r.innovation_domains || [r.innovation_domain]).filter(Boolean))).sort().map(domain => (
                             <option key={domain} value={domain}>{domain}</option>
                           ))}
                         </select>
@@ -3550,13 +3632,58 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
                           {paginatedRegistrations.map((team) => (
                             <tr key={team.id} className="hover:bg-slate-50/50 align-top">
                               <td className="px-5 py-4 font-bold text-primary select-all">{team.registration_id}</td>
-                              <td className="px-5 py-4 font-semibold text-slate-900 whitespace-pre-wrap">{team.team_name}</td>
-                              <td className="px-5 py-4 whitespace-pre-wrap text-slate-800 leading-relaxed font-medium">
-                                {team.project_title}
+                              <td className="px-5 py-4 font-semibold text-slate-900 whitespace-pre-wrap">
+                                <div className="space-y-1">
+                                  <p className="font-semibold text-slate-900">{team.team_name}</p>
+                                  {team.products && team.products.length > 1 && (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-extrabold bg-blue-50 text-blue-700 ring-1 ring-blue-600/20">
+                                      {team.products.length} Products
+                                    </span>
+                                  )}
+                                </div>
                               </td>
-                              <td className="px-5 py-4 whitespace-pre-wrap text-xs font-semibold bg-slate-50/30">{team.innovation_domain}</td>
+                              <td className="px-5 py-4 whitespace-pre-wrap text-slate-800 leading-relaxed font-medium">
+                                {team.products && team.products.length > 1 ? (
+                                  <div className="space-y-2">
+                                    {team.products.map((p, idx) => (
+                                      <div key={p.id || idx} className="rounded-lg bg-slate-50/80 p-2.5 border border-slate-100 space-y-0.5">
+                                        <span className="text-[10px] font-bold text-primary uppercase tracking-wider block">
+                                          Product {p.product_number || idx + 1}:
+                                        </span>
+                                        <p className="text-xs font-semibold text-slate-900">{p.product_title}</p>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  team.project_title
+                                )}
+                              </td>
+                              <td className="px-5 py-4 whitespace-pre-wrap text-xs font-semibold bg-slate-50/30">
+                                {team.products && team.products.length > 1 ? (
+                                  <div className="space-y-1.5">
+                                    {team.products.map((p, idx) => (
+                                      <div key={p.id || idx} className="text-[11px]">
+                                        <span className="text-slate-400 font-bold block text-[10px]">Product {p.product_number || idx + 1}</span>
+                                        <span className="text-slate-700">{p.innovation_domain || "Open Innovation"}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  team.innovation_domain
+                                )}
+                              </td>
                               <td className="px-5 py-4 whitespace-nowrap">
-                                {team.trl_level !== null && team.trl_level !== undefined ? (
+                                {team.products && team.products.length > 1 ? (
+                                  <div className="space-y-1.5">
+                                    {team.products.map((p, idx) => (
+                                      <div key={p.id || idx}>
+                                        <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-bold text-amber-700 ring-1 ring-amber-600/20 block text-center">
+                                          P{p.product_number || idx + 1}: TRL {p.trl_level ?? 'N/A'}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : team.trl_level !== null && team.trl_level !== undefined ? (
                                   <span className="rounded-md bg-amber-50 px-2.5 py-1 text-xs font-bold text-amber-700 ring-1 ring-amber-600/20">
                                     TRL {team.trl_level}
                                   </span>
@@ -3790,6 +3917,9 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
                   profile={profile}
                   apiBaseUrl={API_BASE_URL}
                   onShowToast={handleShowToast}
+                  initialRegisteredTeams={stats.totalRegistrations || 0}
+                  initialEligibleTeams={stats.totalTeams || 0}
+                  initialProductsCount={stats.totalProducts || 0}
                 />
               )}
 
@@ -3902,7 +4032,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
                   {selectedColumns.size} {selectedColumns.size === 1 ? 'column' : 'columns'} selected
                 </span>
                 <span className="text-[11px] font-medium text-slate-500 block mt-0.5">
-                  {filteredRegistrations.length} {filteredRegistrations.length === 1 ? 'registration' : 'registrations'} to download
+                  {filteredRegistrations.length} {filteredRegistrations.length === 1 ? 'team' : 'teams'} to download
                 </span>
               </div>
 

@@ -208,7 +208,16 @@ async function safeFetchJson(url, options = {}) {
   }
 }
 
-export default function AdminVotingManagement({ token, user, profile, onShowToast, apiBaseUrl }) {
+export default function AdminVotingManagement({
+  token,
+  user,
+  profile,
+  onShowToast,
+  apiBaseUrl,
+  initialRegisteredTeams = 0,
+  initialEligibleTeams = 0,
+  initialProductsCount = 0
+}) {
   // Centralized API Base URL resolution (local vs production)
   const rawApiUrl = (apiBaseUrl || import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000').trim().replace(/\/+$/, '');
   const API_BASE_URL = rawApiUrl.endsWith('/api') ? rawApiUrl.slice(0, -4) : rawApiUrl;
@@ -247,12 +256,25 @@ export default function AdminVotingManagement({ token, user, profile, onShowToas
     votesPerMinute: 0,
     duplicateAttemptsBlocked: 0,
     teamsWithVotes: 0,
-    totalProducts: 292,
-    totalEligibleTeams: 288,
+    totalRegisteredTeams: initialRegisteredTeams,
+    totalEligibleTeams: initialEligibleTeams,
+    totalProducts: initialProductsCount,
     lastVoteAt: null,
     isVotingActive: false,
     isQrGenerationActive: false
   });
+
+  // Sync props if parent provides initial/updated counts
+  useEffect(() => {
+    if (initialRegisteredTeams || initialEligibleTeams || initialProductsCount) {
+      setMetrics(prev => ({
+        ...prev,
+        totalRegisteredTeams: initialRegisteredTeams || prev.totalRegisteredTeams,
+        totalEligibleTeams: initialEligibleTeams || prev.totalEligibleTeams,
+        totalProducts: initialProductsCount || prev.totalProducts,
+      }));
+    }
+  }, [initialRegisteredTeams, initialEligibleTeams, initialProductsCount]);
   const [loadingMetrics, setLoadingMetrics] = useState(true);
   const [updatingControls, setUpdatingControls] = useState(false);
   const [fetchError, setFetchError] = useState(null);
@@ -319,8 +341,9 @@ export default function AdminVotingManagement({ token, user, profile, onShowToas
           votesPerMinute: data.metrics.votesPerMinute || 0,
           duplicateAttemptsBlocked: data.metrics.duplicateAttemptsBlocked || 0,
           teamsWithVotes: data.metrics.teamsWithVotes || 0,
-          totalProducts: data.metrics.totalProducts || 292,
-          totalEligibleTeams: data.metrics.totalEligibleTeams || 288,
+          totalRegisteredTeams: typeof data.metrics.totalRegisteredTeams === 'number' ? data.metrics.totalRegisteredTeams : prev.totalRegisteredTeams,
+          totalEligibleTeams: typeof data.metrics.totalEligibleTeams === 'number' ? data.metrics.totalEligibleTeams : prev.totalEligibleTeams,
+          totalProducts: typeof data.metrics.totalProducts === 'number' ? data.metrics.totalProducts : prev.totalProducts,
           lastVoteAt: data.metrics.lastVoteAt || null,
           isVotingActive: ctrlData ? Boolean(ctrlData.is_voting_active) : Boolean(data.metrics.isVotingActive),
           isQrGenerationActive: ctrlData ? Boolean(ctrlData.is_qr_generation_active) : Boolean(data.metrics.isQrGenerationActive)
@@ -743,26 +766,32 @@ export default function AdminVotingManagement({ token, user, profile, onShowToas
               <Clock size={16} className="text-primary" /> Quick Statistics
             </h4>
 
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-100 space-y-1">
+                <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Total Registered</span>
+                <p className="text-xl sm:text-2xl font-black text-[#0B1B3A]">{metrics.totalRegisteredTeams}</p>
+                <p className="text-[10px] text-slate-400">Raw registration forms</p>
+              </div>
+
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-100 space-y-1">
+                <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Eligible Teams</span>
+                <p className="text-xl sm:text-2xl font-black text-[#0B1B3A]">{metrics.totalEligibleTeams}</p>
+                <p className="text-[10px] text-slate-400">Distinct normalized teams</p>
+              </div>
+
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-100 space-y-1">
+                <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Products / Ideas</span>
+                <p className="text-xl sm:text-2xl font-black text-[#0B1B3A]">{metrics.totalProducts}</p>
+                <p className="text-[10px] text-slate-400">Active project submissions</p>
+              </div>
+
               <div className="p-4 rounded-xl bg-slate-50 border border-slate-100 space-y-1">
                 <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Teams With Votes</span>
                 <p className="text-xl sm:text-2xl font-black text-[#0B1B3A]">{metrics.teamsWithVotes}</p>
                 <p className="text-[10px] text-slate-400">Teams received &ge; 1 vote</p>
               </div>
 
-              <div className="p-4 rounded-xl bg-slate-50 border border-slate-100 space-y-1">
-                <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Total Products</span>
-                <p className="text-xl sm:text-2xl font-black text-[#0B1B3A]">{metrics.totalProducts}</p>
-                <p className="text-[10px] text-slate-400">Active project submissions</p>
-              </div>
-
-              <div className="p-4 rounded-xl bg-slate-50 border border-slate-100 space-y-1">
-                <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Total Eligible Teams</span>
-                <p className="text-xl sm:text-2xl font-black text-[#0B1B3A]">{metrics.totalEligibleTeams}</p>
-                <p className="text-[10px] text-slate-400">Verified participant teams</p>
-              </div>
-
-              <div className="p-4 rounded-xl bg-slate-50 border border-slate-100 space-y-1">
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-100 space-y-1 col-span-2 sm:col-span-1">
                 <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Last Vote</span>
                 <p className="text-sm font-bold text-slate-900 truncate">
                   {metrics.lastVoteAt ? new Date(metrics.lastVoteAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'No votes yet'}

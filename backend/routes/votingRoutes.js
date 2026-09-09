@@ -1681,19 +1681,21 @@ router.get('/admin/metrics', authenticateUser, checkAdmin, async (req, res) => {
       }
     }
 
-    // Total products & eligible teams
+    // Total registered teams, eligible teams & products
     let totalProducts = 0;
     let totalEligibleTeams = 0;
+    let totalRegisteredTeams = 0;
     try {
-      const [{ count: tCount }, { count: pCount }] = await Promise.all([
+      const [{ count: tCount }, { count: pCount }, { count: rCount }] = await Promise.all([
         supabase.from('teams').select('*', { count: 'exact', head: true }),
+        supabase.from('products').select('*', { count: 'exact', head: true }).or('status.eq.active,status.is.null'),
         supabase.from('registrations').select('*', { count: 'exact', head: true })
       ]);
-      totalEligibleTeams = tCount || 0;
-      totalProducts = pCount || totalEligibleTeams;
+      totalEligibleTeams = typeof tCount === 'number' ? tCount : 0;
+      totalProducts = typeof pCount === 'number' ? pCount : 0;
+      totalRegisteredTeams = typeof rCount === 'number' ? rCount : 0;
     } catch (e) {
-      totalEligibleTeams = 288;
-      totalProducts = 292;
+      console.warn('[Voting API] /admin/metrics count query error:', e.message);
     }
 
     // Votes in the last 60s
@@ -1712,8 +1714,9 @@ router.get('/admin/metrics', authenticateUser, checkAdmin, async (req, res) => {
         votesPerMinute: votesLastMinute,
         duplicateAttemptsBlocked: metrics.duplicateAttemptsBlocked,
         teamsWithVotes,
-        totalProducts,
+        totalRegisteredTeams,
         totalEligibleTeams,
+        totalProducts,
         lastVoteAt,
         isVotingActive: controls?.is_voting_active || false,
         isQrGenerationActive: controls?.is_qr_generation_active || false,
@@ -2236,7 +2239,7 @@ async function getAllVotingRecords() {
   ] = await Promise.all([
     supabase.from('teams').select('id, team_name'),
     supabase.from('registrations').select('id, registration_id, team_name, leader_name, leader_email, leader_department, project_title'),
-    supabase.from('products').select('team_id, product_title, innovation_domain'),
+    supabase.from('products').select('id, team_id, product_title, innovation_domain, status'),
     supabase.from('profiles').select('user_id, name, email, department')
   ]);
 
@@ -2270,7 +2273,8 @@ async function getAllVotingRecords() {
     prodByTeamId,
     profileMap,
     teams: teamsData || [],
-    registrations: regsData || []
+    registrations: regsData || [],
+    products: prodsData || []
   };
 }
 
@@ -2457,7 +2461,7 @@ router.get(['/admin/export-data', '/admin/export-binary'], authenticateUser, che
     if (req.path.includes('export-binary')) {
       format = 'xlsx';
     }
-    const { votes, teamMap, regByTeamName, prodByTeamId, profileMap, teams, registrations } = await getAllVotingRecords();
+    const { votes, teamMap, regByTeamName, prodByTeamId, profileMap, teams, registrations, products } = await getAllVotingRecords();
     const controls = readLocalVotingControls();
 
     const { workbook, sheetData } = buildVotingWorkbook({
@@ -2466,7 +2470,7 @@ router.get(['/admin/export-data', '/admin/export-binary'], authenticateUser, che
         activeVoters: new Set(votes.map(v => v.voter_user_id)).size,
         teamsWithVotes: new Set(votes.map(v => v.team_id)).size,
         totalEligibleTeams: teams.length || registrations.length,
-        totalProducts: prodByTeamId.size || 0,
+        totalProducts: (products || []).filter(p => p.status === 'active' || !p.status).length,
         isVotingActive: controls.is_voting_active,
         isQrActive: controls.is_qr_generation_active,
         votesPerMinute: metrics.voteTimestamps ? metrics.voteTimestamps.length : 0,
@@ -2523,7 +2527,7 @@ router.get(['/admin/export-data', '/admin/export-binary'], authenticateUser, che
 router.post('/admin/export-upload-drive', authenticateUser, checkAdmin, async (req, res) => {
   try {
     const { type = 'complete' } = req.body;
-    const { votes, teamMap, regByTeamName, prodByTeamId, profileMap, teams, registrations } = await getAllVotingRecords();
+    const { votes, teamMap, regByTeamName, prodByTeamId, profileMap, teams, registrations, products } = await getAllVotingRecords();
     const controls = readLocalVotingControls();
 
     const { workbook } = buildVotingWorkbook({
@@ -2532,7 +2536,7 @@ router.post('/admin/export-upload-drive', authenticateUser, checkAdmin, async (r
         activeVoters: new Set(votes.map(v => v.voter_user_id)).size,
         teamsWithVotes: new Set(votes.map(v => v.team_id)).size,
         totalEligibleTeams: teams.length || registrations.length,
-        totalProducts: prodByTeamId.size || 0,
+        totalProducts: (products || []).filter(p => p.status === 'active' || !p.status).length,
         isVotingActive: controls.is_voting_active,
         isQrActive: controls.is_qr_generation_active,
         votesPerMinute: metrics.voteTimestamps ? metrics.voteTimestamps.length : 0,
