@@ -601,7 +601,7 @@ export default function IpTypeFinder({
                 Proceed With Your Selected Category:
               </span>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className={`grid grid-cols-1 ${!isSoftware ? 'sm:grid-cols-3' : 'sm:grid-cols-2'} gap-3`}>
                 {/* Utility Patent Button */}
                 <button
                   type="button"
@@ -669,6 +669,36 @@ export default function IpTypeFinder({
                   </div>
                   <ChevronRight size={16} className="shrink-0" />
                 </button>
+
+                {/* Both Patent Button (Hardware Only) */}
+                {!isSoftware && (
+                  <button
+                    type="button"
+                    onClick={() => handleApplyPatentType("Both")}
+                    className={`p-3.5 rounded-xl border text-left font-black transition-all cursor-pointer flex items-center justify-between gap-3 shadow-sm ${
+                      selectedPatentType === "Both"
+                        ? "bg-purple-600 text-white border-purple-700 ring-2 ring-purple-500/20"
+                        : "bg-white hover:bg-slate-50 text-slate-800 border-slate-300"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span className="text-lg">🔐</span>
+                      <div className="min-w-0">
+                        <span className="text-xs sm:text-sm block truncate">
+                          Continue with Both
+                        </span>
+                        <span
+                          className={`text-[10px] block font-bold ${selectedPatentType === "Both" ? "text-white/80" : "text-slate-500"}`}
+                        >
+                          {recommendation.resultType === "BOTH"
+                            ? "★ Recommended dual protection"
+                            : "Utility + Design (Dual track)"}
+                        </span>
+                      </div>
+                    </div>
+                    <ChevronRight size={16} className="shrink-0" />
+                  </button>
+                )}
               </div>
             </div>
           </div>

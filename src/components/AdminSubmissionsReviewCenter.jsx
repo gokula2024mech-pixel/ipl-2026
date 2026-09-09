@@ -12,6 +12,7 @@ import {
   RotateCcw,
   Sparkles,
   ChevronRight,
+  ChevronLeft,
   Calendar,
   Building,
   User,
@@ -110,6 +111,10 @@ export default function AdminSubmissionsReviewCenter({
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false);
+
+  // State: Pagination
+  const [currentPage, setCurrentPage] = useState(1);
+  const ITEMS_PER_PAGE = 10;
 
   // State: Modals
   const [approveModalSub, setApproveModalSub] = useState(null);
@@ -322,6 +327,61 @@ export default function AdminSubmissionsReviewCenter({
     setStartDate("");
     setEndDate("");
     setSearchQuery("");
+    setCurrentPage(1);
+  };
+
+  // Reset pagination to page 1 whenever tab, search, or filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [
+    activeStatusTab,
+    searchQuery,
+    patentTypeFilter,
+    departmentFilter,
+    domainFilter,
+    mentorFilter,
+    trlFilter,
+    dateFilter,
+    startDate,
+    endDate,
+  ]);
+
+  // Paginated dataset (10 submissions per page)
+  const totalSubmissions = submissions.length;
+  const totalPages = Math.max(1, Math.ceil(totalSubmissions / ITEMS_PER_PAGE));
+  const safeCurrentPage = Math.min(Math.max(1, currentPage), totalPages);
+
+  const paginatedSubmissions = useMemo(() => {
+    const startIndex = (safeCurrentPage - 1) * ITEMS_PER_PAGE;
+    return submissions.slice(startIndex, startIndex + ITEMS_PER_PAGE);
+  }, [submissions, safeCurrentPage]);
+
+  const startIndexDisplay = totalSubmissions === 0 ? 0 : (safeCurrentPage - 1) * ITEMS_PER_PAGE + 1;
+  const endIndexDisplay = Math.min(safeCurrentPage * ITEMS_PER_PAGE, totalSubmissions);
+
+  const getVisiblePages = (current, total) => {
+    if (total <= 7) {
+      return Array.from({ length: total }, (_, i) => i + 1);
+    }
+    const pages = [];
+    if (current <= 4) {
+      for (let i = 1; i <= 5; i++) pages.push(i);
+      pages.push("...");
+      pages.push(total);
+    } else if (current >= total - 3) {
+      pages.push(1);
+      pages.push("...");
+      for (let i = total - 4; i <= total; i++) pages.push(i);
+    } else {
+      pages.push(1);
+      pages.push("...");
+      pages.push(current - 1);
+      pages.push(current);
+      pages.push(current + 1);
+      pages.push("...");
+      pages.push(total);
+    }
+    return pages;
   };
 
   // Open Document Logic
@@ -942,7 +1002,7 @@ export default function AdminSubmissionsReviewCenter({
                       Patent Type
                     </span>
                     <strong className="text-slate-900 block truncate mt-0.5">
-                      {selectedSubmission.patentType}
+                      {selectedSubmission.patentType === "Both" ? "Both (Utility + Design)" : selectedSubmission.patentType}
                     </strong>
                   </div>
                   <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
@@ -993,7 +1053,7 @@ export default function AdminSubmissionsReviewCenter({
                   <div className="p-4 bg-amber-50 border border-amber-300 rounded-xl space-y-2 shadow-xs">
                     <div className="flex items-center gap-2 text-amber-900 font-black text-xs uppercase tracking-wider">
                       <Clock size={16} className="text-amber-600 shrink-0" />
-                      <span>Incomplete Submission ({selectedSubmission.uploadedCount || (selectedSubmission.documents || []).filter(d => d.status === "SUBMITTED").length} of {selectedSubmission.requiredCount || (selectedSubmission.patentType === "Design Patent" ? 2 : 4)} Required Documents Uploaded)</span>
+                      <span>Incomplete Submission ({(selectedSubmission.uploadedCount ?? (selectedSubmission.documents || []).filter(d => d.status === "SUBMITTED").length)} of {(selectedSubmission.requiredCount ?? (selectedSubmission.patentType === "Both" ? 6 : selectedSubmission.patentType === "Design Patent" ? 2 : 4))} Required Documents Uploaded)</span>
                     </div>
                     <p className="text-xs font-semibold text-amber-800 leading-relaxed">
                       All required documents must be uploaded by the team before this submission can be reviewed or evaluated by administrators.
@@ -1043,10 +1103,9 @@ export default function AdminSubmissionsReviewCenter({
                   </p>
                 </div>
 
-                <div className="space-y-3">
-                  {(selectedSubmission.documents || []).map((doc, idx) => {
+                {(() => {
+                  const renderDocCard = (doc, idx) => {
                     const isSubmitted = doc.status === "SUBMITTED";
-
                     return (
                       <div
                         key={doc.id || idx}
@@ -1098,8 +1157,91 @@ export default function AdminSubmissionsReviewCenter({
                         )}
                       </div>
                     );
-                  })}
-                </div>
+                  };
+
+                  const renderDocTracks = (patentType, utilityDocs, designDocs, allDocs) => {
+                    if (patentType === "Both") {
+                      const uDocs = utilityDocs?.length
+                        ? utilityDocs
+                        : (allDocs || []).filter(d => d.patentType === "Utility Patent");
+                      const dDocs = designDocs?.length
+                        ? designDocs
+                        : (allDocs || []).filter(d => d.patentType === "Design Patent");
+
+                      return (
+                        <div className="space-y-6">
+                          {/* Track 1: Utility */}
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                              <span className="text-[11px] font-black uppercase tracking-wider text-indigo-700">
+                                Track 1: Utility Patent ({uDocs.filter(d => d.status === "SUBMITTED").length} / {uDocs.length || 4})
+                              </span>
+                            </div>
+                            <div className="space-y-3">
+                              {uDocs.map((doc, idx) => renderDocCard(doc, idx))}
+                            </div>
+                          </div>
+
+                          {/* Track 2: Design */}
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                              <span className="text-[11px] font-black uppercase tracking-wider text-violet-700">
+                                Track 2: Design Patent ({dDocs.filter(d => d.status === "SUBMITTED").length} / {dDocs.length || 2})
+                              </span>
+                            </div>
+                            <div className="space-y-3">
+                              {dDocs.map((doc, idx) => renderDocCard(doc, idx))}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div className="space-y-3">
+                        {(allDocs || []).map((doc, idx) => renderDocCard(doc, idx))}
+                      </div>
+                    );
+                  };
+
+                  if (selectedSubmission.products && selectedSubmission.products.length > 1) {
+                    return (
+                      <div className="space-y-6">
+                        {selectedSubmission.products.map((prod) => (
+                          <div key={prod.id} className="border border-slate-200 rounded-xl p-4 bg-slate-50/50 space-y-4">
+                            <div className="flex items-center justify-between border-b border-slate-200 pb-2.5">
+                              <div>
+                                <span className="text-[10px] font-black uppercase tracking-wider text-indigo-600 block">
+                                  Product {prod.productNumber}
+                                </span>
+                                <h4 className="text-sm font-bold text-slate-900 leading-snug">
+                                  {prod.title || `Product ${prod.productNumber}`}
+                                </h4>
+                              </div>
+                              <div className="text-right shrink-0">
+                                <span className={`text-[10px] font-black uppercase px-2.5 py-1 rounded-full border ${
+                                  prod.isComplete
+                                    ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                    : "bg-amber-50 text-amber-700 border-amber-200"
+                                }`}>
+                                  {prod.isComplete ? "Complete" : "Incomplete"} ({prod.uploadedCount}/{prod.requiredCount})
+                                </span>
+                              </div>
+                            </div>
+                            {renderDocTracks(prod.patentType, prod.utilityDocs, prod.designDocs, prod.documents)}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  }
+
+                  return renderDocTracks(
+                    selectedSubmission.patentType,
+                    selectedSubmission.utilityDocs,
+                    selectedSubmission.designDocs,
+                    selectedSubmission.documents
+                  );
+                })()}
               </div>
             </div>
           </div>
@@ -1221,6 +1363,7 @@ export default function AdminSubmissionsReviewCenter({
                     <option value="ALL">All Patent Types</option>
                     <option value="Utility Patent">Utility Patent</option>
                     <option value="Design Patent">Design Patent</option>
+                    <option value="Both">Both (Utility + Design)</option>
                   </select>
                 </div>
 
@@ -1438,148 +1581,226 @@ export default function AdminSubmissionsReviewCenter({
             /* ========================================================================= */
             /* 4. RESPONSIVE SUBMISSION CARDS GRID (NO HORIZONTAL SCROLLING) */
             /* ========================================================================= */
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              {submissions.map((sub, index) => {
-                const isPending = sub.status === "PENDING";
-                const isApproved = sub.status === "APPROVED";
-                const isRejected = sub.status === "REJECTED";
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                {paginatedSubmissions.map((sub, index) => {
+                  const isPending = sub.status === "PENDING";
+                  const isApproved = sub.status === "APPROVED";
+                  const isRejected = sub.status === "REJECTED";
 
-                return (
-                  <div
-                    key={sub.teamId}
-                    style={{ animationDelay: `${index * 40}ms` }}
-                    className="group bg-white rounded-2xl border border-slate-200 hover:border-slate-300 p-5 shadow-xs hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 flex flex-col justify-between space-y-4"
-                  >
-                    <div className="space-y-3">
-                      {/* Top Header Row */}
-                      <div className="flex items-start justify-between gap-2 border-b border-slate-100 pb-2.5">
-                        <div className="min-w-0">
-                          <span className="font-mono text-[11px] font-black text-accent block">
-                            {sub.teamId}
-                          </span>
-                          <h3 className="text-sm font-black text-slate-900 truncate">
-                            {sub.teamName}
-                          </h3>
+                  return (
+                    <div
+                      key={sub.teamId}
+                      style={{ animationDelay: `${index * 40}ms` }}
+                      className="group bg-white rounded-2xl border border-slate-200 hover:border-slate-300 p-5 shadow-xs hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 flex flex-col justify-between space-y-4"
+                    >
+                      <div className="space-y-3">
+                        {/* Top Header Row */}
+                        <div className="flex items-start justify-between gap-2 border-b border-slate-100 pb-2.5">
+                          <div className="min-w-0">
+                            <span className="font-mono text-[11px] font-black text-accent block">
+                              {sub.teamId}
+                            </span>
+                            <h3 className="text-sm font-black text-slate-900 truncate">
+                              {sub.teamName}
+                            </h3>
+                          </div>
+                          {renderStatusBadge(sub.status, "small")}
                         </div>
-                        {renderStatusBadge(sub.status, "small")}
-                      </div>
 
-                      {/* Product Title */}
-                      <div>
-                        <h4 className="text-xs sm:text-sm font-extrabold text-slate-800 leading-snug line-clamp-2">
-                          {sub.productTitle}
-                        </h4>
-                      </div>
-
-                      {/* Meta Information Tags */}
-                      <div className="flex flex-wrap gap-1.5 text-[10px] font-bold">
-                        <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md truncate max-w-[180px]">
-                          {sub.department}
-                        </span>
-                        <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md">
-                          {sub.patentType}
-                        </span>
-                        <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md">
-                          TRL {sub.trl}
-                        </span>
-                        <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md truncate max-w-[180px]">
-                          Mentor: {sub.mentor?.name}
-                        </span>
-                        <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md">
-                          {sub.submissionDate
-                            ? new Date(sub.submissionDate).toLocaleDateString()
-                            : ""}
-                        </span>
-                      </div>
-
-                      {/* Documents Submitted Summary */}
-                      <div className="text-[11px] text-slate-500 font-semibold flex items-center justify-between pt-1">
-                        <span>
-                          Documents:{" "}
-                          <strong className="text-slate-800">
-                            {
-                              (sub.documents || []).filter(
-                                (d) => d.status === "SUBMITTED"
-                              ).length
-                            }
-                          </strong>{" "}
-                          / {sub.documents?.length || 0}
-                        </span>
-                        {sub.status !== "PENDING" && sub.adminComment && (
-                          <span className="text-accent font-bold truncate max-w-[150px]">
-                            Comment added
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Action Buttons Footer */}
-                    <div className="pt-3 border-t border-slate-100 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setSelectedSubmission(sub)}
-                        className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-black bg-slate-100 hover:bg-slate-900 hover:text-white text-slate-800 transition-colors cursor-pointer"
-                      >
-                        <span>View Submission</span>
-                        <ChevronRight size={13} />
-                      </button>
-
-                      {isPending ? (
-                        <div className="flex items-center gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setApproveModalSub(sub);
-                              setApproveComment("");
-                            }}
-                            className="flex-1 sm:flex-none px-3.5 py-2 rounded-xl text-xs font-black bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs transition cursor-pointer"
-                          >
-                            Approve
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setRejectModalSub(sub);
-                              setRejectComment("");
-                            }}
-                            className="flex-1 sm:flex-none px-3.5 py-2 rounded-xl text-xs font-black bg-rose-600 hover:bg-rose-700 text-white shadow-xs transition cursor-pointer"
-                          >
-                            Reject
-                          </button>
+                        {/* Product Title */}
+                        <div>
+                          <h4 className="text-xs sm:text-sm font-extrabold text-slate-800 leading-snug line-clamp-2">
+                            {sub.productTitle}
+                          </h4>
                         </div>
-                      ) : sub.status === "INCOMPLETE" ? (
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[11px] font-black uppercase tracking-wide text-amber-800 bg-amber-50 px-2.5 py-1 rounded-xl border border-amber-200/80 shadow-2xs">
-                            Missing Required Docs ({sub.uploadedCount || 0}/{sub.requiredCount || (sub.patentType === "Design Patent" ? 2 : 4)})
+
+                        {/* Meta Information Tags */}
+                        <div className="flex flex-wrap gap-1.5 text-[10px] font-bold">
+                          <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md truncate max-w-[180px]">
+                            {sub.department}
+                          </span>
+                          <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md">
+                            {sub.patentType === "Both" ? "Both (Utility + Design)" : sub.patentType}
+                          </span>
+                          <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md">
+                            TRL {sub.trl}
+                          </span>
+                          <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md truncate max-w-[180px]">
+                            Mentor: {sub.mentor?.name}
+                          </span>
+                          <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md">
+                            {sub.submissionDate
+                              ? new Date(sub.submissionDate).toLocaleDateString()
+                              : ""}
                           </span>
                         </div>
-                      ) : (
-                        <div className="flex flex-wrap items-center justify-end gap-2">
-                          <span className="text-[11px] font-black uppercase tracking-wide">
-                            {isApproved ? (
-                              <span className="text-emerald-700 inline-flex items-center gap-1">
-                                <CheckCircle2 size={13} /> APPROVED
-                              </span>
-                            ) : (
-                              <span className="text-rose-700 inline-flex items-center gap-1">
-                                <AlertTriangle size={13} /> REJECTED
+
+                        {/* Documents Submitted Summary */}
+                        <div className="text-[11px] text-slate-500 font-semibold flex items-center justify-between pt-1">
+                          <span>
+                            Documents:{" "}
+                            <strong className="text-slate-800">
+                              {sub.uploadedCount ?? (sub.documents || []).filter((d) => d.status === "SUBMITTED").length}
+                            </strong>{" "}
+                            / {sub.requiredCount ?? (sub.patentType === "Both" ? 6 : sub.patentType === "Design Patent" ? 2 : 4)}
+                            {sub.patentType === "Both" && sub.completion?.utility && sub.completion?.design && (
+                              <span className="text-[10px] text-slate-500 font-normal ml-1">
+                                (Util {sub.completion.utility.uploadedCount}/4, Des {sub.completion.design.uploadedCount}/2)
                               </span>
                             )}
                           </span>
-                          <button
-                            type="button"
-                            onClick={() => setChangeDecisionModalSub(sub)}
-                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-black bg-slate-100 hover:bg-slate-200 text-slate-700 transition cursor-pointer border border-slate-200/80 shadow-xs"
-                          >
-                            <RotateCcw size={12} className="text-slate-500" />
-                            <span>Change Decision</span>
-                          </button>
+                          {sub.status !== "PENDING" && sub.adminComment && (
+                            <span className="text-accent font-bold truncate max-w-[150px]">
+                              Comment added
+                            </span>
+                          )}
                         </div>
-                      )}
+
+                        {sub.products && sub.products.length > 1 && (
+                          <div className="flex flex-wrap gap-1.5 pt-1.5 border-t border-slate-100">
+                            {sub.products.map((p) => (
+                              <span
+                                key={p.id}
+                                className="inline-flex items-center gap-1 text-[10px] font-bold bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md"
+                              >
+                                <span>P{p.productNumber}:</span>
+                                <span className={p.isComplete ? "text-emerald-700" : "text-amber-700"}>
+                                  {p.uploadedCount}/{p.requiredCount}
+                                </span>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Action Buttons Footer */}
+                      <div className="pt-3 border-t border-slate-100 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedSubmission(sub)}
+                          className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-black bg-slate-100 hover:bg-slate-900 hover:text-white text-slate-800 transition-colors cursor-pointer"
+                        >
+                          <span>View Submission</span>
+                          <ChevronRight size={13} />
+                        </button>
+
+                        {isPending ? (
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setApproveModalSub(sub);
+                                setApproveComment("");
+                              }}
+                              className="flex-1 sm:flex-none px-3.5 py-2 rounded-xl text-xs font-black bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs transition cursor-pointer"
+                            >
+                              Approve
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setRejectModalSub(sub);
+                                setRejectComment("");
+                              }}
+                              className="flex-1 sm:flex-none px-3.5 py-2 rounded-xl text-xs font-black bg-rose-600 hover:bg-rose-700 text-white shadow-xs transition cursor-pointer"
+                            >
+                              Reject
+                            </button>
+                          </div>
+                        ) : sub.status === "INCOMPLETE" ? (
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[11px] font-black uppercase tracking-wide text-amber-800 bg-amber-50 px-2.5 py-1 rounded-xl border border-amber-200/80 shadow-2xs">
+                              Missing Required Docs ({(sub.uploadedCount ?? 0)}/{(sub.requiredCount ?? (sub.patentType === "Both" ? 6 : sub.patentType === "Design Patent" ? 2 : 4))})
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="flex flex-wrap items-center justify-end gap-2">
+                            <span className="text-[11px] font-black uppercase tracking-wide">
+                              {isApproved ? (
+                                <span className="text-emerald-700 inline-flex items-center gap-1">
+                                  <CheckCircle2 size={13} /> APPROVED
+                                </span>
+                              ) : (
+                                <span className="text-rose-700 inline-flex items-center gap-1">
+                                  <AlertTriangle size={13} /> REJECTED
+                                </span>
+                              )}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setChangeDecisionModalSub(sub)}
+                              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-black bg-slate-100 hover:bg-slate-200 text-slate-700 transition cursor-pointer border border-slate-200/80 shadow-xs"
+                            >
+                              <RotateCcw size={12} className="text-slate-500" />
+                              <span>Change Decision</span>
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </div>
+                  );
+                })}
+              </div>
+
+              {/* Pagination Controls */}
+              {totalSubmissions > 0 && (
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 pb-2 border-t border-slate-200/80 bg-white/80 p-4 rounded-2xl shadow-2xs">
+                  <div className="text-xs font-bold text-slate-600">
+                    Showing <span className="font-mono text-slate-900 font-black">{startIndexDisplay}</span>–<span className="font-mono text-slate-900 font-black">{endIndexDisplay}</span> of <span className="font-mono text-slate-900 font-black">{totalSubmissions}</span> submissions
                   </div>
-                );
-              })}
+
+                  <div className="flex items-center gap-1.5 flex-wrap justify-center">
+                    <button
+                      type="button"
+                      disabled={safeCurrentPage <= 1}
+                      onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                      className="inline-flex items-center justify-center gap-1 px-3 py-1.5 min-h-[36px] rounded-xl text-xs font-bold border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 disabled:opacity-40 disabled:pointer-events-none transition shadow-2xs cursor-pointer"
+                    >
+                      <ChevronLeft size={14} />
+                      <span>Previous</span>
+                    </button>
+
+                    {getVisiblePages(safeCurrentPage, totalPages).map((p, pIdx) => {
+                      if (p === "...") {
+                        return (
+                          <span
+                            key={`dots-${pIdx}`}
+                            className="inline-flex items-center justify-center min-w-[32px] min-h-[36px] px-1 text-xs font-bold text-slate-400 select-none"
+                          >
+                            ...
+                          </span>
+                        );
+                      }
+                      const isCurrent = p === safeCurrentPage;
+                      return (
+                        <button
+                          key={p}
+                          type="button"
+                          onClick={() => setCurrentPage(p)}
+                          className={`inline-flex items-center justify-center min-w-[36px] min-h-[36px] px-2.5 rounded-xl text-xs font-black transition cursor-pointer ${
+                            isCurrent
+                              ? "bg-slate-900 text-white shadow-xs"
+                              : "border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 shadow-2xs"
+                          }`}
+                        >
+                          {p}
+                        </button>
+                      );
+                    })}
+
+                    <button
+                      type="button"
+                      disabled={safeCurrentPage >= totalPages}
+                      onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                      className="inline-flex items-center justify-center gap-1 px-3 py-1.5 min-h-[36px] rounded-xl text-xs font-bold border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 disabled:opacity-40 disabled:pointer-events-none transition shadow-2xs cursor-pointer"
+                    >
+                      <span>Next</span>
+                      <ChevronRight size={14} />
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

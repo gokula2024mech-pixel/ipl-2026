@@ -456,48 +456,37 @@ router.post('/phase1/upload', authenticateUser, checkPhase1Active, (req, res) =>
 
       // Update/Upsert metadata database record
       let effectiveDocType = documentType;
+      const baseSubPayload = {
+        team_id: team.id,
+        registration_id: registrationId,
+        team_name: reg.team_name,
+        document_type: effectiveDocType,
+        original_filename: file.originalname,
+        google_drive_file_id: driveFile.id,
+        google_drive_folder_id: teamFolderId,
+        uploaded_by: req.user.email,
+        uploaded_at: new Date().toISOString(),
+        review_status: 'UPLOADED',
+        rejection_reason: null,
+        template_version_used: templateVersionUsed,
+        updated_at: new Date().toISOString()
+      };
+
+      // Try post-Stage 12 first (with patent_type: 'Utility Patent')
       let { data: submission, error: insErr } = await supabase
         .from('phase1_submissions')
         .upsert({
-          team_id: team.id,
-          registration_id: registrationId,
-          team_name: reg.team_name,
-          document_type: effectiveDocType,
-          original_filename: file.originalname,
-          google_drive_file_id: driveFile.id,
-          google_drive_folder_id: teamFolderId,
-          uploaded_by: req.user.email,
-          uploaded_at: new Date().toISOString(),
-          review_status: 'UPLOADED',
-          rejection_reason: null,
-          template_version_used: templateVersionUsed,
-          updated_at: new Date().toISOString()
+          ...baseSubPayload,
+          patent_type: 'Utility Patent'
         })
         .select()
-        .single()
+        .single();
 
-      if (insErr && (insErr.code === '23514' || insErr.message?.includes('chk_submission_document_type'))) {
-        if (documentType === 'NOVELTY_FORM') effectiveDocType = 'FORM_2';
-        else if (documentType === 'REPRESENTATION_SHEET') effectiveDocType = 'FORM_5';
-        else effectiveDocType = 'FORM_2';
-
+      // If patent_type column does not exist yet (pre-Stage 12), fall back to base payload
+      if (insErr && (insErr.code === '42703' || insErr.message?.includes('patent_type'))) {
         const retry = await supabase
           .from('phase1_submissions')
-          .upsert({
-            team_id: team.id,
-            registration_id: registrationId,
-            team_name: reg.team_name,
-            document_type: effectiveDocType,
-            original_filename: file.originalname,
-            google_drive_file_id: driveFile.id,
-            google_drive_folder_id: teamFolderId,
-            uploaded_by: req.user.email,
-            uploaded_at: new Date().toISOString(),
-            review_status: 'UPLOADED',
-            rejection_reason: null,
-            template_version_used: templateVersionUsed,
-            updated_at: new Date().toISOString()
-          })
+          .upsert(baseSubPayload)
           .select()
           .single();
         submission = retry.data;
@@ -775,6 +764,104 @@ function writeLocalDecisions(decisions) {
   }
 }
 
+function buildChecklistForDocs(docsList, regId) {
+  const comp = calculatePhase1Completion(docsList);
+  const detectedType = comp.patentType;
+  let docs = [];
+  let utilityDocs = [];
+  let designDocs = [];
+
+  if (detectedType === 'Both') {
+    utilityDocs = UTILITY_TEMPLATES.map((tmpl, index) => {
+      const match = docsList.find(d => {
+        const pt = d.patent_type || d.patentType;
+        if (pt && pt !== 'Utility Patent') return false;
+        return matchesSlot(d, tmpl);
+      });
+      return {
+        id: match ? match.id : `missing-${regId}-util-${tmpl.type}`,
+        slotNumber: String(index + 1).padStart(2, '0'),
+        name: match?.original_filename || tmpl.name,
+        templateName: tmpl.name,
+        documentType: tmpl.type,
+        patentType: 'Utility Patent',
+        status: match ? 'SUBMITTED' : 'NOT SUBMITTED',
+        fileId: match?.google_drive_file_id || null,
+        webViewLink: match?.google_drive_file_id
+          ? `https://drive.google.com/file/d/${match.google_drive_file_id}/view`
+          : null,
+        uploadedAt: match?.uploaded_at || null
+      };
+    });
+
+    designDocs = DESIGN_TEMPLATES.map((tmpl, index) => {
+      const match = docsList.find(d => {
+        const pt = d.patent_type || d.patentType;
+        if (pt && pt !== 'Design Patent') return false;
+        return matchesSlot(d, tmpl);
+      });
+      return {
+        id: match ? match.id : `missing-${regId}-des-${tmpl.type}`,
+        slotNumber: String(index + 1).padStart(2, '0'),
+        name: match?.original_filename || tmpl.name,
+        templateName: tmpl.name,
+        documentType: tmpl.type,
+        patentType: 'Design Patent',
+        status: match ? 'SUBMITTED' : 'NOT SUBMITTED',
+        fileId: match?.google_drive_file_id || null,
+        webViewLink: match?.google_drive_file_id
+          ? `https://drive.google.com/file/d/${match.google_drive_file_id}/view`
+          : null,
+        uploadedAt: match?.uploaded_at || null
+      };
+    });
+
+    docs = [...utilityDocs, ...designDocs];
+  } else {
+    const expectedTemplates = detectedType === 'Design Patent' ? DESIGN_TEMPLATES : UTILITY_TEMPLATES;
+    docs = expectedTemplates.map((tmpl, index) => {
+      const match = docsList.find(d => matchesSlot(d, tmpl));
+      return {
+        id: match ? match.id : `missing-${regId}-${tmpl.type}`,
+        slotNumber: String(index + 1).padStart(2, '0'),
+        name: match?.original_filename || tmpl.name,
+        templateName: tmpl.name,
+        documentType: tmpl.type,
+        patentType: detectedType,
+        status: match ? 'SUBMITTED' : 'NOT SUBMITTED',
+        fileId: match?.google_drive_file_id || null,
+        webViewLink: match?.google_drive_file_id
+          ? `https://drive.google.com/file/d/${match.google_drive_file_id}/view`
+          : null,
+        uploadedAt: match?.uploaded_at || null
+      };
+    });
+  }
+
+  // Also append any extra documents uploaded that didn't match canonical slots
+  docsList.forEach((d, extraIdx) => {
+    const alreadyIncluded = docs.some(doc => doc.id === d.id);
+    if (!alreadyIncluded) {
+      docs.push({
+        id: d.id,
+        slotNumber: String(docs.length + 1).padStart(2, '0'),
+        name: d.original_filename,
+        templateName: d.original_filename,
+        documentType: d.document_type,
+        patentType: d.patent_type || detectedType,
+        status: 'SUBMITTED',
+        fileId: d.google_drive_file_id,
+        webViewLink: d.google_drive_file_id
+          ? `https://drive.google.com/file/d/${d.google_drive_file_id}/view`
+          : null,
+        uploadedAt: d.uploaded_at
+      });
+    }
+  });
+
+  return { docs, utilityDocs, designDocs, completion: comp, detectedPatentType: detectedType };
+}
+
 // 7. GET /api/phase1/admin/submissions
 // Aggregated team submissions query for Admin Review Center
 router.get('/phase1/admin/submissions', authenticateUser, checkAdmin, async (req, res) => {
@@ -839,7 +926,6 @@ router.get('/phase1/admin/submissions', authenticateUser, checkAdmin, async (req
       supabase
         .from('products')
         .select('*')
-        .in('legacy_registration_id', regIds)
     ]);
 
     const registrations = regsResult.data || [];
@@ -850,17 +936,49 @@ router.get('/phase1/admin/submissions', authenticateUser, checkAdmin, async (req
     const teamSubmissions = regIds.map(regId => {
       const teamDocs = allSubs.filter(s => s.registration_id === regId);
       const reg = registrations.find(r => r.registration_id === regId);
-      const prod = products.find(p => p.legacy_registration_id === regId || (reg && p.team_id === reg.id));
+      const teamProducts = products.filter(p => p.legacy_registration_id === regId || (reg && p.team_id === reg.id));
+      const prod = teamProducts[0] || null;
       const localDec = localDecisions[regId];
 
+      const productsWithDocs = teamProducts.map(p => {
+        const isChamelexP1 = regId === 'IPL26-0434' && p.product_number === 1;
+        const pDocs = teamDocs.filter(d => {
+          if (d.product_id) return d.product_id === p.id;
+          return teamProducts.length === 1 || isChamelexP1;
+        });
+        const pCheck = buildChecklistForDocs(pDocs, `${regId}-p${p.product_number}`);
+        return {
+          id: p.id,
+          productNumber: p.product_number,
+          title: p.product_title,
+          patentType: pCheck.detectedPatentType,
+          isComplete: pCheck.completion.isComplete,
+          uploadedCount: pCheck.completion.uploadedCount,
+          requiredCount: pCheck.completion.requiredCount,
+          documents: pCheck.docs,
+          utilityDocs: pCheck.utilityDocs,
+          designDocs: pCheck.designDocs,
+          completion: pCheck.completion
+        };
+      });
+
       // Dynamic completion calculation using authoritative phase1Completion module
-      const completion = calculatePhase1Completion(teamDocs);
-      const detectedPatentType = completion.patentType;
+      const isMultiProduct = teamProducts.length > 1;
+      const overallCheck = buildChecklistForDocs(teamDocs, regId);
+      const completion = overallCheck.completion;
+      const detectedPatentType = overallCheck.detectedPatentType;
+      const docs = overallCheck.docs;
+      const utilityDocs = overallCheck.utilityDocs;
+      const designDocs = overallCheck.designDocs;
 
       // Compute aggregate review status dynamically:
-      // Submissions missing required documents are strictly INCOMPLETE and cannot be reviewed
+      // If team has multiple products, every product must be complete; otherwise overall is INCOMPLETE
+      const isTeamComplete = isMultiProduct
+        ? (productsWithDocs.length > 0 && productsWithDocs.every(p => p.isComplete))
+        : completion.isComplete;
+
       let finalStatus = 'INCOMPLETE';
-      if (completion.isComplete) {
+      if (isTeamComplete) {
         if (localDec && localDec.status && ['APPROVED', 'REJECTED', 'PENDING'].includes(localDec.status)) {
           finalStatus = localDec.status;
         } else {
@@ -891,61 +1009,6 @@ router.get('/phase1/admin/submissions', authenticateUser, checkAdmin, async (req
 
       // Decision Seen
       const decisionSeen = localDec ? !!localDec.decisionSeen : teamDocs.every(d => d.decision_seen === true);
-
-      // Assemble document checklist based on patent type
-      const expectedTemplates = detectedPatentType === 'Design Patent' ? DESIGN_TEMPLATES : UTILITY_TEMPLATES;
-      const docs = expectedTemplates.map((tmpl, index) => {
-        // Find if this team uploaded a file matching this template slot
-        const match = teamDocs.find(d => matchesSlot(d, tmpl));
-
-        if (match) {
-          return {
-            id: match.id,
-            slotNumber: String(index + 1).padStart(2, '0'),
-            name: match.original_filename || tmpl.name,
-            templateName: tmpl.name,
-            documentType: match.document_type,
-            status: 'SUBMITTED',
-            fileId: match.google_drive_file_id,
-            webViewLink: match.google_drive_file_id
-              ? `https://drive.google.com/file/d/${match.google_drive_file_id}/view`
-              : null,
-            uploadedAt: match.uploaded_at
-          };
-        } else {
-          return {
-            id: `missing-${regId}-${tmpl.type}`,
-            slotNumber: String(index + 1).padStart(2, '0'),
-            name: tmpl.name,
-            templateName: tmpl.name,
-            documentType: tmpl.type,
-            status: 'NOT SUBMITTED',
-            fileId: null,
-            webViewLink: null,
-            uploadedAt: null
-          };
-        }
-      });
-
-      // Also append any extra documents uploaded that didn't match canonical slots
-      teamDocs.forEach((d, extraIdx) => {
-        const alreadyIncluded = docs.some(doc => doc.id === d.id);
-        if (!alreadyIncluded) {
-          docs.push({
-            id: d.id,
-            slotNumber: String(docs.length + 1).padStart(2, '0'),
-            name: d.original_filename,
-            templateName: d.original_filename,
-            documentType: d.document_type,
-            status: 'SUBMITTED',
-            fileId: d.google_drive_file_id,
-            webViewLink: d.google_drive_file_id
-              ? `https://drive.google.com/file/d/${d.google_drive_file_id}/view`
-              : null,
-            uploadedAt: d.uploaded_at
-          });
-        }
-      });
 
       // Resolve mentor
       const mentorObj = {
@@ -1007,10 +1070,14 @@ router.get('/phase1/admin/submissions', authenticateUser, checkAdmin, async (req
         uploadedCount: completion.uploadedCount,
         requiredCount: completion.requiredCount,
         missingSlots: completion.missingSlots.map(s => s.name),
+        completion,
+        utilityDocs,
+        designDocs,
         adminComment: comment,
         reviewedBy: finalReviewedBy,
         reviewedAt: finalReviewedAt,
         decisionSeen: decisionSeen,
+        products: productsWithDocs,
         documents: docs
       };
     });
@@ -1594,5 +1661,14 @@ router.post('/admin/leaderboard-config', authenticateUser, checkAdmin, async (re
     return res.status(500).json({ success: false, message: 'Failed to update leaderboard configuration.' });
   }
 });
+
+// Forwarding / alias routes for remove-file across /api/remove-file and /api/phase1/remove-file
+const patentRoutes = require('./patentRoutes');
+if (patentRoutes && patentRoutes.handleRemoveFile) {
+  router.post('/remove-file', patentRoutes.handleRemoveFile);
+  router.delete('/remove-file', patentRoutes.handleRemoveFile);
+  router.post('/phase1/remove-file', patentRoutes.handleRemoveFile);
+  router.delete('/phase1/remove-file', patentRoutes.handleRemoveFile);
+}
 
 module.exports = router

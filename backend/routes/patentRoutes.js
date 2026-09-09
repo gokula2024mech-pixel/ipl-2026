@@ -116,12 +116,97 @@ router.get('/templates/:templateId', async (req, res) => {
 })
 
 /**
+ * Authoritatively resolves and validates that a product belongs to the specified team registration.
+ * Ensures server-side isolation and resolves authoritative product details.
+ */
+async function resolveAndValidateProduct(teamRegistrationId, productId) {
+  if (!teamRegistrationId || !productId) {
+    return { valid: false, error: 'Team ID and Product ID are required.' };
+  }
+
+  // 1. Resolve registration
+  const { data: reg, error: regErr } = await supabase
+    .from('registrations')
+    .select('id, registration_id, team_name, leader_department, leader_email, member2_email, member3_email')
+    .eq('registration_id', teamRegistrationId)
+    .maybeSingle();
+
+  if (regErr || !reg) {
+    return { valid: false, error: `Team registration '${teamRegistrationId}' not found.` };
+  }
+
+  // 2. Resolve team in public.teams
+  let teamRec = null;
+  const { data: byNorm } = await supabase
+    .from('teams')
+    .select('id, team_name')
+    .eq('normalized_team_name', (reg.team_name || '').trim().toLowerCase())
+    .maybeSingle();
+  teamRec = byNorm;
+  if (!teamRec) {
+    const { data: byName } = await supabase
+      .from('teams')
+      .select('id, team_name')
+      .eq('team_name', reg.team_name)
+      .maybeSingle();
+    teamRec = byName;
+  }
+
+  const teamId = teamRec ? teamRec.id : null;
+
+  // 3. Resolve product in public.products
+  const { data: product, error: prodErr } = await supabase
+    .from('products')
+    .select('id, team_id, product_number, product_title, legacy_registration_id')
+    .eq('id', productId)
+    .maybeSingle();
+
+  if (prodErr || !product) {
+    return { valid: false, error: 'Product not found.' };
+  }
+
+  // 4. Verify product belongs to this team
+  const belongsToTeam = (teamId && product.team_id === teamId) ||
+                        (product.legacy_registration_id === teamRegistrationId);
+  if (!belongsToTeam) {
+    return { valid: false, error: 'Access Denied: The specified product does not belong to your team.' };
+  }
+
+  // 5. Check total products count for this team
+  let totalTeamProducts = 1;
+  if (teamId) {
+    const { count, error: countErr } = await supabase
+      .from('products')
+      .select('id', { count: 'exact', head: true })
+      .eq('team_id', teamId);
+    if (!countErr && count !== null) {
+      totalTeamProducts = count;
+    }
+  }
+
+  // 6. Strict Rule 9 check: Authoritatively require product_number
+  const productNumber = product.product_number;
+  if (typeof productNumber !== 'number' || isNaN(productNumber)) {
+    return { valid: false, error: 'Product number could not be authoritatively resolved.' };
+  }
+
+  return {
+    valid: true,
+    reg,
+    team: teamRec,
+    product,
+    productNumber,
+    isSingleProductTeam: totalTeamProducts === 1
+  };
+}
+
+/**
  * GET /api/patents/submissions
  * List all uploaded files in a team's patent folder
  */
 router.get('/submissions', async (req, res) => {
   try {
-    let { phase = 'phase 1', department, category, patentType, teamId } = req.query
+    let { phase = 'phase 1', department, category, patentType, teamId, productId } = req.query
 
     if (!teamId) {
       return res.status(400).json({
@@ -131,6 +216,18 @@ router.get('/submissions', async (req, res) => {
     }
 
     const cleanTeamId = teamId.trim()
+    let productValidation = null;
+
+    if (productId && productId.trim()) {
+      productValidation = await resolveAndValidateProduct(cleanTeamId, productId.trim());
+      if (!productValidation.valid) {
+        return res.status(403).json({
+          success: false,
+          message: productValidation.error
+        });
+      }
+    }
+
     let cleanDept = (department || '').trim()
 
     // Authoritative team department resolution
@@ -160,32 +257,97 @@ router.get('/submissions', async (req, res) => {
       }
     }
 
-    if (!cleanPatentType) {
-      cleanPatentType = 'Design Patent'
-    }
+    let files = []
 
-    let files = await googleDriveService.listTeamSubmissions({
-      phase,
-      department: cleanDept,
-      category: cleanCategory,
-      patentType: cleanPatentType,
-      teamId: cleanTeamId
-    })
-
-    // If no files found and category was defaulted, also check alternate category (Hardware vs Software) if Utility Patent
-    if ((!files || files.length === 0) && cleanPatentType === 'Utility Patent' && cleanCategory === 'Hardware') {
-      try {
-        const altFiles = await googleDriveService.listTeamSubmissions({
+    if (cleanPatentType === 'Both') {
+      const [utilityFiles, designFiles] = await Promise.all([
+        googleDriveService.listTeamSubmissions({
           phase,
           department: cleanDept,
-          category: 'Software',
-          patentType: cleanPatentType,
+          category: 'Hardware',
+          patentType: 'Utility Patent',
           teamId: cleanTeamId
-        })
-        if (altFiles && altFiles.length > 0) {
-          files = altFiles
+        }).catch(() => []),
+        googleDriveService.listTeamSubmissions({
+          phase,
+          department: cleanDept,
+          category: 'Hardware',
+          patentType: 'Design Patent',
+          teamId: cleanTeamId
+        }).catch(() => [])
+      ])
+
+      const taggedUtility = (utilityFiles || []).map(f => ({ ...f, patentType: 'Utility Patent' }))
+      const taggedDesign = (designFiles || []).map(f => ({ ...f, patentType: 'Design Patent' }))
+      files = [...taggedUtility, ...taggedDesign]
+    } else {
+      if (!cleanPatentType) {
+        cleanPatentType = 'Design Patent'
+      }
+
+      let driveFiles = await googleDriveService.listTeamSubmissions({
+        phase,
+        department: cleanDept,
+        category: cleanCategory,
+        patentType: cleanPatentType,
+        teamId: cleanTeamId
+      })
+
+      // If no files found and category was defaulted, also check alternate category (Hardware vs Software) if Utility Patent
+      if ((!driveFiles || driveFiles.length === 0) && cleanPatentType === 'Utility Patent' && cleanCategory === 'Hardware') {
+        try {
+          const altFiles = await googleDriveService.listTeamSubmissions({
+            phase,
+            department: cleanDept,
+            category: 'Software',
+            patentType: cleanPatentType,
+            teamId: cleanTeamId
+          })
+          if (altFiles && altFiles.length > 0) {
+            driveFiles = altFiles
+          }
+        } catch (e) {}
+      }
+
+      files = (driveFiles || []).map(f => ({ ...f, patentType: cleanPatentType }))
+    }
+
+    // Product-level isolation filter
+    if (productValidation) {
+      const targetProductNumber = productValidation.productNumber;
+      const isSingle = productValidation.isSingleProductTeam;
+      const isChamelexP1 = cleanTeamId === 'IPL26-0434' && targetProductNumber === 1;
+      const isChamelexP2 = cleanTeamId === 'IPL26-0434' && targetProductNumber === 2;
+
+      files = files.filter(f => {
+        const fName = (f.name || '').toLowerCase();
+        const prodToken = `_p${targetProductNumber}_`;
+
+        // 1. Direct match with product number token (e.g. _p1_ or _p2_)
+        if (fName.includes(prodToken)) return true;
+
+        // 2. If file belongs to another product (e.g. _p1_ when looking for P2), reject
+        if (/_p\d+_/i.test(fName)) return false;
+
+        // 3. Legacy un-prefixed file without _p token (e.g. IPL26-0434_Grant_Form.docx)
+        if (isChamelexP2) {
+          // Under NO circumstances does ChameleX Product 2 receive legacy unassigned files!
+          return false;
         }
-      } catch (e) {}
+
+        if (isSingle || isChamelexP1) {
+          // Single-product team or ChameleX P1 compatibility: legacy file belongs to Product 1
+          return true;
+        }
+
+        return false;
+      });
+
+      files = files.map(f => ({
+        ...f,
+        productId: productValidation.product.id,
+        productNumber: targetProductNumber
+      }));
     }
 
     return res.status(200).json({
@@ -248,6 +410,7 @@ router.post('/upload', upload.single('file'), async (req, res) => {
       category,
       patentType,
       teamId,
+      productId,
       templateId
     } = req.body
 
@@ -274,30 +437,84 @@ router.post('/upload', upload.single('file'), async (req, res) => {
     const cleanCat = category.trim()
     const cleanPatentType = patentType.trim()
 
+    // Authoritative Product Validation
+    const cleanProductId = (productId || '').trim()
+    if (!cleanProductId) {
+      return res.status(400).json({
+        success: false,
+        code: 'MISSING_PRODUCT_ID',
+        message: 'Product ID is required for document submission.'
+      })
+    }
+
+    const productValidation = await resolveAndValidateProduct(cleanTeamId, cleanProductId)
+    if (!productValidation.valid) {
+      return res.status(403).json({
+        success: false,
+        code: 'INVALID_PRODUCT',
+        message: productValidation.error
+      })
+    }
+
+    const authoritativeProductNumber = productValidation.productNumber
+    const isSingleProductTeam = productValidation.isSingleProductTeam
+
     if (!['Hardware', 'Software'].includes(cleanCat)) {
       return res.status(400).json({ success: false, message: 'Invalid Category. Must be Hardware or Software.' })
+    }
+
+    if (cleanPatentType === 'Both') {
+      return res.status(400).json({
+        success: false,
+        code: 'INVALID_DOCUMENT_PATENT_TYPE',
+        message: 'Individual document uploads must specify either Utility Patent or Design Patent. Both is an overall protection mode.'
+      })
     }
 
     if (!['Design Patent', 'Utility Patent'].includes(cleanPatentType)) {
       return res.status(400).json({ success: false, message: 'Invalid Patent Type. Must be Design Patent or Utility Patent.' })
     }
 
+    const patentMode = (req.body.patentMode || req.body.overallPatentType || '').trim()
+
     // Authoritative Rule: Software submissions can ONLY use Utility Patent
-    if (cleanCat === 'Software' && cleanPatentType === 'Design Patent') {
-      return res.status(400).json({
-        success: false,
-        code: 'SOFTWARE_DESIGN_PATENT_NOT_ALLOWED',
-        message: 'Software submissions can only use Utility Patent.'
-      })
+    if (cleanCat === 'Software') {
+      if (cleanPatentType !== 'Utility Patent') {
+        return res.status(400).json({
+          success: false,
+          code: 'SOFTWARE_DESIGN_PATENT_NOT_ALLOWED',
+          message: 'Software submissions can only use Utility Patent.'
+        })
+      }
+      if (patentMode && patentMode !== 'Utility Patent') {
+        return res.status(400).json({
+          success: false,
+          code: 'SOFTWARE_INVALID_PATENT_MODE',
+          message: 'Software submissions only support Utility Patent protection.'
+        })
+      }
+    }
+
+    // Authoritative Rule: Hardware patent mode validation
+    if (cleanCat === 'Hardware' && patentMode) {
+      if (patentMode === 'Utility Patent' && cleanPatentType !== 'Utility Patent') {
+        return res.status(400).json({
+          success: false,
+          code: 'PATENT_MODE_MISMATCH',
+          message: `Document patent type '${cleanPatentType}' does not match team's selected protection mode 'Utility Patent'.`
+        })
+      }
+      if (patentMode === 'Design Patent' && cleanPatentType !== 'Design Patent') {
+        return res.status(400).json({
+          success: false,
+          code: 'PATENT_MODE_MISMATCH',
+          message: `Document patent type '${cleanPatentType}' does not match team's selected protection mode 'Design Patent'.`
+        })
+      }
     }
 
     // 2. Authoritative Team Department & Membership Resolution from Supabase
-    const { data: reg, error: regErr } = await supabase
-      .from('registrations')
-      .select('registration_id, team_name, leader_department, leader_email, member2_email, member3_email')
-      .eq('registration_id', cleanTeamId)
-      .maybeSingle()
-
+    const reg = productValidation.reg
     let authoritativeDept = (department || '').trim()
     if (reg && reg.leader_department) {
       authoritativeDept = normalizeOfficialDepartment(reg.leader_department)
@@ -349,12 +566,20 @@ router.post('/upload', upload.single('file'), async (req, res) => {
       })
     }
 
-    // 6. Generate canonical filename: <TeamID>_<OfficialDocumentName>.<extension>
-    // Note: The uploaded file's original name is completely ignored for naming purposes.
+    // Authoritative Template Track Validation: verify template belongs to requested patent track
+    if (template.patentType && template.patentType !== cleanPatentType) {
+      return res.status(400).json({
+        success: false,
+        code: 'TEMPLATE_PATENT_TYPE_MISMATCH',
+        message: `The selected template '${template.name}' belongs to '${template.patentType}', but the upload request specified '${cleanPatentType}'.`
+      })
+    }
+
+    // 6. Generate canonical filename with product token: <TeamID>_P<ProductNumber>_<OfficialDocumentName>.<extension>
     const rawTemplateName = template.name.replace(/\.[^/.]+$/, '').trim()
     const normalizedTemplateName = rawTemplateName.replace(/\s+/g, '_')
     const finalExt = userExt === '.doc' ? '.doc' : '.docx'
-    const canonicalFileName = `${cleanTeamId}_${normalizedTemplateName}${finalExt}`
+    const canonicalFileName = `${cleanTeamId}_P${authoritativeProductNumber}_${normalizedTemplateName}${finalExt}`
 
     // 7. Discover Destination Hierarchy using Authoritative Team Department
     const phaseFolder = await googleDriveService.getPhaseFolder(phase)
@@ -364,47 +589,38 @@ router.post('/upload', upload.single('file'), async (req, res) => {
     const teamFolderResult = await googleDriveService.getOrCreateTeamFolder(patentFolder.id, cleanTeamId)
     const targetFolderId = teamFolderResult.id
 
-    // 8. Upload or Replace file (prevents duplicates and ensures exactly one file per slot)
+    // 8. Upload or Replace file (isolated per product)
     try {
       const uploadedFile = await googleDriveService.updateOrUploadFileToFolder(
         targetFolderId,
         file,
         canonicalFileName,
         normalizedTemplateName,
-        cleanTeamId
+        cleanTeamId,
+        authoritativeProductNumber,
+        isSingleProductTeam
       )
 
       let completionResult = null;
 
       // 9. Synchronize metadata to Supabase phase1_submissions & reset decision state to PENDING
       try {
-        let docType = 'OTHER'
-        const tmplLower = (normalizedTemplateName || '').toLowerCase()
-        if (tmplLower.includes('abstract')) docType = 'FIGURE_OF_ABSTRACT'
-        else if (tmplLower.includes('declaration') || tmplLower.includes('form_5')) docType = 'FORM_5'
-        else if (tmplLower.includes('grant') || tmplLower.includes('form_2')) docType = 'FORM_2'
-        else if (tmplLower.includes('drawing')) docType = 'LIST_OF_DRAWINGS'
-        else docType = normalizedTemplateName.replace(/[^a-zA-Z0-9_]/g, '').toUpperCase()
+        let docType = template.documentType || 'OTHER'
+        if (!template.documentType) {
+          const tmplLower = (normalizedTemplateName || '').toLowerCase()
+          if (tmplLower.includes('abstract')) docType = 'FIGURE_OF_ABSTRACT'
+          else if (tmplLower.includes('declaration') || tmplLower.includes('form_5')) docType = 'FORM_5'
+          else if (tmplLower.includes('grant') || tmplLower.includes('form_2')) docType = 'FORM_2'
+          else if (tmplLower.includes('drawing')) docType = 'LIST_OF_DRAWINGS'
+          else if (tmplLower.includes('novelty')) docType = 'NOVELTY_FORM'
+          else if (tmplLower.includes('representation')) docType = 'REPRESENTATION_SHEET'
+          else docType = normalizedTemplateName.replace(/[^a-zA-Z0-9_]/g, '').toUpperCase()
+        }
 
-        let teamRec = null;
-        try {
-          const { data: byNorm } = await supabase
-            .from('teams')
-            .select('id')
-            .eq('normalized_team_name', reg.team_name.toLowerCase().trim())
-            .maybeSingle();
-          teamRec = byNorm;
-          if (!teamRec) {
-            const { data: byName } = await supabase
-              .from('teams')
-              .select('id')
-              .eq('team_name', reg.team_name)
-              .maybeSingle();
-            teamRec = byName;
-          }
-        } catch (tErr) {}
+        const teamRec = productValidation.team
 
-        const subPayload = {
+        // Base payload containing ONLY valid, verified pre-migration schema columns
+        const basePayload = {
           team_id: teamRec?.id || null,
           registration_id: cleanTeamId,
           team_name: reg.team_name,
@@ -420,64 +636,94 @@ router.post('/upload', upload.single('file'), async (req, res) => {
           updated_at: new Date().toISOString()
         };
 
-        // Try upserting with extra columns if present
+        const isDesignDoc = cleanPatentType === 'Design Patent' || docType === 'NOVELTY_FORM' || docType === 'REPRESENTATION_SHEET';
+
+        // Upsert logic: Resilient multi-tier progression compatible across all migration phases:
+        // Tier 1: Post-Stage 13 schema (with product_id and patent_type)
+        // Tier 2: Post-Stage 12 schema (with patent_type, pre-Stage 13)
+        // Tier 3: Pre-Stage 12 schema (legacy schema with only base columns)
         try {
-          const extendedPayload = {
-            ...subPayload,
-            admin_comment: null,
-            decision_seen: false,
-            patent_type: cleanPatentType,
-            category: cleanCat
-          };
-          let { error: extErr } = await supabase
+          // Tier 1: Try with product_id and patent_type (Post-Stage 13)
+          let upsertResult = await supabase
             .from('phase1_submissions')
-            .upsert(extendedPayload, { onConflict: 'team_id,document_type' });
+            .upsert({
+              ...basePayload,
+              product_id: productValidation.product.id,
+              patent_type: cleanPatentType
+            }, { onConflict: 'team_id,product_id,document_type,patent_type' });
 
-          if (extErr) {
-            // Check if document_type check constraint failed or extended columns failed
-            let targetDocType = docType;
-            if (
-              extErr.code === '23514' ||
-              extErr.message?.includes('chk_submission_document_type')
-            ) {
-              if (docType === 'NOVELTY_FORM') targetDocType = 'FORM_2';
-              else if (docType === 'REPRESENTATION_SHEET') targetDocType = 'FORM_5';
-              else targetDocType = 'FORM_2';
-            }
+          if (upsertResult.error) {
+            const errCode1 = upsertResult.error.code;
+            const errMsg1 = upsertResult.error.message || '';
 
-            const fallbackPayload = {
-              ...subPayload,
-              document_type: targetDocType
-            };
-
-            let { error: fallbackErr } = await supabase
-              .from('phase1_submissions')
-              .upsert(fallbackPayload, { onConflict: 'team_id,document_type' });
-
-            if (fallbackErr && targetDocType !== 'FORM_2') {
-              fallbackPayload.document_type = 'FORM_2';
-              await supabase
+            // If product_id column does not exist (code 42703 / column product_id) or constraint missing (42P10), try Tier 2
+            if (errCode1 === '42703' || errMsg1.includes('product_id') || errCode1 === '42P10') {
+              // Tier 2: Post-Stage 12 schema (with patent_type, pre-Stage 13)
+              upsertResult = await supabase
                 .from('phase1_submissions')
-                .upsert(fallbackPayload, { onConflict: 'team_id,document_type' });
+                .upsert({
+                  ...basePayload,
+                  patent_type: cleanPatentType
+                }, { onConflict: 'team_id,document_type,patent_type' });
+
+              if (upsertResult.error) {
+                const errCode2 = upsertResult.error.code;
+                const errMsg2 = upsertResult.error.message || '';
+
+                // If patent_type column does not exist (code 42703 / column patent_type) or constraint missing (42P10), try Tier 3
+                if (errCode2 === '42703' || errMsg2.includes('patent_type') || errCode2 === '42P10') {
+                  if (isDesignDoc) {
+                    console.warn('[PatentRoutes] Design Patent upload blocked by pending migration:', errCode2, errMsg2);
+                    return res.status(400).json({
+                      success: false,
+                      code: 'DESIGN_MIGRATION_PENDING',
+                      message: 'Database schema migration for Design Patent documents (stage_12_both_patent_protection.sql) is pending. Please contact the administrator to apply the database migration before uploading Design Patent documents.'
+                    });
+                  } else {
+                    // Tier 3: Pre-Stage 12 legacy schema (Utility only, no product_id, no patent_type)
+                    upsertResult = await supabase
+                      .from('phase1_submissions')
+                      .upsert(basePayload, { onConflict: 'team_id,document_type' });
+
+                    if (upsertResult.error) {
+                      console.warn('[PatentRoutes] Legacy fallback upsert warning:', upsertResult.error.message);
+                    }
+                  }
+                } else {
+                  console.warn('[PatentRoutes] Tier 2 upsert error:', errMsg2);
+                }
+              }
+            } else {
+              console.warn('[PatentRoutes] Tier 1 upsert error:', errMsg1);
             }
           }
         } catch (dbErr) {
-          console.warn('[PatentRoutes] DB submission sync warning:', dbErr.message);
+          console.warn('[PatentRoutes] DB submission sync error:', dbErr.message);
         }
 
-        // Check completion dynamically and update local decisions cache
+        // Check completion dynamically for THIS product and update local decisions cache
         try {
           const { data: allTeamDocs } = await supabase
             .from('phase1_submissions')
             .select('*')
-            .or(`registration_id.eq.${cleanTeamId},team_id.eq.${cleanTeamId}`);
+            .eq('registration_id', cleanTeamId);
 
-          let docsForCalc = allTeamDocs || [];
-          if (!docsForCalc.some(d => (d.document_type === docType) || (d.original_filename && d.original_filename.includes(normalizedTemplateName)))) {
-            docsForCalc = [...docsForCalc, subPayload];
+          const isChamelexP1 = cleanTeamId === 'IPL26-0434' && authoritativeProductNumber === 1;
+
+          // Scope documents strictly to this product
+          let productDocs = (allTeamDocs || []).filter(d => {
+            if (d.product_id) return d.product_id === productValidation.product.id;
+            return isSingleProductTeam || isChamelexP1;
+          });
+
+          if (!productDocs.some(d => (d.document_type === docType) || (d.original_filename && d.original_filename.includes(normalizedTemplateName)))) {
+            productDocs = [...productDocs, { ...basePayload, patent_type: cleanPatentType }];
           }
 
-          completionResult = calculatePhase1Completion(docsForCalc, patentFolder.name);
+          const patentMode = (req.body.patentMode || req.body.overallPatentType || '').trim();
+          const patentTypeHint = patentMode === 'Both' ? 'Both' : cleanPatentType;
+
+          completionResult = calculatePhase1Completion(productDocs, patentTypeHint);
           const DECISIONS_FILE = path.join(__dirname, '..', 'config', 'team_decisions.json');
           if (fs.existsSync(DECISIONS_FILE)) {
             const raw = fs.readFileSync(DECISIONS_FILE, 'utf-8');
@@ -491,6 +737,23 @@ router.post('/upload', upload.single('file'), async (req, res) => {
                 reviewedAt: null,
                 updatedAt: new Date().toISOString()
               };
+              // Reset any stale decision on phase1_submissions so re-uploaded complete submission is PENDING REVIEW
+              try {
+                let resetQuery = supabase
+                  .from('phase1_submissions')
+                  .update({
+                    review_status: 'UPLOADED',
+                    rejection_reason: null,
+                    admin_comment: null
+                  });
+                resetQuery = applyTeamFilter(resetQuery);
+                if (productValidation) {
+                  resetQuery = resetQuery.eq('product_id', productValidation.product.id);
+                }
+                await resetQuery;
+              } catch (resetErr) {
+                console.warn('[PatentRoutes] DB status reset warning on re-upload:', resetErr.message);
+              }
             } else {
               delete decisions[cleanTeamId];
             }
@@ -513,7 +776,7 @@ router.post('/upload', upload.single('file'), async (req, res) => {
           teamId: cleanTeamId,
           department: deptFolder.name,
           category: catFolder.name,
-          patentType: patentFolder.name,
+          patentType: cleanPatentType,
           webViewLink: uploadedFile.webViewLink,
           isNewFolder: teamFolderResult.isNew,
           isReplacement: !!uploadedFile.isReplacement,
@@ -521,7 +784,17 @@ router.post('/upload', upload.single('file'), async (req, res) => {
             isComplete: completionResult.isComplete,
             uploadedCount: completionResult.uploadedCount,
             requiredCount: completionResult.requiredCount,
-            missingSlots: completionResult.missingSlots.map(s => s.name)
+            missingSlots: (completionResult.missingSlots || []).map(s => s.name),
+            utility: completionResult.utility ? {
+              uploadedCount: completionResult.utility.uploadedCount,
+              requiredCount: completionResult.utility.requiredCount,
+              isComplete: completionResult.utility.isComplete
+            } : null,
+            design: completionResult.design ? {
+              uploadedCount: completionResult.design.uploadedCount,
+              requiredCount: completionResult.design.requiredCount,
+              isComplete: completionResult.design.isComplete
+            } : null
           } : null
         }
       })
@@ -562,5 +835,355 @@ router.get('/file/:fileId', async (req, res) => {
     })
   }
 })
+
+/**
+ * POST /api/patents/remove-file
+ * DELETE /api/patents/remove-file
+ * Authoritatively removes an uploaded document from Google Drive and updates Supabase + completion state.
+ *
+ * Sequence:
+ * 1. Authenticate & Authorize caller (team member or admin)
+ * 2. Verify file ownership (Google Drive file name / DB record)
+ * 3. Delete file from Google Drive via googleDriveService.deleteFile
+ * 4. Delete corresponding record from phase1_submissions
+ * 5. Recalculate completion state and update decisions cache
+ * 6. Return response
+ */
+const handleRemoveFile = async (req, res) => {
+  try {
+    const cleanTeamId = (req.body?.teamId || req.query?.teamId || '').trim();
+    const cleanFileId = (req.body?.fileId || req.query?.fileId || '').trim();
+    const cleanProductId = (req.body?.productId || req.query?.productId || '').trim();
+
+    if (!cleanTeamId || !cleanFileId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Team ID and File ID are required to remove a document.'
+      });
+    }
+
+    // 1. Authoritative Team Resolution from Supabase
+    const { data: reg, error: regErr } = await supabase
+      .from('registrations')
+      .select('registration_id, team_name, leader_department, leader_email, member2_email, member3_email')
+      .eq('registration_id', cleanTeamId)
+      .maybeSingle();
+
+    if (!reg) {
+      return res.status(404).json({
+        success: false,
+        message: `Team registration '${cleanTeamId}' not found.`
+      });
+    }
+
+    // Authoritative Product Resolution if productId provided
+    let productValidation = null;
+    if (cleanProductId) {
+      productValidation = await resolveAndValidateProduct(cleanTeamId, cleanProductId);
+      if (!productValidation.valid) {
+        return res.status(403).json({
+          success: false,
+          message: productValidation.error
+        });
+      }
+    }
+
+    // Helper to safely filter phase1_submissions by registration_id and optional team_id without Postgres UUID syntax errors
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanTeamId);
+    const applyTeamFilter = (query) => {
+      if (isUuid) {
+        return query.or(`registration_id.eq.${cleanTeamId},team_id.eq.${cleanTeamId}`);
+      }
+      return query.eq('registration_id', cleanTeamId);
+    };
+
+    // 2. Authentication & Authorization Check
+    let authenticatedEmail = null;
+    let isAdmin = false;
+
+    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+      try {
+        const token = req.headers.authorization.split(' ')[1];
+        const { data: { user } } = await supabase.auth.getUser(token);
+        if (user) {
+          authenticatedEmail = (user.email || '').toLowerCase().trim();
+
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('role')
+            .eq('id', user.id)
+            .maybeSingle();
+
+          if (profile && ['admin', 'superadmin', 'evaluator'].includes(profile.role)) {
+            isAdmin = true;
+          }
+        }
+      } catch (tokenErr) {
+        console.warn('[PatentRoutes] Auth token parse error:', tokenErr.message);
+      }
+    }
+
+    if (authenticatedEmail && !isAdmin) {
+      const teamEmails = [reg.leader_email, reg.member2_email, reg.member3_email]
+        .filter(Boolean)
+        .map(e => e.toLowerCase().trim());
+
+      if (!teamEmails.includes(authenticatedEmail)) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access Denied: You are not authorized to remove files for this team.'
+        });
+      }
+    }
+
+    // 3. Verify file exists and belongs to this team & product
+    let driveFile = null;
+    let driveAlreadyDeleted = false;
+
+    try {
+      driveFile = await googleDriveService.getFileMetadata(cleanFileId);
+    } catch (driveErr) {
+      const status = driveErr.status || driveErr.code;
+      if (status === 404 || (driveErr.message && driveErr.message.toLowerCase().includes('not found'))) {
+        driveAlreadyDeleted = true;
+      } else {
+        console.error('[PatentRoutes] Error checking Google Drive file:', driveErr.message);
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to access Google Drive: ' + driveErr.message
+        });
+      }
+    }
+
+    if (driveFile) {
+      // Prevent deleting folders
+      if (driveFile.mimeType === 'application/vnd.google-apps.folder') {
+        return res.status(400).json({
+          success: false,
+          message: 'Cannot delete a folder.'
+        });
+      }
+
+      // Check team ownership
+      const fileNameHasTeam = driveFile.name.toLowerCase().includes(cleanTeamId.toLowerCase());
+      let dbMatchesQuery = supabase
+        .from('phase1_submissions')
+        .select('*')
+        .eq('google_drive_file_id', cleanFileId);
+      dbMatchesQuery = applyTeamFilter(dbMatchesQuery);
+      const { data: dbMatches } = await dbMatchesQuery;
+
+      const isVerifiedTeamFile = fileNameHasTeam || (dbMatches && dbMatches.length > 0);
+
+      if (!isVerifiedTeamFile && !isAdmin) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access Denied: The specified file does not belong to your team.'
+        });
+      }
+
+      // Check product ownership: Product 2 must NEVER be able to delete Product 1's file
+      if (productValidation && !isAdmin) {
+        // 1. Check DB record ownership
+        if (dbMatches && dbMatches.length > 0) {
+          const match = dbMatches[0];
+          const isChamelexP1 = cleanTeamId === 'IPL26-0434' && productValidation.productNumber === 1;
+          const isAllowed = match.product_id === productValidation.product.id ||
+                            (!match.product_id && (productValidation.isSingleProductTeam || isChamelexP1));
+          if (!isAllowed) {
+            return res.status(403).json({
+              success: false,
+              message: 'Access Denied: The specified file belongs to a different product.'
+            });
+          }
+        }
+
+        // 2. Check Drive filename product token
+        const fLower = driveFile.name.toLowerCase();
+        const prodTokenMatch = fLower.match(/_p(\d+)_/i);
+        if (prodTokenMatch) {
+          const fileProductNum = parseInt(prodTokenMatch[1], 10);
+          if (fileProductNum !== productValidation.productNumber) {
+            return res.status(403).json({
+              success: false,
+              message: 'Access Denied: The specified file belongs to a different product.'
+            });
+          }
+        }
+      }
+    }
+
+    // 4. Delete from Google Drive FIRST
+    if (!driveAlreadyDeleted) {
+      try {
+        await googleDriveService.deleteFile(cleanFileId);
+      } catch (delErr) {
+        const status = delErr.status || delErr.code;
+        if (status !== 404 && (!delErr.message || !delErr.message.toLowerCase().includes('not found'))) {
+          console.error('[PatentRoutes] Failed to delete file from Google Drive:', delErr.message);
+          return res.status(500).json({
+            success: false,
+            message: 'Failed to delete file from Google Drive: ' + delErr.message
+          });
+        }
+      }
+    }
+
+    // 5. Delete corresponding records from phase1_submissions
+    let docType = (req.body?.documentType || req.query?.documentType || '').trim();
+    const templateName = (req.body?.templateName || req.query?.templateName || '').trim();
+    if (!docType && templateName) {
+      const tmplLower = templateName.toLowerCase();
+      if (tmplLower.includes('abstract')) docType = 'FIGURE_OF_ABSTRACT';
+      else if (tmplLower.includes('declaration') || tmplLower.includes('form_5') || tmplLower.includes('form 5')) docType = 'FORM_5';
+      else if (tmplLower.includes('grant') || tmplLower.includes('form_2') || tmplLower.includes('form 2')) docType = 'FORM_2';
+      else if (tmplLower.includes('drawing')) docType = 'LIST_OF_DRAWINGS';
+      else if (tmplLower.includes('novelty')) docType = 'NOVELTY_FORM';
+      else if (tmplLower.includes('representation')) docType = 'REPRESENTATION_SHEET';
+    }
+
+    // Delete by file ID for this team
+    let delByFileQuery = supabase
+      .from('phase1_submissions')
+      .delete()
+      .eq('google_drive_file_id', cleanFileId);
+    delByFileQuery = applyTeamFilter(delByFileQuery);
+    await delByFileQuery;
+
+    // If docType is known, ensure any lingering slot record is also removed (scoped to product and patent_type if known)
+    if (docType) {
+      let delBySlotQuery = supabase
+        .from('phase1_submissions')
+        .delete()
+        .eq('document_type', docType);
+      delBySlotQuery = applyTeamFilter(delBySlotQuery);
+      if (cleanPatentType && cleanPatentType !== 'Both') {
+        delBySlotQuery = delBySlotQuery.eq('patent_type', cleanPatentType);
+      }
+      if (productValidation) {
+        const isChamelexP1 =
+          cleanTeamId === 'IPL26-0434' &&
+          productValidation.productNumber === 1;
+
+        if (productValidation.isSingleProductTeam || isChamelexP1) {
+          delBySlotQuery = delBySlotQuery.or(
+            `product_id.eq.${productValidation.product.id},and(product_id.is.null,registration_id.eq.${cleanTeamId})`
+          );
+        } else {
+          delBySlotQuery = delBySlotQuery.eq(
+            'product_id',
+            productValidation.product.id
+          );
+        }
+      }
+      await delBySlotQuery;
+    }
+
+    // 6. Recalculate completion state and synchronize decision cache (scoped to product)
+    let completionResult = null;
+    try {
+      let remainingQuery = supabase
+        .from('phase1_submissions')
+        .select('*');
+      remainingQuery = applyTeamFilter(remainingQuery);
+      const { data: remainingDocs } = await remainingQuery;
+
+      const isChamelexP1 = cleanTeamId === 'IPL26-0434' && productValidation?.productNumber === 1;
+      const productDocs = productValidation
+        ? (remainingDocs || []).filter(d => {
+            if (d.product_id) return d.product_id === productValidation.product.id;
+            return productValidation.isSingleProductTeam || isChamelexP1;
+          })
+        : (remainingDocs || []);
+
+      const patentMode = (req.body?.patentMode || req.query?.patentMode || '').trim();
+      const patentTypeParam = (req.body?.patentType || req.query?.patentType || '').trim();
+      const patentTypeHint = patentMode === 'Both' ? 'Both' : (patentTypeParam || (productDocs && productDocs[0]?.patent_type) || 'Utility Patent');
+
+      completionResult = calculatePhase1Completion(productDocs, patentTypeHint);
+
+      const DECISIONS_FILE = path.join(__dirname, '..', 'config', 'team_decisions.json');
+      if (fs.existsSync(DECISIONS_FILE)) {
+        const raw = fs.readFileSync(DECISIONS_FILE, 'utf-8');
+        const decisions = JSON.parse(raw);
+        if (completionResult && completionResult.isComplete) {
+          decisions[cleanTeamId] = {
+            status: 'PENDING',
+            adminComment: null,
+            decisionSeen: false,
+            reviewedBy: null,
+            reviewedAt: null,
+            updatedAt: new Date().toISOString()
+          };
+        } else {
+          // If any required document is missing, the submission is strictly INCOMPLETE.
+          // Remove any active decision (PENDING, APPROVED, or REJECTED) so it is not stale.
+          if (decisions[cleanTeamId]) {
+            delete decisions[cleanTeamId];
+          }
+
+          // Reset database review_status on remaining rows for this team/product so stale APPROVED/REJECTED is cleared
+          try {
+            let resetQuery = supabase
+              .from('phase1_submissions')
+              .update({
+                review_status: 'UPLOADED',
+                rejection_reason: null,
+                admin_comment: null
+              });
+            resetQuery = applyTeamFilter(resetQuery);
+            if (productValidation) {
+              resetQuery = resetQuery.eq('product_id', productValidation.product.id);
+            }
+            await resetQuery;
+          } catch (resetErr) {
+            console.warn('[PatentRoutes] DB status reset warning on document removal:', resetErr.message);
+          }
+        }
+        fs.writeFileSync(DECISIONS_FILE, JSON.stringify(decisions, null, 2), 'utf-8');
+      }
+    } catch (compErr) {
+      console.warn('[PatentRoutes] Completion recalculation warning:', compErr.message);
+    }
+
+    const removedFileName = driveFile?.name || req.body?.fileName || 'Document';
+
+    return res.status(200).json({
+      success: true,
+      message: 'Document removed successfully.',
+      data: {
+        fileId: cleanFileId,
+        teamId: cleanTeamId,
+        fileName: removedFileName,
+        completion: completionResult ? {
+          isComplete: completionResult.isComplete,
+          uploadedCount: completionResult.uploadedCount,
+          requiredCount: completionResult.requiredCount,
+          missingSlots: (completionResult.missingSlots || []).map(s => s.name),
+          utility: completionResult.utility ? {
+            uploadedCount: completionResult.utility.uploadedCount,
+            requiredCount: completionResult.utility.requiredCount,
+            isComplete: completionResult.utility.isComplete
+          } : null,
+          design: completionResult.design ? {
+            uploadedCount: completionResult.design.uploadedCount,
+            requiredCount: completionResult.design.requiredCount,
+            isComplete: completionResult.design.isComplete
+          } : null
+        } : null
+      }
+    });
+  } catch (err) {
+    console.error('[PatentRoutes] Remove File Error:', err.message);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to remove document: ' + err.message
+    });
+  }
+};
+
+router.post('/remove-file', handleRemoveFile);
+router.delete('/remove-file', handleRemoveFile);
+router.handleRemoveFile = handleRemoveFile;
 
 module.exports = router

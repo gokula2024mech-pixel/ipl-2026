@@ -225,6 +225,17 @@ async function getOrCreateTeamFolder(patentTypeFolderId, teamId) {
   }
 }
 
+function getCanonicalDocTypeFromName(name) {
+  const n = (name || '').toLowerCase()
+  if (n.includes('abstract')) return 'FIGURE_OF_ABSTRACT'
+  if (n.includes('declaration') || n.includes('form_5') || n.includes('form 5')) return 'FORM_5'
+  if (n.includes('grant') || n.includes('form_2') || n.includes('form 2')) return 'FORM_2'
+  if (n.includes('drawing')) return 'LIST_OF_DRAWINGS'
+  if (n.includes('novelty')) return 'NOVELTY_FORM'
+  if (n.includes('representation')) return 'REPRESENTATION_SHEET'
+  return 'OTHER'
+}
+
 /**
  * Dynamically list official templates, optionally filtered by patentType ('Utility Patent' or 'Design Patent')
  */
@@ -244,17 +255,20 @@ async function listTemplates(patentType = null) {
   })
   const subfolders = subfoldersRes.data.files || []
 
+  const utilityFolder = subfolders.find(f => f.name.toLowerCase().includes('utility'))
+  const designFolder = subfolders.find(f => f.name.toLowerCase().includes('design'))
+
   if (patentType && patentType.trim()) {
     const cleanType = patentType.trim().toLowerCase()
-    let matchedFolder = null
-    if (cleanType.includes('utility')) {
-      matchedFolder = subfolders.find(f => f.name.toLowerCase().includes('utility'))
+    if (cleanType.includes('both')) {
+      targetFolderIds = [utilityFolder?.id, designFolder?.id].filter(Boolean)
+      if (targetFolderIds.length === 0 && subfolders.length > 0) {
+        targetFolderIds = subfolders.map(f => f.id)
+      }
+    } else if (cleanType.includes('utility')) {
+      targetFolderIds = utilityFolder ? [utilityFolder.id] : []
     } else if (cleanType.includes('design')) {
-      matchedFolder = subfolders.find(f => f.name.toLowerCase().includes('design'))
-    }
-
-    if (matchedFolder) {
-      targetFolderIds = [matchedFolder.id]
+      targetFolderIds = designFolder ? [designFolder.id] : []
     } else {
       targetFolderIds = []
     }
@@ -273,7 +287,15 @@ async function listTemplates(patentType = null) {
       supportsAllDrives: true
     })
     if (response.data.files) {
-      allFiles.push(...response.data.files)
+      const isDesignFolder = designFolder && folderId === designFolder.id
+      for (const f of response.data.files) {
+        let filePatentType = isDesignFolder ? 'Design Patent' : 'Utility Patent'
+        const fn = (f.name || '').toLowerCase()
+        if (fn.includes('novelty') || fn.includes('representation')) {
+          filePatentType = 'Design Patent'
+        }
+        allFiles.push({ ...f, patentType: filePatentType })
+      }
     }
   }
 
@@ -281,9 +303,12 @@ async function listTemplates(patentType = null) {
   const uniqueFilesMap = new Map()
   for (const f of allFiles) {
     if (!uniqueFilesMap.has(f.id)) {
+      const docType = getCanonicalDocTypeFromName(f.name)
       uniqueFilesMap.set(f.id, {
         id: f.id,
         name: f.name,
+        patentType: f.patentType,
+        documentType: docType,
         mimeType: f.mimeType,
         size: f.size ? parseInt(f.size, 10) : null,
         modifiedTime: f.modifiedTime,
@@ -301,6 +326,9 @@ async function listTemplates(patentType = null) {
 async function validateTemplate(templateId) {
   if (!templateId) return null
   try {
+    const allTemplates = await listTemplates()
+    const match = allTemplates.find(t => t.id === templateId)
+    if (match) return match
     const file = await getFileMetadata(templateId)
     return file && !file.trashed ? file : null
   } catch (e) {
@@ -384,11 +412,11 @@ async function uploadFileToFolder(folderId, file, targetFileName) {
  * If an existing file exists for this team and document template slot, it updates the existing file.
  * Otherwise, it creates a new file.
  */
-async function updateOrUploadFileToFolder(folderId, file, canonicalFileName, normalizedTemplateName, teamId) {
+async function updateOrUploadFileToFolder(folderId, file, canonicalFileName, normalizedTemplateName, teamId, productNumber = null, isSingleProductTeam = false) {
   const drive = getDriveClient()
   const cleanName = canonicalFileName.trim()
 
-  // 1. Search for an existing file in folderId for this template slot
+  // 1. Search for an existing file in folderId for this template slot and product
   const children = await listFolderChildren(folderId)
   const slotMatch = children.find(f => {
     if (f.mimeType === 'application/vnd.google-apps.folder') return false
@@ -396,11 +424,34 @@ async function updateOrUploadFileToFolder(folderId, file, canonicalFileName, nor
     const cleanSlotLower = (normalizedTemplateName || '').toLowerCase()
     const rawSlotLower = (normalizedTemplateName || '').replace(/_/g, ' ').toLowerCase()
     const teamLower = (teamId || '').toLowerCase()
-    return (
-      nameLower === cleanName.toLowerCase() ||
-      (nameLower.includes(cleanSlotLower) && nameLower.includes(teamLower)) ||
-      (nameLower.includes(rawSlotLower) && nameLower.includes(teamLower))
-    )
+
+    // 1. Exact match with canonical name
+    if (nameLower === cleanName.toLowerCase()) return true
+
+    // Check if filename contains this template slot and team
+    const hasSlot = (nameLower.includes(cleanSlotLower) || nameLower.includes(rawSlotLower)) && nameLower.includes(teamLower)
+    if (!hasSlot) return false
+
+    // 2. If productNumber is specified:
+    if (productNumber !== null && productNumber !== undefined) {
+      const prodToken = `_p${productNumber}_`
+      if (nameLower.includes(prodToken)) return true
+
+      // If file belongs to another product (e.g. _p2_ when uploading for P1), NEVER match
+      if (/_p\d+_/i.test(nameLower)) return false
+
+      // For legacy files without _p token:
+      // Only match if this is productNumber === 1 AND isSingleProductTeam (safe legacy upgrade)
+      if (productNumber === 1 && isSingleProductTeam) {
+        return true
+      }
+
+      // Multi-product teams or productNumber > 1 MUST NOT match legacy un-prefixed files
+      return false
+    }
+
+    // Fallback if productNumber is not provided
+    return true
   })
 
   const mediaStream = new Readable()
@@ -549,6 +600,21 @@ async function listVotingReportsFromDrive() {
   }
 }
 
+/**
+ * Permanently delete a specific file by its fileId
+ */
+async function deleteFile(fileId) {
+  if (!fileId) {
+    throw new Error('fileId is required to delete a file')
+  }
+  const drive = getDriveClient()
+  await drive.files.delete({
+    fileId: fileId,
+    supportsAllDrives: true
+  })
+  return true
+}
+
 module.exports = {
   ROOT_FOLDER_ID,
   TEMPLATES_FOLDER_ID,
@@ -568,6 +634,7 @@ module.exports = {
   updateOrUploadFileToFolder,
   getFileMetadata,
   streamFile,
+  deleteFile,
   getOrCreateVotingReportsFolder,
   uploadVotingReportToDrive,
   listVotingReportsFromDrive
