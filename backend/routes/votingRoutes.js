@@ -176,6 +176,7 @@ const fallbackQrTokenMap = new Map(); // qr_token -> { team_id, qr_token, is_act
 const fallbackVoterDeptMap = new Map(); // user_id -> department
 const fallbackControls = readLocalVotingControls();
 const fallbackVotes = []; // [{ id, voter_user_id, voter_department, team_id, voting_round, created_at }]
+const inflightVoteLocks = new Set(); // set of `${voter_id}:${product_id}:${round}`
 
 async function getVotingControls() {
   try {
@@ -397,14 +398,41 @@ async function verifyTeamMembership(userId, userEmail, teamId) {
   const normEmail = (userEmail || '').trim().toLowerCase();
   if (!normEmail && !userId) return { authorized: false, isMentor: false, role: null };
 
-  // 1. Fetch team name
+  // 1. Authoritative check: normalized product_members via products.team_id
+  const { data: prods } = await supabase
+    .from('products')
+    .select('id')
+    .eq('team_id', teamId);
+
+  if (prods && prods.length > 0) {
+    const { data: members } = await supabase
+      .from('product_members')
+      .select('member_email, role, is_team_leader')
+      .in('product_id', prods.map(p => p.id));
+
+    for (const m of (members || [])) {
+      const mEmail = (m.member_email || '').trim().toLowerCase();
+      if (mEmail && mEmail === normEmail) {
+        if (m.role === 'Mentor') {
+          return { authorized: false, isMentor: true, role: 'Mentor' };
+        }
+        if (m.role === 'Team Leader' || m.is_team_leader) {
+          return { authorized: true, isMentor: false, role: 'Leader' };
+        }
+        if (m.role === 'Team Member') {
+          return { authorized: true, isMentor: false, role: 'Member' };
+        }
+      }
+    }
+  }
+
+  // 2. Secondary fallback: check registrations table
   const { data: teamObj } = await supabase
     .from('teams')
     .select('team_name')
     .eq('id', teamId)
     .maybeSingle();
 
-  // 2. Check registrations table
   if (teamObj?.team_name) {
     try {
       const { data: reg } = await supabase
@@ -426,34 +454,7 @@ async function verifyTeamMembership(userId, userEmail, teamId) {
         }
       }
     } catch (e) {
-      // Ignore registration error and check product_members
-    }
-  }
-
-  // 3. Check product_members table
-  const { data: prods } = await supabase
-    .from('products')
-    .select('id')
-    .eq('team_id', teamId);
-
-  if (prods && prods.length > 0) {
-    const { data: members } = await supabase
-      .from('product_members')
-      .select('member_email, role, is_team_leader')
-      .in('product_id', prods.map(p => p.id));
-
-    for (const m of (members || [])) {
-      const mEmail = (m.member_email || '').trim().toLowerCase();
-      if (mEmail && mEmail === normEmail) {
-        const role = (m.role || '').toLowerCase();
-        if (role.includes('mentor')) {
-          return { authorized: false, isMentor: true, role: 'Mentor' };
-        }
-        if (m.is_team_leader || role.includes('leader')) {
-          return { authorized: true, isMentor: false, role: 'Leader' };
-        }
-        return { authorized: true, isMentor: false, role: 'Member' };
-      }
+      // Ignore registration error
     }
   }
 
@@ -507,16 +508,7 @@ async function buildTeamShowcaseAndEligibility(teamId, voterUser, fromQr = false
   let memberDepartments = [];
   let memberEmails = [];
 
-  if (reg) {
-    displayMembers = [
-      { name: reg.leader_name, role: 'Team Leader', department: reg.leader_department },
-      { name: reg.member2_name, role: 'Team Member', department: reg.member2_department },
-      { name: reg.member3_name, role: 'Team Member', department: reg.member3_department }
-    ].filter(m => m.name);
-    memberDepartments = [reg.leader_department, reg.member2_department, reg.member3_department].filter(Boolean);
-    memberEmails = [reg.leader_email, reg.member2_email, reg.member3_email].filter(Boolean).map(e => e.toLowerCase().trim());
-  }
-
+  // Blocker 3: Normalized ID-Based Team Eligibility via public.product_members
   const { data: pMembers } = await supabase
     .from('product_members')
     .select('member_name, role, member_email, is_team_leader, departments(name)')
@@ -525,15 +517,69 @@ async function buildTeamShowcaseAndEligibility(teamId, voterUser, fromQr = false
   if (pMembers && pMembers.length > 0) {
     for (const pm of pMembers) {
       const isMentor = (pm.role || '').toLowerCase().includes('mentor');
+      const isLeader = pm.is_team_leader || (pm.role || '').toLowerCase().includes('leader');
+      const roleName = isLeader ? 'Team Leader' : (isMentor ? 'Mentor' : 'Team Member');
       const email = (pm.member_email || '').toLowerCase().trim();
-      if (email && !memberEmails.includes(email)) {
-        memberEmails.push(email);
+      let deptName = pm.departments?.name || '';
+
+      // If department_id was null in product_members, resolve via registration or email
+      if (!deptName && reg) {
+        if (reg.leader_email && email === reg.leader_email.toLowerCase().trim()) {
+          deptName = normalizeDepartment(reg.leader_department);
+        } else if (reg.member2_email && email === reg.member2_email.toLowerCase().trim()) {
+          deptName = normalizeDepartment(reg.member2_department);
+        } else if (reg.member3_email && email === reg.member3_email.toLowerCase().trim()) {
+          deptName = normalizeDepartment(reg.member3_department);
+        }
       }
-      const deptName = pm.departments?.name;
-      if (!isMentor && deptName && !memberDepartments.includes(deptName)) {
-        memberDepartments.push(deptName);
+      if (!deptName && email) {
+        if (email.includes('ece')) deptName = 'Electronics and Communication Engineering';
+        else if (email.includes('cse')) deptName = 'Computer Science and Engineering';
+        else if (email.includes('mech')) deptName = 'Mechanical Engineering';
+        else if (email.includes('eee')) deptName = 'Electrical and Electronics Engineering';
+        else if (email.includes('aiml')) deptName = 'Artificial Intelligence and Machine Learning';
+        else if (email.includes('aids')) deptName = 'Artificial Intelligence and Data Science';
+        else if (email.includes('it')) deptName = 'Information Technology';
+        else if (email.includes('cyber')) deptName = 'Cyber Security';
+        else if (email.includes('cce')) deptName = 'Computer and Communication Engineering';
+        else if (email.includes('csbs')) deptName = 'Computer Science and Business System';
+      }
+
+      displayMembers.push({
+        name: pm.member_name,
+        role: roleName,
+        department: deptName
+      });
+
+      // Eligible team members are Leader and Team Members. Mentor is strictly excluded!
+      if (!isMentor) {
+        if (email && !memberEmails.includes(email)) {
+          memberEmails.push(email);
+        }
+        if (deptName && !memberDepartments.includes(deptName)) {
+          memberDepartments.push(deptName);
+        }
       }
     }
+
+    // Resilient fallback: ensure normalized departments for Leader and Members 1 & 2 from registration are present
+    if (reg) {
+      [reg.leader_department, reg.member2_department, reg.member3_department].filter(Boolean).forEach(d => {
+        const normD = normalizeDepartment(d);
+        if (normD && !memberDepartments.includes(normD)) {
+          memberDepartments.push(normD);
+        }
+      });
+    }
+  } else if (reg) {
+    displayMembers = [
+      { name: reg.leader_name, role: 'Team Leader', department: reg.leader_department },
+      { name: reg.member2_name, role: 'Team Member', department: reg.member2_department },
+      { name: reg.member3_name, role: 'Team Member', department: reg.member3_department }
+    ].filter(m => m.name);
+    // Mentor department is strictly excluded; only Leader and Members 1 & 2 are included
+    memberDepartments = [reg.leader_department, reg.member2_department, reg.member3_department].filter(Boolean);
+    memberEmails = [reg.leader_email, reg.member2_email, reg.member3_email].filter(Boolean).map(e => e.toLowerCase().trim());
   }
 
   const controls = await getVotingControls();
@@ -573,45 +619,53 @@ async function buildTeamShowcaseAndEligibility(teamId, voterUser, fromQr = false
       const voterDept = (voterProfile?.department || voterUser?.user_metadata?.department || fallbackVoterDeptMap.get(voterUser.id) || '').trim();
       const voterEmail = (voterProfile?.email || voterUser.email || '').toLowerCase().trim();
 
-      let existingVote = null;
+      // Product-level voting: Query all votes cast by this voter in the current round
+      let votedProductIds = new Set();
       try {
-        const { data: dbVote, error: voteErr } = await supabase
+        const { data: dbVotes, error: voteErr } = await supabase
           .from('votes')
-          .select('id')
+          .select('product_id')
           .eq('voter_user_id', voterUser.id)
-          .eq('team_id', teamId)
-          .eq('voting_round', currentRound)
-          .maybeSingle();
+          .eq('voting_round', currentRound);
 
-        if (!voteErr && dbVote) {
-          existingVote = dbVote;
-        } else if (voteErr) {
-          existingVote = fallbackVotes.find(v => v.voter_user_id === voterUser.id && v.team_id === teamId && v.voting_round === currentRound);
+        if (!voteErr && dbVotes) {
+          dbVotes.forEach(v => {
+            if (v.product_id) votedProductIds.add(v.product_id);
+          });
         }
       } catch (e) {
-        existingVote = fallbackVotes.find(v => v.voter_user_id === voterUser.id && v.team_id === teamId && v.voting_round === currentRound);
+        // Fallback check below
       }
 
-      if (existingVote) {
-        eligibility = {
-          can_vote: false,
-          already_voted: true,
-          error_code: 'ALREADY_VOTED',
-          reason: 'You have already voted for this team in this voting round.'
-        };
-      } else if (memberEmails.includes(voterEmail)) {
+      (fallbackVotes || []).forEach(v => {
+        if (v.voter_user_id === voterUser.id && v.voting_round === currentRound && v.product_id) {
+          votedProductIds.add(v.product_id);
+        }
+      });
+
+      // Attach per-product voted status
+      safeProducts = safeProducts.map(p => ({
+        ...p,
+        is_voted: votedProductIds.has(p.id)
+      }));
+
+      const allProductsVoted = safeProducts.length > 0 && safeProducts.every(p => p.is_voted);
+
+      if (memberEmails.includes(voterEmail)) {
         eligibility = {
           can_vote: false,
           is_own_team: true,
           error_code: 'OWN_TEAM_VOTE_BLOCKED',
-          reason: "YOU CAN'T VOTE FOR YOUR OWN TEAM - You cannot vote for your own team."
+          reason: "YOU CAN'T VOTE FOR YOUR OWN TEAM - You cannot vote for your own team.",
+          voted_product_ids: Array.from(votedProductIds)
         };
       } else if (!voterDept) {
         eligibility = {
           can_vote: false,
           needs_department: true,
           error_code: 'DEPARTMENT_REQUIRED',
-          reason: 'Please select and save your department in your profile before voting.'
+          reason: 'Please select and save your department in your profile before voting.',
+          voted_product_ids: Array.from(votedProductIds)
         };
       } else {
         // Check department clash (Mentor department is strictly ignored!)
@@ -623,13 +677,25 @@ async function buildTeamShowcaseAndEligibility(teamId, voterUser, fromQr = false
           eligibility = {
             can_vote: false,
             department_ineligible: true,
-            error_code: 'VOTING_NOT_ALLOWED',
-            reason: `VOTING NOT ALLOWED - You cannot vote for a team containing a leader/member from your department (${voterDept}). Mentor department is ignored.`
+            error_code: 'DEPARTMENT_INELIGIBLE',
+            reason: `VOTING NOT ALLOWED - You cannot vote for a team containing a leader/member from your department (${voterDept}). Mentor department is ignored.`,
+            voted_product_ids: Array.from(votedProductIds)
+          };
+        } else if (allProductsVoted) {
+          eligibility = {
+            can_vote: false,
+            already_voted: true,
+            all_products_voted: true,
+            error_code: 'ALREADY_VOTED',
+            reason: 'You have already voted for all projects belonging to this team in this voting round.',
+            voted_product_ids: Array.from(votedProductIds)
           };
         } else {
           eligibility = {
             can_vote: true,
-            reason: null
+            already_voted: false,
+            reason: null,
+            voted_product_ids: Array.from(votedProductIds)
           };
         }
       }
@@ -852,19 +918,75 @@ router.post('/vote', authenticateUser, voteLimiter, async (req, res) => {
       });
     }
 
-    let { team_id, qr_token, team_identifier, voting_round = controls.current_voting_round || 1 } = req.body;
+    let { product_id, team_id, qr_token, team_identifier, voting_round = controls.current_voting_round || 1 } = req.body;
 
-    // If qr_token is passed, validate it strictly
+    // Blocker 1: Authenticated voter ID enforcement
+    // The authenticated voter identity derives strictly from req.user.id (from authenticated session/JWT).
+    // Client-supplied voter ID is rejected if it attempts impersonation, and is NEVER trusted.
+    const clientVoterId = req.body.p_voter_user_id || req.body.voter_user_id || req.body.voter_id;
+    if (clientVoterId && String(clientVoterId).toLowerCase().trim() !== String(req.user.id).toLowerCase().trim()) {
+      return res.status(403).json({
+        success: false,
+        error_code: 'IMPERSONATION_BLOCKED',
+        message: 'Security violation: Cannot vote on behalf of another user identity.'
+      });
+    }
+
+    // 2. Validate and resolve product_id & team_id
+    let productRow = null;
+    if (product_id) {
+      const { data: pData } = await supabase
+        .from('products')
+        .select('id, team_id, product_title, status')
+        .eq('id', product_id)
+        .maybeSingle();
+
+      if (!pData) {
+        return res.status(404).json({
+          success: false,
+          error_code: 'PRODUCT_NOT_FOUND',
+          message: 'The specified product does not exist.'
+        });
+      }
+
+      productRow = pData;
+      if (productRow.status && productRow.status !== 'active') {
+        return res.status(400).json({
+          success: false,
+          error_code: 'PRODUCT_INACTIVE',
+          message: 'This project is not currently active for community voting.'
+        });
+      }
+      if (team_id && team_id !== productRow.team_id) {
+        return res.status(400).json({
+          success: false,
+          error_code: 'TEAM_PRODUCT_MISMATCH',
+          message: 'The specified product does not belong to the provided team.'
+        });
+      }
+      team_id = productRow.team_id;
+    }
+
+    // 3. If qr_token is passed, validate it strictly
     if (qr_token) {
       const qrRow = await getQrByToken(qr_token.trim());
 
-      if (!qrRow || qrRow.is_active === false || (team_id && qrRow.team_id !== team_id)) {
+      if (!qrRow || qrRow.is_active === false) {
         return res.status(403).json({
           success: false,
           error_code: 'INVALID_QR_CODE',
-          message: 'INVALID QR CODE - This QR code is not active or is not associated with this team.'
+          message: 'INVALID QR CODE - This QR code is not active or is invalid.'
         });
       }
+
+      if (team_id && qrRow.team_id !== team_id) {
+        return res.status(403).json({
+          success: false,
+          error_code: 'QR_TEAM_MISMATCH',
+          message: 'INVALID QR CODE - This QR code does not belong to the product team.'
+        });
+      }
+
       if (!team_id) {
         team_id = qrRow.team_id;
       }
@@ -886,49 +1008,181 @@ router.post('/vote', authenticateUser, voteLimiter, async (req, res) => {
       });
     }
 
-    // Call PostgreSQL atomic function 'cast_vote'
+    // If product_id was not passed, resolve active products for this team
+    if (!product_id) {
+      const { data: teamProducts } = await supabase
+        .from('products')
+        .select('id, product_title, status')
+        .eq('team_id', team_id)
+        .or('status.eq.active,status.is.null')
+        .order('product_number', { ascending: true });
+
+      if (teamProducts && teamProducts.length === 1) {
+        product_id = teamProducts[0].id;
+        productRow = teamProducts[0];
+      } else if (teamProducts && teamProducts.length > 1) {
+        return res.status(400).json({
+          success: false,
+          error_code: 'PRODUCT_ID_REQUIRED',
+          message: 'This team has multiple projects. Please select a specific project to vote for.'
+        });
+      } else {
+        product_id = team_id;
+      }
+    }
+
+    // Concurrency atomic lock per voter:product:round
+    const inflightLockKey = `${req.user.id}:${product_id}:${voting_round}`;
+    if (inflightVoteLocks.has(inflightLockKey)) {
+      metrics.duplicateAttemptsBlocked += 1;
+      return res.status(409).json({
+        success: false,
+        error_code: 'ALREADY_VOTED',
+        message: 'A vote for this product is currently being processed or already recorded.'
+      });
+    }
+    inflightVoteLocks.add(inflightLockKey);
+
+    // 4. Call PostgreSQL atomic function 'cast_vote'
     const { data: rpcResult, error: rpcErr } = await supabase.rpc('cast_vote', {
+      p_product_id: product_id,
       p_team_id: team_id,
-      p_voter_user_id: req.user.id,
       p_voting_round: voting_round,
       p_qr_token: qr_token || null
     });
 
+    if (!rpcErr && rpcResult) {
+      if (!rpcResult.success) {
+        if (rpcResult.error_code === 'ALREADY_VOTED') {
+          metrics.duplicateAttemptsBlocked += 1;
+          return res.status(409).json({
+            success: false,
+            error_code: 'ALREADY_VOTED',
+            message: rpcResult.message || 'You have already voted for this product.'
+          });
+        }
+        inflightVoteLocks.delete(inflightLockKey);
+        return res.status(403).json({
+          success: false,
+          error_code: rpcResult.error_code,
+          message: rpcResult.message
+        });
+      }
+
+      metrics.voteTimestamps.push(Date.now());
+      leaderboardCache.cachedAt = 0;
+
+      return res.status(200).json({
+        success: true,
+        product_id: rpcResult.product_id || product_id,
+        product_title: rpcResult.product_title,
+        team_id: rpcResult.team_id || team_id,
+        team_name: rpcResult.team_name,
+        voting_round: voting_round,
+        new_product_votes: rpcResult.new_product_votes,
+        new_team_votes: rpcResult.new_team_votes,
+        new_vote_count: rpcResult.new_product_votes,
+        message: rpcResult.message
+      });
+    }
+
     if (rpcErr) {
       // Check if unique constraint violation
-      if (rpcErr.message && (rpcErr.message.includes('unique_voter_team_round') || rpcErr.code === '23505')) {
+      if (rpcErr.message && (rpcErr.message.includes('unique_voter_product_round') || rpcErr.message.includes('unique_voter_team_round') || rpcErr.code === '23505')) {
         metrics.duplicateAttemptsBlocked += 1;
         return res.status(409).json({
           success: false,
           error_code: 'ALREADY_VOTED',
-          message: 'You have already voted for this team in this voting round.'
+          message: 'You have already voted for this product.'
         });
       }
 
-      // Check if function does not exist, run direct fallback
+      // Check if function does not exist or has signature difference, run direct fallback
       if (rpcErr.code === '42883' || (rpcErr.message && (rpcErr.message.includes('does not exist') || rpcErr.message.includes('schema cache')))) {
         console.warn('[Voting API] cast_vote RPC missing in DB, executing direct safe fallback');
         
         // Direct Fallback Execution
         const showcase = await buildTeamShowcaseAndEligibility(team_id, req.user);
-        if (!showcase.eligibility?.can_vote) {
-          if (showcase.eligibility?.already_voted) {
-            metrics.duplicateAttemptsBlocked += 1;
-            return res.status(409).json({ success: false, error_code: 'ALREADY_VOTED', message: showcase.eligibility.reason });
-          }
-          return res.status(403).json({ success: false, error_code: showcase.eligibility?.error_code || 'VOTING_BLOCKED', message: showcase.eligibility.reason });
+
+        // Check team-level own team eligibility
+        if (showcase.eligibility?.is_own_team) {
+          inflightVoteLocks.delete(inflightLockKey);
+          return res.status(403).json({
+            success: false,
+            error_code: 'OWN_TEAM_VOTE_BLOCKED',
+            message: "YOU CAN'T VOTE FOR YOUR OWN TEAM - You cannot vote for your own team."
+          });
         }
 
+        // Check department clash (Mentor department ignored)
+        if (showcase.eligibility?.department_ineligible) {
+          inflightVoteLocks.delete(inflightLockKey);
+          return res.status(403).json({
+            success: false,
+            error_code: 'DEPARTMENT_INELIGIBLE',
+            message: showcase.eligibility.reason || 'VOTING NOT ALLOWED - You cannot vote for a team containing members from your department.'
+          });
+        }
+
+        if (showcase.eligibility?.voting_closed) {
+          inflightVoteLocks.delete(inflightLockKey);
+          return res.status(403).json({
+            success: false,
+            error_code: 'VOTING_CLOSED',
+            message: 'Community voting is currently closed.'
+          });
+        }
+
+        // Check voter department requirement
         const { data: voterProfile } = await supabase.from('profiles').select('department').eq('user_id', req.user.id).maybeSingle();
-        const voterDept = voterProfile?.department || req.user?.user_metadata?.department || fallbackVoterDeptMap.get(req.user.id) || 'General Engineering';
+        const voterDept = (voterProfile?.department || req.user?.user_metadata?.department || fallbackVoterDeptMap.get(req.user.id) || '').trim();
+
+        if (!voterDept) {
+          inflightVoteLocks.delete(inflightLockKey);
+          return res.status(400).json({
+            success: false,
+            error_code: 'DEPARTMENT_REQUIRED',
+            message: 'Please select and save your department in your profile before voting.'
+          });
+        }
+
+        // Check if voter already voted for this specific product
+        let alreadyVoted = false;
+        try {
+          const { data: existingVote } = await supabase
+            .from('votes')
+            .select('id')
+            .eq('voter_user_id', req.user.id)
+            .eq('product_id', product_id)
+            .eq('voting_round', voting_round)
+            .maybeSingle();
+
+          if (existingVote) alreadyVoted = true;
+        } catch (e) {
+          // Table may not have product_id column yet
+        }
+
+        if (!alreadyVoted) {
+          alreadyVoted = fallbackVotes.some(v => v.voter_user_id === req.user.id && (v.product_id === product_id || (!v.product_id && v.team_id === team_id)) && v.voting_round === voting_round);
+        }
+
+        if (alreadyVoted) {
+          metrics.duplicateAttemptsBlocked += 1;
+          return res.status(409).json({
+            success: false,
+            error_code: 'ALREADY_VOTED',
+            message: 'You have already voted for this product in this voting round.'
+          });
+        }
 
         // Insert into votes table
         let inserted = false;
         try {
           const { error: insErr } = await supabase.from('votes').insert([{
             voter_user_id: req.user.id,
-            voter_department: voterDept,
+            product_id: product_id,
             team_id: team_id,
+            voter_department: voterDept,
             voting_round: voting_round
           }]);
 
@@ -936,52 +1190,70 @@ router.post('/vote', authenticateUser, voteLimiter, async (req, res) => {
             inserted = true;
           } else if (insErr.code === '23505' || insErr.message?.includes('unique')) {
             metrics.duplicateAttemptsBlocked += 1;
-            return res.status(409).json({ success: false, error_code: 'ALREADY_VOTED', message: 'You have already voted for this team in this voting round.' });
+            return res.status(409).json({ success: false, error_code: 'ALREADY_VOTED', message: 'You have already voted for this product.' });
           }
         } catch (e) {
           // Table pending migration
         }
 
         if (!inserted) {
-          const already = fallbackVotes.some(v => v.voter_user_id === req.user.id && v.team_id === team_id && v.voting_round === voting_round);
-          if (already) {
-            metrics.duplicateAttemptsBlocked += 1;
-            return res.status(409).json({ success: false, error_code: 'ALREADY_VOTED', message: 'You have already voted for this team in this voting round.' });
-          }
           fallbackVotes.push({
             id: crypto.randomUUID(),
             voter_user_id: req.user.id,
+            product_id: product_id,
+            team_id: team_id,
             voter_department: voterDept,
-            team_id,
-            voting_round,
+            voting_round: voting_round,
             created_at: new Date().toISOString()
           });
         }
 
-        // Increment team_votes
-        let newCount = 1;
+        // Increment product_votes & team_votes
+        let newProductVotes = 1;
+        let newTeamVotes = 1;
+        try {
+          const { data: existingPv } = await supabase.from('product_votes').select('total_votes').eq('product_id', product_id).eq('voting_round', voting_round).maybeSingle();
+          newProductVotes = (existingPv?.total_votes || 0) + 1;
+          await supabase.from('product_votes').upsert({
+            product_id,
+            team_id,
+            voting_round,
+            total_votes: newProductVotes,
+            last_vote_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          }, { onConflict: 'product_id, voting_round' });
+        } catch (e) {}
+
         try {
           const { data: existingTv } = await supabase.from('team_votes').select('vote_count').eq('team_id', team_id).eq('voting_round', voting_round).maybeSingle();
-          newCount = (existingTv?.vote_count || 0) + 1;
+          newTeamVotes = (existingTv?.vote_count || 0) + 1;
           await supabase.from('team_votes').upsert({
             team_id,
             voting_round,
-            vote_count: newCount,
+            vote_count: newTeamVotes,
             updated_at: new Date().toISOString()
           }, { onConflict: 'team_id, voting_round' });
         } catch (e) {
-          newCount = fallbackVotes.filter(v => v.team_id === team_id && v.voting_round === voting_round).length;
+          newTeamVotes = fallbackVotes.filter(v => v.team_id === team_id && v.voting_round === voting_round).length;
         }
 
         metrics.voteTimestamps.push(Date.now());
         leaderboardCache.cachedAt = 0;
 
+        const currentProduct = showcase.products?.find(p => p.id === product_id);
+        const prodTitle = currentProduct?.product_title || productRow?.product_title || 'Innovation Project';
+
         return res.status(200).json({
           success: true,
+          product_id,
+          product_title: prodTitle,
           team_id,
           team_name: showcase.team?.team_name,
-          new_vote_count: newCount,
-          message: `Your vote for ${showcase.team?.team_name} has been recorded successfully!`
+          voting_round,
+          new_product_votes: newProductVotes,
+          new_team_votes: newTeamVotes,
+          new_vote_count: newProductVotes,
+          message: `Your vote for "${prodTitle}" has been recorded successfully!`
         });
       }
 
@@ -990,35 +1262,6 @@ router.post('/vote', authenticateUser, voteLimiter, async (req, res) => {
         message: 'Vote submission failed. Please ensure the database migration has been run.'
       });
     }
-
-    // Process structured response from cast_vote RPC
-    if (!rpcResult.success) {
-      if (rpcResult.error_code === 'ALREADY_VOTED') {
-        metrics.duplicateAttemptsBlocked += 1;
-        return res.status(409).json({
-          success: false,
-          error_code: rpcResult.error_code,
-          message: rpcResult.message
-        });
-      }
-
-      return res.status(403).json({
-        success: false,
-        error_code: rpcResult.error_code,
-        message: rpcResult.message
-      });
-    }
-
-    metrics.voteTimestamps.push(Date.now());
-    leaderboardCache.cachedAt = 0;
-
-    return res.status(200).json({
-      success: true,
-      team_id: rpcResult.team_id,
-      team_name: rpcResult.team_name,
-      new_vote_count: rpcResult.new_vote_count,
-      message: rpcResult.message
-    });
   } catch (err) {
     console.error('[Voting API] /vote error:', err.message);
     return res.status(500).json({ success: false, message: 'Internal server error processing vote.' });
@@ -1062,63 +1305,64 @@ router.get('/leaderboard', leaderboardLimiter, async (req, res) => {
     console.warn('[Voting API] get_voting_leaderboard RPC unavailable, running direct query fallback:', rpcErr?.message);
 
     const [
-      { data: teamsData, error: teamsErr },
-      { data: teamVotesData },
-      { data: registrationsData },
-      { data: productsData }
+      { data: productsData, error: prodsErr },
+      { data: teamsData },
+      { data: productVotesData },
+      { data: registrationsData }
     ] = await Promise.all([
+      supabase.from('products').select('id, team_id, product_title, innovation_domain, trl_level, legacy_registration_id, status, created_at').or('status.eq.active,status.is.null'),
       supabase.from('teams').select('id, team_name, created_at'),
-      supabase.from('team_votes').select('team_id, vote_count, updated_at').eq('voting_round', round),
-      supabase.from('registrations').select('team_name, leader_department, project_title, innovation_domain'),
-      supabase.from('products').select('team_id, product_title, innovation_domain, created_at')
+      supabase.from('product_votes').select('product_id, total_votes, last_vote_at').eq('voting_round', round),
+      supabase.from('registrations').select('registration_id, team_name, leader_department')
     ]);
 
-    if (teamsErr) throw teamsErr;
+    if (prodsErr) throw prodsErr;
 
-    const votesMap = {};
+    const teamMap = new Map();
+    (teamsData || []).forEach(t => teamMap.set(t.id, t));
+
+    const votesMap = new Map();
     let totalVotes = 0;
-    (teamVotesData || []).forEach(v => {
-      votesMap[v.team_id] = {
-        count: v.vote_count,
-        updated_at: v.updated_at
-      };
-      totalVotes += v.vote_count;
+    (productVotesData || []).forEach(v => {
+      votesMap.set(v.product_id, {
+        count: v.total_votes,
+        updated_at: v.last_vote_at
+      });
+      totalVotes += v.total_votes;
     });
 
     const regMap = new Map();
     (registrationsData || []).forEach(r => {
-      if (r.team_name) {
-        regMap.set(r.team_name.trim().toLowerCase(), r);
-      }
+      if (r.registration_id) regMap.set(r.registration_id, r);
+      if (r.team_name) regMap.set(r.team_name.trim().toLowerCase(), r);
     });
 
-    const productMap = new Map();
-    (productsData || []).forEach(p => {
-      if (p.team_id && !productMap.has(p.team_id)) {
-        productMap.set(p.team_id, p);
-      }
-    });
-
-    const ranked = (teamsData || []).map(t => {
-      const v = votesMap[t.id] || { count: 0, updated_at: t.created_at };
-      const reg = regMap.get((t.team_name || '').trim().toLowerCase());
+    const ranked = (productsData || []).map(p => {
+      const v = votesMap.get(p.id) || { count: 0, updated_at: p.created_at };
+      const team = teamMap.get(p.team_id);
+      const reg = p.legacy_registration_id ? regMap.get(p.legacy_registration_id) : (team ? regMap.get(team.team_name.trim().toLowerCase()) : null);
       const dept = normalizeDepartment(reg?.leader_department);
-      const prod = productMap.get(t.id);
-      const leadProd = prod?.product_title || reg?.project_title || 'Project Showcase';
-      const domain = prod?.innovation_domain || reg?.innovation_domain || 'Open Innovation';
+
       return {
-        id: t.id,
-        team_id: t.id,
-        teamName: t.team_name,
-        team_name: t.team_name,
+        id: p.id,
+        productId: p.id,
+        product_id: p.id,
+        productTitle: p.product_title || 'Innovation Project',
+        product_title: p.product_title || 'Innovation Project',
+        leadingProductTitle: p.product_title || 'Innovation Project',
+        leading_product_title: p.product_title || 'Innovation Project',
+        teamId: p.team_id,
+        team_id: p.team_id,
+        teamName: team?.team_name || 'Innovation Team',
+        team_name: team?.team_name || 'Innovation Team',
         department: dept,
         department_name: dept,
-        leadingProductTitle: leadProd,
-        leading_product_title: leadProd,
-        innovationDomain: domain,
-        innovation_domain: domain,
+        innovationDomain: p.innovation_domain || 'Open Innovation',
+        innovation_domain: p.innovation_domain || 'Open Innovation',
+        trlLevel: p.trl_level || null,
         voteCount: v.count,
         vote_count: v.count,
+        total_votes: v.count,
         lastVoteTime: v.updated_at,
         last_vote_time: v.updated_at
       };
@@ -1138,7 +1382,9 @@ router.get('/leaderboard', leaderboardLimiter, async (req, res) => {
     const payload = {
       voting_round: round,
       total_votes: totalVotes,
-      total_teams: finalRanks.length,
+      total_products: finalRanks.length,
+      total_teams: new Set(finalRanks.map(r => r.team_id)).size,
+      products: finalRanks,
       teams: finalRanks
     };
 
@@ -1158,25 +1404,48 @@ router.get('/leaderboard', leaderboardLimiter, async (req, res) => {
 
 // -------------------------------------------------------------
 // 5. GET /api/voting/my-votes
-// Returns IDs of teams the authenticated user has voted for
+// Returns IDs of products and teams the authenticated user has voted for
 // -------------------------------------------------------------
 router.get('/my-votes', authenticateUser, async (req, res) => {
   try {
     const round = parseInt(req.query.round, 10) || 1;
 
-    const { data: votes, error } = await supabase
-      .from('votes')
-      .select('team_id, created_at')
-      .eq('voter_user_id', req.user.id)
-      .eq('voting_round', round);
+    let votesList = [];
+    try {
+      const { data: votes, error } = await supabase
+        .from('votes')
+        .select('id, product_id, team_id, created_at, products(product_title, innovation_domain), teams(team_name)')
+        .eq('voter_user_id', req.user.id)
+        .eq('voting_round', round)
+        .order('created_at', { ascending: false });
 
-    if (error) throw error;
+      if (!error && Array.isArray(votes) && votes.length > 0) {
+        votesList = votes;
+      }
+    } catch (e) {
+      // Fallback
+    }
+
+    if (votesList.length === 0) {
+      votesList = fallbackVotes.filter(v => v.voter_user_id === req.user.id && v.voting_round === round);
+    }
+
+    const votedProductIds = votesList.map(v => v.product_id).filter(Boolean);
+    const votedTeamIds = Array.from(new Set(votesList.map(v => v.team_id).filter(Boolean)));
 
     return res.status(200).json({
       success: true,
       voting_round: round,
-      voted_team_ids: (votes || []).map(v => v.team_id),
-      votes: votes || []
+      voted_product_ids: votedProductIds,
+      voted_team_ids: votedTeamIds,
+      votes: votesList.map(v => ({
+        id: v.id,
+        product_id: v.product_id,
+        product_title: v.products?.product_title || 'Innovation Project',
+        team_id: v.team_id,
+        team_name: v.teams?.team_name || 'Innovation Team',
+        created_at: v.created_at
+      }))
     });
   } catch (err) {
     console.error('[Voting API] /my-votes error:', err.message);
@@ -1632,20 +1901,39 @@ router.get('/admin/metrics', authenticateUser, checkAdmin, async (req, res) => {
   try {
     const round = parseInt(req.query.round, 10) || 1;
 
-    // Total votes from team_votes
+    // Total votes from product_votes or team_votes
     let totalVotes = 0;
+    let productsWithVotes = 0;
     let teamsWithVotes = 0;
     try {
-      const { data: teamVotesData } = await supabase
+      const { data: prodVotesData } = await supabase
+        .from('product_votes')
+        .select('total_votes')
+        .eq('voting_round', round);
+
+      if (prodVotesData && Array.isArray(prodVotesData) && prodVotesData.length > 0) {
+        totalVotes = prodVotesData.reduce((sum, pv) => sum + (pv.total_votes || 0), 0);
+        productsWithVotes = prodVotesData.filter(pv => (pv.total_votes || 0) > 0).length;
+      } else {
+        const { data: teamVotesData } = await supabase
+          .from('team_votes')
+          .select('vote_count')
+          .eq('voting_round', round);
+        if (teamVotesData && Array.isArray(teamVotesData)) {
+          totalVotes = teamVotesData.reduce((sum, tv) => sum + (tv.vote_count || 0), 0);
+        }
+      }
+
+      const { data: tvData } = await supabase
         .from('team_votes')
         .select('vote_count')
         .eq('voting_round', round);
-      if (teamVotesData && Array.isArray(teamVotesData)) {
-        totalVotes = teamVotesData.reduce((sum, tv) => sum + (tv.vote_count || 0), 0);
-        teamsWithVotes = teamVotesData.filter(tv => (tv.vote_count || 0) > 0).length;
+      if (tvData && Array.isArray(tvData)) {
+        teamsWithVotes = tvData.filter(tv => (tv.vote_count || 0) > 0).length;
       }
     } catch (e) {
       totalVotes = fallbackVotes.filter(v => v.voting_round === round).length;
+      productsWithVotes = new Set(fallbackVotes.filter(v => v.product_id).map(v => v.product_id)).size;
       teamsWithVotes = new Set(fallbackVotes.map(v => v.team_id)).size;
     }
 
@@ -1714,6 +2002,7 @@ router.get('/admin/metrics', authenticateUser, checkAdmin, async (req, res) => {
         votesPerMinute: votesLastMinute,
         duplicateAttemptsBlocked: metrics.duplicateAttemptsBlocked,
         teamsWithVotes,
+        productsWithVotes,
         totalRegisteredTeams,
         totalEligibleTeams,
         totalProducts,
@@ -1901,6 +2190,7 @@ function buildVotingWorkbook({
   teamMap = new Map(),
   regByTeamName = new Map(),
   prodByTeamId = new Map(),
+  prodById = new Map(),
   profileMap = new Map(),
   teams = [],
   registrations = []
@@ -1950,9 +2240,8 @@ function buildVotingWorkbook({
   const voteRecordsRows = votes.map(v => {
     const prof = profileMap.get(v.voter_user_id);
     const team = teamMap.get(v.team_id);
-    const reg = team ? regByTeamName.get((team.team_name || '').trim().toLowerCase()) : null;
-    const prods = prodByTeamId.get(v.team_id) || [];
-    const prodTitle = prods[0]?.product_title || reg?.project_title || 'Project Showcase';
+    const prod = (v.product_id && prodById?.get(v.product_id)) || (prodByTeamId.get(v.team_id) || [])[0];
+    const prodTitle = prod?.product_title || reg?.project_title || 'Project Showcase';
 
     return [
       String(v.id),
@@ -2086,8 +2375,8 @@ function buildVotingWorkbook({
     const prof = profileMap.get(v.voter_user_id);
     const team = teamMap.get(v.team_id);
     const reg = team ? regByTeamName.get((team.team_name || '').trim().toLowerCase()) : null;
-    const prods = prodByTeamId.get(v.team_id) || [];
-    const prodTitle = prods[0]?.product_title || reg?.project_title || 'Project Showcase';
+    const prod = (v.product_id && prodById?.get(v.product_id)) || (prodByTeamId.get(v.team_id) || [])[0];
+    const prodTitle = prod?.product_title || reg?.project_title || 'Project Showcase';
 
     return [
       prof?.name || (prof?.email ? prof.email.split('@')[0] : 'Student Voter'),
@@ -2219,7 +2508,7 @@ async function getAllVotingRecords() {
   try {
     const { data: dbVotes, error: dbErr } = await supabase
       .from('votes')
-      .select('id, voter_user_id, voter_department, team_id, created_at')
+      .select('id, voter_user_id, voter_department, team_id, product_id, created_at')
       .order('created_at', { ascending: false });
     if (!dbErr && Array.isArray(dbVotes)) {
       votesList = dbVotes;
@@ -2254,7 +2543,9 @@ async function getAllVotingRecords() {
   });
 
   const prodByTeamId = new Map();
+  const prodById = new Map();
   (prodsData || []).forEach(p => {
+    prodById.set(p.id, p);
     if (p.team_id) {
       if (!prodByTeamId.has(p.team_id)) prodByTeamId.set(p.team_id, []);
       prodByTeamId.get(p.team_id).push(p);
@@ -2271,6 +2562,7 @@ async function getAllVotingRecords() {
     teamMap,
     regByTeamName,
     prodByTeamId,
+    prodById,
     profileMap,
     teams: teamsData || [],
     registrations: regsData || [],
@@ -2285,7 +2577,7 @@ async function getAllVotingRecords() {
 router.get('/admin/voter-reports', authenticateUser, checkAdmin, async (req, res) => {
   try {
     const { search = '', voter_id = '' } = req.query;
-    const { votes, teamMap, regByTeamName, prodByTeamId, profileMap } = await getAllVotingRecords();
+    const { votes, teamMap, regByTeamName, prodByTeamId, prodById, profileMap } = await getAllVotingRecords();
 
     // Group votes by voter_user_id
     const voterMap = new Map();
@@ -2309,14 +2601,15 @@ router.get('/admin/voter-reports', authenticateUser, checkAdmin, async (req, res
 
       const team = teamMap.get(v.team_id);
       const reg = team ? regByTeamName.get((team.team_name || '').trim().toLowerCase()) : null;
-      const prods = prodByTeamId.get(v.team_id) || [];
-      const prodTitle = prods[0]?.product_title || reg?.project_title || 'Project Showcase';
+      const prod = (v.product_id && prodById?.get(v.product_id)) || (prodByTeamId.get(v.team_id) || [])[0];
+      const prodTitle = prod?.product_title || reg?.project_title || 'Project Showcase';
 
       entry.history.push({
         voteId: v.id,
+        productId: v.product_id || prod?.id || null,
+        productTitle: prodTitle,
         teamId: reg?.registration_id || (team?.id ? team.id.slice(0, 8) : 'N/A'),
         teamName: team?.team_name || 'Unknown Team',
-        productTitle: prodTitle,
         teamDepartment: normalizeDepartment(reg?.leader_department),
         votedAt: v.created_at
       });
@@ -2605,12 +2898,22 @@ router.get('/admin/report-history', authenticateUser, checkAdmin, async (req, re
   }
 });
 
+router.post('/admin/reset-test-state', authenticateUser, checkAdmin, (req, res) => {
+  fallbackQrStore.clear();
+  fallbackQrTokenMap.clear();
+  fallbackVoterDeptMap.clear();
+  fallbackVotes.length = 0;
+  inflightVoteLocks.clear();
+  return res.json({ success: true, message: 'Test state reset.' });
+});
+
 router._testingHooks = {
   resetFallbackStores: () => {
     fallbackQrStore.clear();
     fallbackQrTokenMap.clear();
     fallbackVoterDeptMap.clear();
     fallbackVotes.length = 0;
+    inflightVoteLocks.clear();
     fallbackControls.is_voting_active = true;
     fallbackControls.is_qr_generation_active = true;
     fallbackControls.current_voting_round = 1;

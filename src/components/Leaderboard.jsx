@@ -327,22 +327,22 @@ function PodiumCard({ team, place, isPulse, prefersReducedMotion = false }) {
           </span>
         </div>
 
-        {/* Team Name: noticeably larger, bold, wraps naturally, NO truncate */}
+        {/* Product Title: primary entity for product-level voting */}
         <h3
           className={`font-heading font-black text-slate-900 break-words leading-tight mt-3 max-w-full ${
             isFirst ? "text-xl sm:text-2xl lg:text-3xl" : "text-lg sm:text-xl lg:text-2xl"
           }`}
         >
-          {team.teamName}
+          {team.productTitle || team.leadingProductTitle || team.teamName}
         </h3>
 
-        {/* Innovation / Product Title: readable, wraps naturally, NO truncate */}
+        {/* Parent Team Name */}
         <p
-          className={`font-medium text-slate-600 break-words leading-relaxed mt-2 max-w-full ${
+          className={`font-semibold text-slate-600 break-words leading-relaxed mt-1.5 max-w-full ${
             isFirst ? "text-xs sm:text-sm lg:text-base text-slate-700" : "text-xs sm:text-sm"
           }`}
         >
-          {team.leadingProductTitle || "Project Showcase"}
+          {team.productTitle ? `Team: ${team.teamName}` : (team.leadingProductTitle || "Project Showcase")}
         </p>
 
         {/* Department Badge: clearly readable, NO truncate */}
@@ -500,9 +500,10 @@ export default function Leaderboard({ user, session, profile, onProfileUpdate } 
       if (json.success && json.data) {
         const freshVoting = {
           totalVotes: json.data.total_votes || 0,
+          totalProducts: json.data.total_products || (json.data.products ? json.data.products.length : 0),
           totalTeams: json.data.total_teams || 0,
           round: json.data.voting_round || 1,
-          teams: json.data.teams || []
+          teams: json.data.products || json.data.teams || []
         };
         cachedVotingStats = freshVoting;
         setVotingStats(freshVoting);
@@ -780,19 +781,19 @@ export default function Leaderboard({ user, session, profile, onProfileUpdate } 
     fetchVotingRankings(Boolean(cachedVotingStats));
 
     const channel = supabase
-      .channel("public-team_votes-live")
+      .channel("public-product_votes-live")
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "team_votes" },
+        { event: "*", schema: "public", table: "product_votes" },
         (payload) => {
           const newVote = payload.new;
-          if (newVote?.team_id) {
-            setRecentlyVotedTeamId(newVote.team_id);
+          if (newVote?.product_id) {
+            setRecentlyVotedTeamId(newVote.product_id);
             setTimeout(() => setRecentlyVotedTeamId(null), 2500);
 
             setVotingStats((prev) => {
               const updatedTeams = [...prev.teams];
-              const idx = updatedTeams.findIndex((t) => t.id === newVote.team_id);
+              const idx = updatedTeams.findIndex((t) => (t.productId || t.id) === newVote.product_id);
               if (idx !== -1) {
                 updatedTeams[idx] = {
                   ...updatedTeams[idx],
@@ -803,10 +804,10 @@ export default function Leaderboard({ user, session, profile, onProfileUpdate } 
               // Authoritative sort: voteCount DESC, lastVoteTime ASC, id ASC
               updatedTeams.sort((a, b) => {
                 if (b.voteCount !== a.voteCount) return b.voteCount - a.voteCount;
-                const tA = new Date(a.lastVoteTime).getTime();
-                const tB = new Date(b.lastVoteTime).getTime();
+                const tA = new Date(a.lastVoteTime || 0).getTime();
+                const tB = new Date(b.lastVoteTime || 0).getTime();
                 if (tA !== tB) return tA - tB;
-                return a.id.localeCompare(b.id);
+                return (a.productId || a.id).localeCompare(b.productId || b.id);
               });
               const reRanked = updatedTeams.map((t, i) => ({ ...t, rank: i + 1 }));
               const newTotal = reRanked.reduce((sum, t) => sum + (t.voteCount || 0), 0);
@@ -817,6 +818,13 @@ export default function Leaderboard({ user, session, profile, onProfileUpdate } 
               };
             });
           }
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "team_votes" },
+        () => {
+          fetchVotingRankings(true);
         }
       )
       .subscribe((status) => {
@@ -2126,6 +2134,7 @@ export default function Leaderboard({ user, session, profile, onProfileUpdate } 
         !votingSearch.trim() ||
         (t.teamName && t.teamName.toLowerCase().includes(votingSearch.toLowerCase().trim())) ||
         (t.department && t.department.toLowerCase().includes(votingSearch.toLowerCase().trim())) ||
+        (t.productTitle && t.productTitle.toLowerCase().includes(votingSearch.toLowerCase().trim())) ||
         (t.leadingProductTitle && t.leadingProductTitle.toLowerCase().includes(votingSearch.toLowerCase().trim()));
 
       const matchesDept =
@@ -2180,14 +2189,14 @@ export default function Leaderboard({ user, session, profile, onProfileUpdate } 
             </p>
           </div>
 
-          {/* Card 2: Total Teams (Dynamic) */}
+          {/* Card 2: Total Products (Dynamic) */}
           <div className="rounded-2xl bg-white p-4 sm:p-5 border border-slate-200 shadow-2xs space-y-1">
             <div className="flex items-center justify-between text-slate-400">
-              <span className="text-[11px] font-bold uppercase tracking-wider">Total Teams</span>
-              <Users size={16} className="text-primary" />
+              <span className="text-[11px] font-bold uppercase tracking-wider">Total Products</span>
+              <Cpu size={16} className="text-primary" />
             </div>
             <p className="font-heading text-2xl sm:text-3xl font-black text-[#0B1B3A]">
-              {(votingStats.totalTeams || votingStats.teams.length).toLocaleString()}
+              {(votingStats.totalProducts || votingStats.teams.length).toLocaleString()}
             </p>
           </div>
 
@@ -2379,7 +2388,7 @@ export default function Leaderboard({ user, session, profile, onProfileUpdate } 
                           <td className="py-4 px-6">
                             <div className="flex items-center gap-2.5 flex-wrap">
                               <p className="font-heading font-black text-base sm:text-lg text-slate-900 break-words">
-                                {team.teamName}
+                                {team.productTitle || team.leadingProductTitle || team.teamName}
                               </p>
                               {isPulse && (
                                 <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-200 text-amber-900 animate-pulse">
@@ -2388,7 +2397,7 @@ export default function Leaderboard({ user, session, profile, onProfileUpdate } 
                               )}
                             </div>
                             <p className="text-xs sm:text-sm text-slate-600 font-medium break-words leading-relaxed mt-1">
-                              {team.leadingProductTitle || 'Project Showcase'}
+                              {team.productTitle ? `Team: ${team.teamName}` : (team.leadingProductTitle || 'Project Showcase')}
                             </p>
                           </td>
                           <td className="py-4 px-6">
@@ -2428,7 +2437,7 @@ export default function Leaderboard({ user, session, profile, onProfileUpdate } 
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2 flex-wrap">
                               <h4 className="font-heading font-black text-sm sm:text-base text-slate-900 break-words">
-                                {team.teamName}
+                                {team.productTitle || team.leadingProductTitle || team.teamName}
                               </h4>
                               {isPulse && (
                                 <span className="inline-block px-1.5 py-0.5 rounded-full text-[9px] font-black bg-amber-200 text-amber-900">
@@ -2437,7 +2446,7 @@ export default function Leaderboard({ user, session, profile, onProfileUpdate } 
                               )}
                             </div>
                             <span className="text-xs text-slate-500 font-medium block break-words mt-0.5">
-                              {team.department}
+                              {team.productTitle ? `Team: ${team.teamName}` : team.department}
                             </span>
                           </div>
                         </div>
@@ -2452,10 +2461,10 @@ export default function Leaderboard({ user, session, profile, onProfileUpdate } 
                         </div>
                       </div>
 
-                      <div className="pt-2 border-t border-slate-100">
-                        <p className="text-xs text-slate-600 font-normal break-words leading-relaxed">
-                          {team.leadingProductTitle || 'Project Showcase'}
-                        </p>
+                      <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+                        <span className="inline-block rounded-md bg-slate-100 px-2 py-0.5 font-semibold text-slate-600">
+                          {team.department}
+                        </span>
                       </div>
                     </div>
                   );

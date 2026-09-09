@@ -374,6 +374,8 @@ router.post('/upload', upload.single('file'), async (req, res) => {
         cleanTeamId
       )
 
+      let completionResult = null;
+
       // 9. Synchronize metadata to Supabase phase1_submissions & reset decision state to PENDING
       try {
         let docType = 'OTHER'
@@ -464,19 +466,23 @@ router.post('/upload', upload.single('file'), async (req, res) => {
         }
 
         // Check completion dynamically and update local decisions cache
-        let completionResult = null;
         try {
           const { data: allTeamDocs } = await supabase
             .from('phase1_submissions')
             .select('*')
             .or(`registration_id.eq.${cleanTeamId},team_id.eq.${cleanTeamId}`);
 
-          completionResult = calculatePhase1Completion(allTeamDocs || [], patentFolder.name);
+          let docsForCalc = allTeamDocs || [];
+          if (!docsForCalc.some(d => (d.document_type === docType) || (d.original_filename && d.original_filename.includes(normalizedTemplateName)))) {
+            docsForCalc = [...docsForCalc, subPayload];
+          }
+
+          completionResult = calculatePhase1Completion(docsForCalc, patentFolder.name);
           const DECISIONS_FILE = path.join(__dirname, '..', 'config', 'team_decisions.json');
           if (fs.existsSync(DECISIONS_FILE)) {
             const raw = fs.readFileSync(DECISIONS_FILE, 'utf-8');
             const decisions = JSON.parse(raw);
-            if (completionResult.isComplete) {
+            if (completionResult && completionResult.isComplete) {
               decisions[cleanTeamId] = {
                 status: 'PENDING',
                 adminComment: null,

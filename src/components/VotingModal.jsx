@@ -471,7 +471,7 @@ export default function VotingModal({
     }
   };
 
-  // Cast official vote
+  // Cast official vote for current product
   const handleCastVote = async () => {
     if (!teamData?.team?.id) return;
     setVoting(true);
@@ -496,6 +496,7 @@ export default function VotingModal({
           'Authorization': `Bearer ${session.access_token}`
         },
         body: JSON.stringify({
+          product_id: currentIdea?.id || undefined,
           team_id: teamData.team.id,
           qr_token: activeToken || undefined
         })
@@ -504,10 +505,16 @@ export default function VotingModal({
       const json = await res.json();
 
       if (res.status === 409 || json.error_code === 'ALREADY_VOTED') {
+        if (teamData?.products && currentIdea?.id) {
+          setTeamData(prev => ({
+            ...prev,
+            products: prev.products.map(p => p.id === currentIdea.id ? { ...p, is_voted: true } : p)
+          }));
+        }
         setErrorInfo({
           code: 'ALREADY_VOTED',
           title: 'ALREADY VOTED',
-          message: json.message || 'You have already voted for this team in this voting round.'
+          message: json.message || 'You have already voted for this product in this voting round.'
         });
         setShowConfirm(false);
       } else if (!res.ok || !json.success) {
@@ -522,6 +529,18 @@ export default function VotingModal({
         });
         setShowConfirm(false);
       } else {
+        // Mark product as voted in local teamData
+        const targetProdId = currentIdea?.id || json.product_id;
+        if (teamData?.products && targetProdId) {
+          setTeamData(prev => ({
+            ...prev,
+            products: prev.products.map(p => p.id === targetProdId ? { ...p, is_voted: true } : p),
+            eligibility: {
+              ...prev.eligibility,
+              voted_product_ids: [...(prev.eligibility?.voted_product_ids || []), targetProdId]
+            }
+          }));
+        }
         setVoteSuccess(json);
         setStep('SUCCESS');
         // Dispatch live leaderboard update event
@@ -1027,11 +1046,19 @@ export default function VotingModal({
                         <h4 className="font-extrabold text-sm text-slate-900 leading-snug">
                           {currentIdea.product_title}
                         </h4>
-                        {currentIdea.trl_level && (
-                          <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[10px] font-black text-amber-700 border border-amber-200 shrink-0">
-                            TRL {currentIdea.trl_level}
-                          </span>
-                        )}
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {currentIdea.is_voted && (
+                            <span className="rounded-md bg-emerald-50 px-2 py-0.5 text-[10px] font-black text-emerald-700 border border-emerald-200 shrink-0 flex items-center gap-1">
+                              <CheckCircle2 size={11} className="text-emerald-600" />
+                              VOTED
+                            </span>
+                          )}
+                          {currentIdea.trl_level && (
+                            <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[10px] font-black text-amber-700 border border-amber-200 shrink-0">
+                              TRL {currentIdea.trl_level}
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <p className="text-[11px] font-bold text-primary">
                         Domain: {currentIdea.innovation_domain || 'Open Innovation'}
@@ -1045,7 +1072,7 @@ export default function VotingModal({
                   )}
 
                   <p className="text-[10px] text-slate-400 italic text-center">
-                    Note: Voting is at the TEAM level. One vote per student per team.
+                    Note: Voting is at the PRODUCT level. You may vote for multiple projects of the same team, once per project.
                   </p>
                 </div>
 
@@ -1076,7 +1103,7 @@ export default function VotingModal({
 
                 {/* Ineligibility Banner or Confirm / Vote Action */}
                 <div className="pt-2">
-                  {!eligibility.can_vote ? (
+                  {!eligibility.can_vote && !currentIdea?.is_voted ? (
                     <div className="rounded-2xl bg-amber-50 p-4 border border-amber-200 flex items-start gap-3">
                       <ShieldAlert size={20} className="text-amber-600 shrink-0 mt-0.5" />
                       <div className="space-y-1 text-left">
@@ -1088,8 +1115,21 @@ export default function VotingModal({
                         </p>
                       </div>
                     </div>
+                  ) : currentIdea?.is_voted ? (
+                    <div className="rounded-2xl bg-emerald-50/80 p-4 border border-emerald-200 flex items-start gap-3">
+                      <CheckCircle2 size={20} className="text-emerald-600 shrink-0 mt-0.5" />
+                      <div className="space-y-1 text-left">
+                        <h4 className="font-bold text-xs text-emerald-950 uppercase tracking-wider">
+                          ALREADY VOTED FOR THIS PROJECT
+                        </h4>
+                        <p className="text-xs text-emerald-800 leading-relaxed font-medium">
+                          You have already cast your vote for this project.
+                          {teamData.products.length > 1 ? " Use the arrows above to view and vote for other projects of this team." : ""}
+                        </p>
+                      </div>
+                    </div>
                   ) : showConfirm ? (
-                    /* Step 4B: Vote Confirmation (Requirement 16) */
+                    /* Step 4B: Vote Confirmation */
                     <div className="rounded-2xl bg-slate-50 p-5 border border-slate-300 space-y-4 text-center animate-fade-in">
                       <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-500 text-white mx-auto shadow-md">
                         <Vote size={24} />
@@ -1102,8 +1142,8 @@ export default function VotingModal({
                           Team: <strong>{teamData.team.team_name}</strong> ({teamData.team.registration_id})
                         </p>
                         {currentIdea && (
-                          <p className="text-[11px] text-slate-500">
-                            Project: <em>{currentIdea.product_title}</em>
+                          <p className="text-xs text-primary font-bold">
+                            Project: {currentIdea.product_title}
                           </p>
                         )}
                         <p className="text-[11px] text-amber-800 font-semibold pt-1">
@@ -1143,7 +1183,7 @@ export default function VotingModal({
                       <div className="rounded-2xl bg-emerald-50 p-3 border border-emerald-200 flex items-center gap-2">
                         <ShieldCheck size={18} className="text-emerald-600 shrink-0" />
                         <span className="text-xs font-bold text-emerald-800">
-                          You are eligible to vote for this team.
+                          You are eligible to vote for this project.
                         </span>
                       </div>
 
@@ -1153,7 +1193,7 @@ export default function VotingModal({
                         className="w-full rounded-2xl bg-accent py-3.5 text-sm font-black text-white shadow-md hover:bg-amber-600 active:scale-[0.99] transition cursor-pointer flex items-center justify-center gap-2"
                       >
                         <Vote size={18} />
-                        <span>Vote for Team</span>
+                        <span>Vote for this Project</span>
                       </button>
                     </div>
                   )}
@@ -1196,18 +1236,40 @@ export default function VotingModal({
                     VOTE RECORDED ✓
                   </h3>
                   <p className="text-xs text-emerald-800 max-w-sm mx-auto leading-relaxed">
-                    Your vote has been successfully recorded for <strong>{voteSuccess.team_name}</strong>.
+                    Your vote has been successfully recorded for{' '}
+                    <strong>{voteSuccess.product_title || voteSuccess.team_name}</strong>
+                    {voteSuccess.product_title && voteSuccess.team_name && (
+                      <span className="text-emerald-700 block font-normal">
+                        Team: {voteSuccess.team_name}
+                      </span>
+                    )}
                   </p>
                 </div>
 
                 <div className="pt-1">
                   <span className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-emerald-100 text-emerald-900 text-xs font-black">
                     <Sparkles size={14} className="text-amber-500" />
-                    New Total: {voteSuccess.new_vote_count} votes
+                    New Total: {voteSuccess.new_vote_count || voteSuccess.new_product_votes} votes
                   </span>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3 pt-4 max-w-xs mx-auto">
+                {teamData?.products && teamData.products.length > 1 && (
+                  <div className="pt-2 max-w-xs mx-auto">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setVoteSuccess(null);
+                        setStep('SHOWCASE');
+                      }}
+                      className="w-full py-2.5 px-3 rounded-xl bg-accent text-xs font-black text-white hover:bg-amber-600 transition shadow-sm cursor-pointer flex items-center justify-center gap-1.5"
+                    >
+                      <Sparkles size={14} />
+                      <span>View Other Projects of this Team ({teamData.products.length})</span>
+                    </button>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-3 pt-2 max-w-xs mx-auto">
                   <button
                     type="button"
                     onClick={() => {
