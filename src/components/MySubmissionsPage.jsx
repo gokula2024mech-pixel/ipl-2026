@@ -480,6 +480,51 @@ export default function MySubmissionsPage({
     };
   }, []);
 
+  const getPhaseSubmissionBlockedMessage = (phaseConfig, defaultPhaseNum = 2) => {
+    const phaseNum = phaseConfig?.phase_number || defaultPhaseNum;
+    const phaseLabel = `Phase ${phaseNum}`;
+    const status = (phaseConfig?.timer_status || "").toLowerCase().trim();
+
+    if (status === "upcoming" || status === "not_started" || status === "pending" || !status) {
+      return `${phaseLabel} submission has not started yet. Please wait until ${phaseLabel} begins.`;
+    }
+    if (status === "closed") {
+      return `${phaseLabel} submission is closed. You can no longer submit.`;
+    }
+    if (status === "completed" || status === "passed") {
+      return `${phaseLabel} has been completed. Submission is no longer available.`;
+    }
+    if (status === "paused") {
+      return `${phaseLabel} submission is currently paused. Please wait until ${phaseLabel} resumes.`;
+    }
+    return `${phaseLabel} submission is closed. You can no longer submit.`;
+  };
+
+  const handlePhaseUploadBlocked = useCallback(
+    (phaseConfig, defaultPhaseNum = 2) => {
+      const status = (phaseConfig?.timer_status || "").toLowerCase().trim();
+      const message = getPhaseSubmissionBlockedMessage(phaseConfig, defaultPhaseNum);
+
+      let title = "Submission Unavailable";
+      if (status === "upcoming" || status === "not_started" || status === "pending" || !status) {
+        title = "Submission Not Started";
+      } else if (status === "closed") {
+        title = "Submissions Closed";
+      } else if (status === "completed" || status === "passed") {
+        title = "Phase Completed";
+      } else if (status === "paused") {
+        title = "Submission Paused";
+      }
+
+      showToast({
+        type: "warning",
+        title,
+        message,
+      });
+    },
+    [showToast]
+  );
+
   // Team QR State Map (teamId -> { status, qrToken, hasQr, isActive, qrGenerationEnabled, loading })
   const [qrStatusMap, setQrStatusMap] = useState({});
   const [qrDataUrlMap, setQrDataUrlMap] = useState({});
@@ -1327,6 +1372,11 @@ export default function MySubmissionsPage({
   };
 
   const handleUploadClick = (template) => {
+    if (!phase1Active) {
+      handlePhaseUploadBlocked(phase1Config, 1);
+      return;
+    }
+
     if (!selectedCategory || !selectedPatentType) {
       showToast({
         type: "warning",
@@ -1796,11 +1846,7 @@ export default function MySubmissionsPage({
     if (!file || !activeRegId) return;
 
     if (!phase2Active) {
-      showToast({
-        type: "error",
-        title: "Submissions Closed",
-        message: "Phase 2 submissions are currently closed.",
-      });
+      handlePhaseUploadBlocked(phase2Config, 2);
       if (phase2FileInputRef.current) {
         phase2FileInputRef.current.value = "";
       }
@@ -3398,10 +3444,23 @@ export default function MySubmissionsPage({
                                 </button>
                               )
                             ) : (
-                              <span className="inline-flex items-center justify-center gap-1.5 h-11 px-4 text-xs font-bold text-red-600 bg-red-50 rounded-xl border border-red-100 w-full">
-                                <AlertTriangle size={14} className="shrink-0" />
-                                <span>Submissions Closed</span>
-                              </span>
+                              <div
+                                role="button"
+                                tabIndex={0}
+                                onClick={() => handlePhaseUploadBlocked(phase1Config, 1)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter" || e.key === " ") {
+                                    e.preventDefault();
+                                    handlePhaseUploadBlocked(phase1Config, 1);
+                                  }
+                                }}
+                                className="cursor-not-allowed w-full select-none"
+                              >
+                                <span className="inline-flex items-center justify-center gap-1.5 h-11 px-4 text-xs font-bold text-red-600 bg-red-50 rounded-xl border border-red-100 w-full">
+                                  <AlertTriangle size={14} className="shrink-0" />
+                                  <span>Submissions Closed</span>
+                                </span>
+                              </div>
                             )}
                           </div>
                         </div>
@@ -3666,18 +3725,45 @@ export default function MySubmissionsPage({
                     <div className="shrink-0 flex items-center gap-2">
                       {phase2Submission?.hasSubmission ? (
                         <>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (!phase2Active) return;
-                              phase2FileInputRef.current?.click();
-                            }}
-                            disabled={!phase2Active || phase2Uploading || phase2IsRemoving}
-                            className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 shadow-2xs transition-all disabled:opacity-50 min-h-[38px] cursor-pointer"
+                          <div
+                            className="relative inline-flex"
+                            onClick={
+                              !phase2Active
+                                ? () => handlePhaseUploadBlocked(phase2Config, 2)
+                                : undefined
+                            }
                           >
-                            <Edit3 size={14} />
-                            <span>{phase2Uploading ? "Uploading..." : "Edit File"}</span>
-                          </button>
+                            {!phase2Active && (
+                              <div
+                                role="button"
+                                tabIndex={0}
+                                aria-label="Phase 2 submissions unavailable"
+                                className="absolute inset-0 z-10 cursor-not-allowed"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handlePhaseUploadBlocked(phase2Config, 2);
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter" || e.key === " ") {
+                                    e.preventDefault();
+                                    handlePhaseUploadBlocked(phase2Config, 2);
+                                  }
+                                }}
+                              />
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!phase2Active) return;
+                                phase2FileInputRef.current?.click();
+                              }}
+                              disabled={!phase2Active || phase2Uploading || phase2IsRemoving}
+                              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 shadow-2xs transition-all disabled:opacity-50 min-h-[38px] cursor-pointer"
+                            >
+                              <Edit3 size={14} />
+                              <span>{phase2Uploading ? "Uploading..." : "Edit File"}</span>
+                            </button>
+                          </div>
                           <button
                             type="button"
                             onClick={() =>
@@ -3694,18 +3780,45 @@ export default function MySubmissionsPage({
                           </button>
                         </>
                       ) : (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (!phase2Active) return;
-                            phase2FileInputRef.current?.click();
-                          }}
-                          disabled={!phase2Active || phase2Uploading}
-                          className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-primary hover:bg-primary/90 text-white shadow-2xs transition-all disabled:opacity-50 min-h-[38px] cursor-pointer"
+                        <div
+                          className="relative inline-flex"
+                          onClick={
+                            !phase2Active
+                              ? () => handlePhaseUploadBlocked(phase2Config, 2)
+                              : undefined
+                          }
                         >
-                          <Upload size={14} className={phase2Uploading ? "animate-bounce" : ""} />
-                          <span>{phase2Uploading ? "Uploading..." : "Upload File"}</span>
-                        </button>
+                          {!phase2Active && (
+                            <div
+                              role="button"
+                              tabIndex={0}
+                              aria-label="Phase 2 submissions unavailable"
+                              className="absolute inset-0 z-10 cursor-not-allowed"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handlePhaseUploadBlocked(phase2Config, 2);
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.preventDefault();
+                                  handlePhaseUploadBlocked(phase2Config, 2);
+                                }
+                              }}
+                            />
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!phase2Active) return;
+                              phase2FileInputRef.current?.click();
+                            }}
+                            disabled={!phase2Active || phase2Uploading}
+                            className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-primary hover:bg-primary/90 text-white shadow-2xs transition-all disabled:opacity-50 min-h-[38px] cursor-pointer"
+                          >
+                            <Upload size={14} className={phase2Uploading ? "animate-bounce" : ""} />
+                            <span>{phase2Uploading ? "Uploading..." : "Upload File"}</span>
+                          </button>
+                        </div>
                       )}
                     </div>
                   </div>
