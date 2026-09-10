@@ -272,6 +272,7 @@ export default function MySubmissionsPage({
 
   const [phase1Active, setPhase1Active] = useState(false);
   const [phase1Deadline, setPhase1Deadline] = useState(null);
+  const [phase2Active, setPhase2Active] = useState(false);
   const [activeTemplates, setActiveTemplates] = useState([]);
   const [templatesLoading, setTemplatesLoading] = useState(true);
   const [templatesError, setTemplatesError] = useState(false);
@@ -682,6 +683,8 @@ export default function MySubmissionsPage({
               const p1 = phasesData.find((p) => p.phase_number === 1);
               setPhase1Active(p1?.timer_status === "running");
               setPhase1Deadline(p1?.scheduled_end_at || null);
+              const p2 = phasesData.find((p) => p.phase_number === 2);
+              setPhase2Active(p2?.timer_status === "running");
             }
           } catch (e) {
             console.warn("[MySubmissions] Realtime phase update note:", e);
@@ -920,6 +923,8 @@ export default function MySubmissionsPage({
         const phase1Config = phasesData?.find((p) => p.phase_number === 1);
         setPhase1Active(phase1Config?.timer_status === "running");
         setPhase1Deadline(phase1Config?.scheduled_end_at || null);
+        const phase2Config = phasesData?.find((p) => p.phase_number === 2);
+        setPhase2Active(phase2Config?.timer_status === "running");
       } catch (pErr) {
         console.warn("[MySubmissions] Could not load phase timer data:", pErr);
         showToast({
@@ -1789,6 +1794,18 @@ export default function MySubmissionsPage({
   const handlePhase2FileInputChange = async (e) => {
     const file = e.target.files?.[0];
     if (!file || !activeRegId) return;
+
+    if (!phase2Active) {
+      showToast({
+        type: "error",
+        title: "Submissions Closed",
+        message: "Phase 2 submissions are currently closed.",
+      });
+      if (phase2FileInputRef.current) {
+        phase2FileInputRef.current.value = "";
+      }
+      return;
+    }
 
     const ext = "." + file.name.split(".").pop().toLowerCase();
     const allowed = [".pptx", ".ppt", ".pdf"];
@@ -3651,8 +3668,11 @@ export default function MySubmissionsPage({
                         <>
                           <button
                             type="button"
-                            onClick={() => phase2FileInputRef.current?.click()}
-                            disabled={phase2Uploading || phase2IsRemoving}
+                            onClick={() => {
+                              if (!phase2Active) return;
+                              phase2FileInputRef.current?.click();
+                            }}
+                            disabled={!phase2Active || phase2Uploading || phase2IsRemoving}
                             className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 shadow-2xs transition-all disabled:opacity-50 min-h-[38px] cursor-pointer"
                           >
                             <Edit3 size={14} />
@@ -3676,8 +3696,11 @@ export default function MySubmissionsPage({
                       ) : (
                         <button
                           type="button"
-                          onClick={() => phase2FileInputRef.current?.click()}
-                          disabled={phase2Uploading}
+                          onClick={() => {
+                            if (!phase2Active) return;
+                            phase2FileInputRef.current?.click();
+                          }}
+                          disabled={!phase2Active || phase2Uploading}
                           className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-primary hover:bg-primary/90 text-white shadow-2xs transition-all disabled:opacity-50 min-h-[38px] cursor-pointer"
                         >
                           <Upload size={14} className={phase2Uploading ? "animate-bounce" : ""} />

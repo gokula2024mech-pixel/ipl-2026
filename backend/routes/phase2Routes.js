@@ -129,6 +129,28 @@ async function checkAdmin(req, res, next) {
 }
 
 /**
+ * Check Phase 2 Running State
+ * Authoritative verification against public.phases table (timer_status === 'running')
+ * Reuses the exact Phase 1 timer verification architecture
+ */
+async function checkPhase2Active(req, res, next) {
+  try {
+    const { data: phase, error } = await supabase
+      .from('phases')
+      .select('timer_status')
+      .eq('phase_number', 2)
+      .maybeSingle()
+
+    if (error || !phase || phase.timer_status !== 'running') {
+      return res.status(403).json({ success: false, message: 'Phase 2 submissions are currently closed.' })
+    }
+    next()
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Failed to verify phase availability: ' + err.message })
+  }
+}
+
+/**
  * Team Member Authorization helper
  */
 async function authenticateTeamMember(req, cleanTeamId) {
@@ -297,7 +319,7 @@ router.get('/submission', async (req, res) => {
  * 4. POST /api/phase2/upload
  * Uploads or replaces the student's Phase 2 submission in the registered department & team folder
  */
-router.post('/upload', upload.single('file'), async (req, res) => {
+router.post('/upload', checkPhase2Active, upload.single('file'), async (req, res) => {
   try {
     const teamId = (req.body.teamId || '').trim()
     const file = req.file
