@@ -2385,15 +2385,7 @@ export default function Leaderboard({ user, session, profile, onProfileUpdate } 
         {/* Top 3 Championship Podium (Displayed Separately Above Main Standings) */}
         {top3Teams.length > 0 && (
           <div className="rounded-3xl bg-white/80 backdrop-blur-xs border border-slate-200/90 p-4 sm:p-6 md:p-8 shadow-xs space-y-6">
-            <div className="text-center max-w-xl mx-auto space-y-1.5">
-              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-100/70 border border-amber-200 text-amber-900 text-xs font-black uppercase tracking-wider">
-                <Trophy size={13} className="text-amber-600 fill-amber-400" />
-                <span>Top Contenders</span>
-              </div>
-              <h2 className="font-heading font-black text-xl sm:text-2xl md:text-3xl text-[#0B1B3A] tracking-tight">
-                Championship Podium
-              </h2>
-            </div>
+            
 
             {top3Teams.length === 1 && (
               <div className="max-w-md mx-auto">
