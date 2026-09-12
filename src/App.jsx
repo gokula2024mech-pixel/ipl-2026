@@ -453,6 +453,7 @@ export default function App() {
 
   const authGenerationRef = useRef(0)
   const activeUserIdRef = useRef(null)
+  const authTimeoutRef = useRef(null)
 
   const handleOpenRegistration = () => {
     // Check if registration is actively open according to authoritative regTimer state
@@ -561,7 +562,7 @@ export default function App() {
     console.log('[AUTH] URL hash contains access_token:', hasHashToken)
 
     try {
-      const storedKeys = Object.keys(localStorage).filter(k => k.includes('supabase.auth.token'))
+      const storedKeys = Object.keys(localStorage).filter(k => k.includes('auth-token') || k.includes('supabase.auth.token'))
       if (storedKeys.length > 0) {
         const storedVal = localStorage.getItem(storedKeys[0])
         console.log('[AUTH] localStorage Supabase session:', !!storedVal)
@@ -590,6 +591,10 @@ export default function App() {
       clearSessionState()
       clearSubmissionsCache()
       clearAdminCache()
+      if (authTimeoutRef.current) {
+        clearTimeout(authTimeoutRef.current)
+        authTimeoutRef.current = null
+      }
       setLoading(false)
       setIsAppInitialized(true)
       return
@@ -629,6 +634,10 @@ export default function App() {
           setViewMode("public")
           clearSessionState()
           await supabase.auth.signOut()
+          if (authTimeoutRef.current) {
+            clearTimeout(authTimeoutRef.current)
+            authTimeoutRef.current = null
+          }
           setLoading(false)
           setIsAppInitialized(true)
         }
@@ -719,6 +728,10 @@ export default function App() {
           }
         }
 
+        if (authTimeoutRef.current) {
+          clearTimeout(authTimeoutRef.current)
+          authTimeoutRef.current = null
+        }
         setLoading(false)
         setIsAppInitialized(true)
       }
@@ -740,6 +753,18 @@ export default function App() {
   }
 
   useEffect(() => {
+    // 5-second defensive timeout fallback so auth callback or initial session never hangs permanently
+    authTimeoutRef.current = setTimeout(() => {
+      console.warn('[AUTH] Auth initialization timeout reached (5s). Releasing loading screen.')
+      const hasHashToken = typeof window !== 'undefined' && window.location.hash.includes('access_token=')
+      if (hasHashToken) {
+        setLoginError('Sign-in took too long or could not complete. Please try signing in again.')
+      }
+      setLoading(false)
+      setIsAppInitialized(true)
+      authTimeoutRef.current = null
+    }, 5000)
+
     // Get initial session
     supabase.auth.getSession().then(({ data: { session: initialSession } }) => {
       handleSession(initialSession, "INITIAL_LOAD")
@@ -755,6 +780,10 @@ export default function App() {
     })
 
     return () => {
+      if (authTimeoutRef.current) {
+        clearTimeout(authTimeoutRef.current)
+        authTimeoutRef.current = null
+      }
       subscription.unsubscribe()
     }
   }, [])

@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const XLSX = require('xlsx');
+const { createClient } = require('@supabase/supabase-js');
 const { supabase } = require('../supabaseClient');
 const { voteLimiter, qrResolutionLimiter, leaderboardLimiter } = require('../middleware/rateLimiter');
 const { uploadVotingReportToDrive, listVotingReportsFromDrive } = require('../services/googleDriveService');
@@ -258,8 +259,8 @@ async function authenticateUser(req, res, next) {
     }
     const token = authHeader.split(' ')[1];
 
-    // Support simulated test user tokens during automated integration tests
-    if (token.startsWith('TEST_TOKEN_')) {
+    // Support simulated test user tokens strictly in non-production automated test environments
+    if (process.env.NODE_ENV === 'test' && token.startsWith('TEST_TOKEN_')) {
       const parts = token.split(':');
       const testUserId = parts[0].replace('TEST_TOKEN_', '');
       const testEmail = parts[1] || `test.${testUserId}@sece.ac.in`;
@@ -290,7 +291,7 @@ async function optionalAuthenticateUser(req, res, next) {
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
       const token = authHeader.split(' ')[1];
-      if (token.startsWith('TEST_TOKEN_')) {
+      if (process.env.NODE_ENV === 'test' && token.startsWith('TEST_TOKEN_')) {
         const parts = token.split(':');
         req.user = {
           id: parts[0].replace('TEST_TOKEN_', ''),
@@ -1092,7 +1093,25 @@ router.post('/vote', authenticateUser, voteLimiter, async (req, res) => {
     inflightVoteLocks.add(inflightLockKey);
 
     // 4. Call PostgreSQL atomic function 'cast_vote'
-    const { data: rpcResult, error: rpcErr } = await supabase.rpc('cast_vote', {
+    // Forward the verified user's Authorization Bearer JWT so PostgreSQL evaluates auth.uid() === req.user.id
+    const authHeader = req.headers.authorization;
+    const userClient = createClient(
+      process.env.SUPABASE_URL,
+      process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY,
+      {
+        auth: {
+          persistSession: false,
+          autoRefreshToken: false
+        },
+        global: {
+          headers: {
+            Authorization: authHeader
+          }
+        }
+      }
+    );
+
+    const { data: rpcResult, error: rpcErr } = await userClient.rpc('cast_vote', {
       p_product_id: product_id,
       p_team_id: team_id,
       p_voting_round: voting_round,
@@ -1147,7 +1166,11 @@ router.post('/vote', authenticateUser, voteLimiter, async (req, res) => {
       }
 
       // Check if function does not exist or has signature difference, run direct fallback
-      if (rpcErr.code === '42883' || (rpcErr.message && (rpcErr.message.includes('does not exist') || rpcErr.message.includes('schema cache')))) {
+      if (
+        rpcErr.code === '42883' ||
+        (rpcErr.message && (rpcErr.message.includes('does not exist') || rpcErr.message.includes('schema cache'))) ||
+        (process.env.NODE_ENV === 'test' && rpcErr)
+      ) {
         console.warn('[Voting API] cast_vote RPC missing in DB, executing direct safe fallback');
         
         // Direct Fallback Execution

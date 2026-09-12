@@ -17,13 +17,10 @@ export default function EmailGate({ loginError, onBack }) {
       if (pendingToken) {
         setPendingVotingToken(pendingToken)
       }
-      const redirectTo = pendingToken
-        ? `${window.location.origin}/?token=${encodeURIComponent(pendingToken)}#vote`
-        : pendingVoteIdea?.productId
-        ? `${window.location.origin}/#idea?id=${encodeURIComponent(pendingVoteIdea.productId)}`
-        : isPendingRegistration
-        ? `${window.location.origin}/#register`
-        : `${window.location.origin}/`
+      // OAuth redirectTo MUST be a clean origin URL without hash fragments (RFC 6749 Section 3.1.2).
+      // Pending navigation context (pendingVoteIdea, pendingToken, isPendingRegistration)
+      // is safely preserved in sessionStorage and restored by App.jsx after session establishment.
+      const redirectTo = `${window.location.origin}/`
 
       const { error: authError } = await supabase.auth.signInWithOAuth({
         provider: 'google',

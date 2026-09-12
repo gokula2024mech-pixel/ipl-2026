@@ -24,7 +24,7 @@ export default function IdeaResolutionModal({
   onSelectProduct,
   initialIdentifier = ''
 }) {
-  const [activeTab, setActiveTab] = useState('ID') // 'ID' | 'SCANNER'
+  const [activeTab, setActiveTab] = useState('SCANNER') // 'SCANNER' | 'ID'
   const [identifier, setIdentifier] = useState('')
   const [resolving, setResolving] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
@@ -43,27 +43,6 @@ export default function IdeaResolutionModal({
   const rawApiUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000').trim().replace(/\/+$/, '')
   const API_BASE_URL = rawApiUrl.endsWith('/api') ? rawApiUrl.slice(0, -4) : rawApiUrl
 
-  // Reset state on modal open
-  useEffect(() => {
-    if (isOpen) {
-      setErrorMsg('')
-      setMultiProducts(null)
-      setResolvedTeamName('')
-      setScannerActive(false)
-      setActiveTab('ID')
-      setCameraError('')
-      if (initialIdentifier) {
-        setIdentifier(initialIdentifier)
-        resolveIdentifier(initialIdentifier)
-      } else {
-        setIdentifier('')
-      }
-    } else {
-      stopScanner()
-      setActiveTab('ID')
-    }
-  }, [isOpen, initialIdentifier])
-
   // Stop camera helper
   const stopScanner = useCallback(async () => {
     if (html5QrCodeRef.current) {
@@ -80,16 +59,6 @@ export default function IdeaResolutionModal({
       }
     }
   }, [])
-
-  // Clean up camera on tab change or unmount
-  useEffect(() => {
-    if (activeTab !== 'SCANNER') {
-      stopScanner()
-    }
-    return () => {
-      stopScanner()
-    }
-  }, [activeTab, stopScanner])
 
   // Authoritative Resolver Function
   const resolveIdentifier = async (rawCode) => {
@@ -148,10 +117,7 @@ export default function IdeaResolutionModal({
     await stopScanner()
 
     const elem = document.getElementById('public-idea-qr-reader')
-    if (!elem) {
-      setTimeout(() => startScanner(camId), 100)
-      return
-    }
+    if (!elem) return
 
     try {
       const qrScanner = new Html5Qrcode('public-idea-qr-reader')
@@ -160,7 +126,7 @@ export default function IdeaResolutionModal({
       let availableCameras = cameras
       if (availableCameras.length === 0) {
         try {
-          const devices = await Html5Qrcode.getCameras()
+          const devices = await Html5Qrcode.getCameras().catch(() => [])
           if (devices && devices.length > 0) {
             availableCameras = devices
             setCameras(devices)
@@ -209,13 +175,55 @@ export default function IdeaResolutionModal({
         setCameraError('Unable to access camera. Please enter your Team ID or code manually.')
       }
     }
-  }, [cameras, selectedCameraId, stopScanner])
+  }, [selectedCameraId, stopScanner])
 
   const handleSelectProductChoice = (prodId) => {
     stopScanner()
     onSelectProduct(prodId)
     onClose()
   }
+
+  // Reset state on modal open
+  useEffect(() => {
+    if (isOpen) {
+      setErrorMsg('')
+      setMultiProducts(null)
+      setResolvedTeamName('')
+      setScannerActive(false)
+      setCameraError('')
+      if (initialIdentifier) {
+        setActiveTab('ID')
+        setIdentifier(initialIdentifier)
+        resolveIdentifier(initialIdentifier)
+      } else {
+        setActiveTab('SCANNER')
+        setIdentifier('')
+      }
+    } else {
+      stopScanner()
+      setActiveTab('SCANNER')
+    }
+  }, [isOpen, initialIdentifier])
+
+  // Clean up camera on tab change or unmount
+  useEffect(() => {
+    if (activeTab !== 'SCANNER' || !isOpen) {
+      stopScanner()
+    }
+    return () => {
+      stopScanner()
+    }
+  }, [isOpen, activeTab, stopScanner])
+
+  // Launch camera when entering SCANNER tab
+  useEffect(() => {
+    if (isOpen && activeTab === 'SCANNER' && !multiProducts) {
+      const timer = setTimeout(() => {
+        startScanner().catch((e) => console.warn('[IdeaScanner] Camera start caught:', e))
+      }, 250)
+      return () => clearTimeout(timer)
+    }
+  }, [isOpen, activeTab, multiProducts, startScanner])
 
   if (!isOpen) return null
 
@@ -245,10 +253,10 @@ export default function IdeaResolutionModal({
             </div>
             <div>
               <span className="text-[10px] font-black uppercase tracking-wider text-accent font-heading block">
-                IPL 2026 Voting Access
+                IPL 2026 Voting
               </span>
               <h2 id="idea-resolver-title" className="text-lg font-black text-slate-900 font-heading">
-                Vote for an Idea
+                {multiProducts ? 'Select Idea' : activeTab === 'SCANNER' ? 'Scan Idea QR' : 'Enter Team ID'}
               </h2>
             </div>
           </div>
@@ -256,7 +264,7 @@ export default function IdeaResolutionModal({
             type="button"
             onClick={() => {
               stopScanner()
-              setActiveTab('ID')
+              setActiveTab('SCANNER')
               onClose()
             }}
             className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition cursor-pointer"
@@ -322,74 +330,93 @@ export default function IdeaResolutionModal({
             </button>
           </div>
         ) : activeTab === 'SCANNER' ? (
-          /* SCANNER ACTIVE VIEW */
-          <div className="space-y-4 text-center">
-            <div className="flex items-center justify-between">
-              <button
-                type="button"
-                onClick={() => {
-                  stopScanner()
-                  setActiveTab('ID')
-                }}
-                className="text-xs font-bold text-accent hover:text-amber-700 transition flex items-center gap-1 cursor-pointer"
-              >
-                ← Enter ID instead
-              </button>
-              {cameras.length > 1 && (
+          /* SCANNER ACTIVE VIEW (PRIMARY) */
+          <div className="space-y-3.5 text-center animate-fade-in">
+            {/* Primary Instruction */}
+            <div className="text-center pt-1">
+              <p className="text-xs sm:text-sm font-bold text-slate-800">
+                Scan the Idea QR code
+              </p>
+            </div>
+
+            {/* Viewfinder Frame */}
+            <div className="relative mx-auto w-full max-w-[280px] sm:max-w-[300px] aspect-square rounded-3xl overflow-hidden bg-slate-900 border-2 border-slate-800 shadow-xl flex items-center justify-center">
+              <div id="public-idea-qr-reader" className="w-full h-full object-cover" />
+
+              {/* Scanning Frame Overlay */}
+              <div className="absolute inset-6 pointer-events-none border-2 border-dashed border-amber-400/80 rounded-2xl flex flex-col justify-between p-2">
+                <div className="flex justify-between">
+                  <div className="w-4 h-4 border-t-2 border-l-2 border-amber-400"></div>
+                  <div className="w-4 h-4 border-t-2 border-r-2 border-amber-400"></div>
+                </div>
+                <div className="w-full h-0.5 bg-gradient-to-r from-transparent via-amber-400 to-transparent shadow-[0_0_8px_rgba(245,158,11,0.8)] motion-safe:animate-pulse"></div>
+                <div className="flex justify-between">
+                  <div className="w-4 h-4 border-b-2 border-l-2 border-amber-400"></div>
+                  <div className="w-4 h-4 border-b-2 border-r-2 border-amber-400"></div>
+                </div>
+              </div>
+
+              {!scannerActive && !cameraError && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center p-4 bg-slate-900/90 text-white">
+                  <MechanicalLoader size={32} className="text-amber-400 mb-2" />
+                  <p className="text-xs font-semibold text-slate-300">Opening Camera...</p>
+                </div>
+              )}
+            </div>
+
+            {/* Camera Fallback OR Switch Camera */}
+            {cameraError ? (
+              <div className="rounded-2xl bg-amber-50 p-3.5 border border-amber-200 text-center space-y-2 max-w-[280px] sm:max-w-[300px] mx-auto">
+                <p className="text-xs font-bold text-amber-900">
+                  Can't scan the QR code?
+                </p>
                 <button
                   type="button"
                   onClick={() => {
-                    const nextCam = cameras.find(c => c.id !== selectedCameraId) || cameras[0]
-                    setSelectedCameraId(nextCam.id)
-                    startScanner(nextCam.id)
+                    stopScanner()
+                    setActiveTab('ID')
                   }}
-                  className="text-xs font-medium text-slate-500 hover:text-slate-800 flex items-center gap-1"
+                  className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-accent text-white text-xs font-bold shadow-xs hover:bg-amber-600 transition cursor-pointer"
                 >
-                  <RefreshCw size={12} /> Switch Camera
+                  <Search size={13} />
+                  <span>Enter Team ID</span>
                 </button>
-              )}
-            </div>
-
-            <div className="relative mx-auto w-full max-w-[280px] aspect-square rounded-2xl overflow-hidden bg-slate-950 border border-slate-200 flex items-center justify-center shadow-inner">
-              <div id="public-idea-qr-reader" className="w-full h-full" />
-
-              {!scannerActive && !cameraError && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center p-4 bg-slate-900 text-white">
-                  <MechanicalLoader size={32} className="text-accent mb-3" />
-                  <p className="text-xs font-semibold">Starting camera...</p>
-                </div>
-              )}
-
-              {cameraError && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center p-4 bg-slate-900 text-white space-y-3">
-                  <AlertTriangle size={32} className="text-amber-400" />
-                  <p className="text-xs text-slate-300 leading-snug">{cameraError}</p>
-                  <div className="flex items-center justify-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => startScanner()}
-                      className="rounded-full bg-accent px-4 py-1.5 text-xs font-bold text-white hover:bg-amber-600 transition"
-                    >
-                      Retry Camera
-                    </button>
+              </div>
+            ) : (
+              <>
+                {cameras.length > 1 && (
+                  <div className="flex justify-center text-xs">
                     <button
                       type="button"
                       onClick={() => {
-                        stopScanner()
-                        setActiveTab('ID')
+                        const nextCam = cameras.find(c => c.id !== selectedCameraId) || cameras[0]
+                        setSelectedCameraId(nextCam.id)
+                        startScanner(nextCam.id)
                       }}
-                      className="rounded-full bg-slate-700 px-4 py-1.5 text-xs font-bold text-slate-200 hover:bg-slate-600 transition"
+                      className="inline-flex items-center gap-1 text-slate-500 hover:text-slate-800 font-semibold cursor-pointer py-1 px-3 rounded-lg hover:bg-slate-100 transition"
                     >
-                      Enter ID
+                      <RefreshCw size={13} />
+                      <span>Switch Camera</span>
                     </button>
                   </div>
-                </div>
-              )}
-            </div>
+                )}
 
-            <p className="text-xs text-slate-500">
-              Point your camera at an IPL 2026 Innovation Idea QR code.
-            </p>
+                {/* Small secondary fallback link at bottom */}
+                <div className="pt-2 text-center border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      stopScanner()
+                      setActiveTab('ID')
+                    }}
+                    className="text-xs font-semibold text-slate-500 hover:text-accent transition cursor-pointer inline-flex items-center gap-1"
+                  >
+                    <span>Can't scan?</span>
+                    <span className="font-bold underline text-accent">Enter Team ID</span>
+                  </button>
+                </div>
+              </>
+            )}
 
             {/* Error Message Display */}
             {errorMsg && (
@@ -400,104 +427,64 @@ export default function IdeaResolutionModal({
             )}
           </div>
         ) : (
-          /* DEFAULT VIEW: SCAN QR (OR) ENTER IDEA ID */
-          <div className="space-y-4">
-            {/* Method 1: Scan QR */}
-            <div>
-              <button
-                type="button"
-                onClick={() => {
-                  setErrorMsg('')
-                  setActiveTab('SCANNER')
-                  startScanner()
-                }}
-                className="w-full flex items-center justify-between rounded-2xl border-2 border-dashed border-amber-300 bg-amber-50/60 hover:bg-amber-50 hover:border-accent p-4 transition-all group cursor-pointer shadow-2xs"
-              >
-                <div className="flex items-center gap-3.5">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent text-white shadow-sm group-hover:scale-105 transition-transform shrink-0">
-                    <Camera size={22} />
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-bold text-slate-900 group-hover:text-amber-700 transition-colors">
-                      Scan QR
-                    </h4>
-                    <p className="text-xs text-slate-500">
-                      Scan the QR code of an idea
-                    </p>
-                  </div>
-                </div>
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-amber-100/80 text-amber-700 group-hover:bg-accent group-hover:text-white transition shrink-0">
-                  <ChevronRight size={16} />
-                </div>
-              </button>
+          /* MANUAL TEAM ID ENTRY VIEW (FALLBACK) */
+          <div className="space-y-4 animate-fade-in py-2">
+            <div className="text-center space-y-1">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-50 text-accent border border-amber-200/60 mx-auto mb-2">
+                <Search size={20} />
+              </div>
+              <h3 className="font-extrabold text-base text-slate-900">Enter Team ID</h3>
             </div>
 
-            {/* Visual Divider: OR */}
-            <div className="relative flex items-center justify-center py-1">
-              <div className="border-t border-slate-200 w-full" />
-              <span className="bg-white px-3 text-[11px] font-extrabold uppercase tracking-wider text-slate-400 shrink-0">
-                OR
-              </span>
-            </div>
-
-            {/* Method 2: Enter Idea ID */}
-            <div className="space-y-3">
-              <div>
-                <label htmlFor="resolver-identifier" className="block text-xs font-bold uppercase tracking-wider text-slate-500 font-heading mb-1.5">
-                  Enter Idea ID
-                </label>
-                <div className="relative">
-                  <input
-                    id="resolver-identifier"
-                    type="text"
-                    value={identifier}
-                    onChange={(e) => setIdentifier(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') resolveIdentifier()
-                    }}
-                    placeholder="e.g. IPL26-0001 or Product UUID"
-                    className="w-full rounded-xl border border-slate-300 bg-white py-3 pl-4 pr-10 text-sm text-slate-900 focus:border-accent focus:outline-none shadow-xs font-mono"
-                    autoFocus
-                  />
-                  <button
-                    type="button"
-                    onClick={() => resolveIdentifier()}
-                    disabled={resolving || !identifier.trim()}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg bg-accent p-2 text-white hover:bg-amber-600 disabled:opacity-40 transition cursor-pointer"
-                    aria-label="Search Idea"
-                  >
-                    <ArrowRight size={14} />
-                  </button>
-                </div>
-                <p className="text-[11px] text-slate-400 mt-1">
-                  Enter Team Registration ID, Product ID, or QR Code.
-                </p>
+            <div className="space-y-3 max-w-sm mx-auto">
+              <div className="flex gap-2">
+                <input
+                  id="resolver-identifier"
+                  type="text"
+                  value={identifier}
+                  onChange={(e) => setIdentifier(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') resolveIdentifier()
+                  }}
+                  placeholder="IPL26-0439"
+                  className="flex-1 rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-xs sm:text-sm font-mono text-slate-900 uppercase focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  onClick={() => resolveIdentifier()}
+                  disabled={resolving || !identifier.trim()}
+                  className="rounded-xl bg-accent px-5 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-amber-600 disabled:opacity-50 cursor-pointer transition flex items-center justify-center gap-1.5 shrink-0"
+                >
+                  {resolving ? (
+                    <MechanicalLoader size={14} className="text-white" />
+                  ) : (
+                    <span>Find Team</span>
+                  )}
+                </button>
               </div>
 
-              <button
-                type="button"
-                onClick={() => resolveIdentifier()}
-                disabled={resolving || !identifier.trim()}
-                className="w-full rounded-full bg-accent py-3 text-xs font-extrabold text-white shadow-md hover:bg-amber-600 transition disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2"
-              >
-                {resolving ? (
-                  <>
-                    <MechanicalLoader size={16} className="text-white" />
-                    <span>Resolving Idea...</span>
-                  </>
-                ) : (
-                  <span>Open Idea</span>
-                )}
-              </button>
-            </div>
+              {/* Error Message Display */}
+              {errorMsg && (
+                <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700 flex items-start gap-2 animate-in fade-in duration-150 text-left">
+                  <AlertTriangle size={15} className="shrink-0 mt-0.5 text-rose-500" />
+                  <span>{errorMsg}</span>
+                </div>
+              )}
 
-            {/* Error Message Display */}
-            {errorMsg && (
-              <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700 flex items-start gap-2 animate-in fade-in duration-150">
-                <AlertTriangle size={15} className="shrink-0 mt-0.5 text-rose-500" />
-                <span>{errorMsg}</span>
+              <div className="pt-2 text-center">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setErrorMsg('')
+                    setActiveTab('SCANNER')
+                  }}
+                  className="text-xs font-semibold text-slate-500 hover:text-accent transition cursor-pointer inline-flex items-center gap-1"
+                >
+                  <span>← Back to Scanner</span>
+                </button>
               </div>
-            )}
+            </div>
           </div>
         )}
       </div>

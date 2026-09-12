@@ -56,7 +56,14 @@ export default function VotingModal({
   // Resolved user & profile state (self-healing for seamless auth across components)
   const [activeUser, setActiveUser] = useState(propUser || null);
   const [activeProfile, setActiveProfile] = useState(propProfile || null);
-  const [authChecking, setAuthChecking] = useState(true);
+  const [authChecking, setAuthChecking] = useState(!propUser);
+
+  // Authoritative effective user and profile (immediately synchronous from props if present)
+  const effectiveUser = propUser || activeUser || null;
+  const effectiveProfile = propProfile || activeProfile || null;
+  const isOfficialSeceUser = Boolean(
+    effectiveUser && (effectiveUser.email || '').trim().toLowerCase().endsWith('@sece.ac.in')
+  );
   
   // QR & Team lookup state
   const [teamIdentifier, setTeamIdentifier] = useState('');
@@ -80,6 +87,9 @@ export default function VotingModal({
   const [selectedCameraId, setSelectedCameraId] = useState('');
   const html5QrCodeRef = useRef(null);
   const modalSessionCheckedRef = useRef(false);
+  const lastCheckedUserIdRef = useRef(null);
+  const lastCheckedTeamIdRef = useRef(null);
+  const lastCheckedTokenRef = useRef(null);
 
   // Voting action state
   const [voting, setVoting] = useState(false);
@@ -89,15 +99,32 @@ export default function VotingModal({
   const rawApiUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000').trim().replace(/\/+$/, '');
   const API_BASE_URL = rawApiUrl.endsWith('/api') ? rawApiUrl.slice(0, -4) : rawApiUrl;
 
-  // Resolve active authentication and department authoritatively (once per modal open)
+  // Resolve active authentication and department authoritatively (once per modal open or when user/team changes)
   useEffect(() => {
     if (!isOpen) {
       modalSessionCheckedRef.current = false;
+      lastCheckedUserIdRef.current = null;
+      lastCheckedTeamIdRef.current = null;
+      lastCheckedTokenRef.current = null;
       return;
     }
 
-    if (modalSessionCheckedRef.current) return;
+    const currentUserId = propUser?.id || null;
+    const currentTeamId = initialTeamId || null;
+    const currentToken = initialToken || null;
+
+    if (
+      modalSessionCheckedRef.current &&
+      lastCheckedUserIdRef.current === currentUserId &&
+      lastCheckedTeamIdRef.current === currentTeamId &&
+      lastCheckedTokenRef.current === currentToken
+    ) {
+      return;
+    }
     modalSessionCheckedRef.current = true;
+    lastCheckedUserIdRef.current = currentUserId;
+    lastCheckedTeamIdRef.current = currentTeamId;
+    lastCheckedTokenRef.current = currentToken;
 
     setErrorInfo(null);
     setVoteSuccess(null);
@@ -107,18 +134,20 @@ export default function VotingModal({
     let isMounted = true;
 
     async function checkAuthSession() {
-      setAuthChecking(true);
+      if (!propUser) {
+        setAuthChecking(true);
+      }
 
       let resolvedUser = propUser || activeUser || null;
       let resolvedProfile = propProfile || activeProfile || null;
-      let resolvedDept = (resolvedProfile?.department || selectedDept || '').trim() || null;
+      let resolvedDept = (resolvedProfile?.department || selectedDept || propUser?.user_metadata?.department || '').trim() || null;
 
       // 1. If user not passed, resolve directly from Supabase session
       if (!resolvedUser) {
         try {
-          const { data: { session } } = await supabase.auth.getSession();
-          if (session?.user) {
-            resolvedUser = session.user;
+          const sessionToUse = propSession || (await supabase.auth.getSession())?.data?.session;
+          if (sessionToUse?.user) {
+            resolvedUser = sessionToUse.user;
           }
         } catch (e) {
           console.warn('[Voting Modal] Error resolving session:', e);
@@ -153,10 +182,10 @@ export default function VotingModal({
       // 4. Query GET /api/voting/profile/department to ensure authoritative profile value
       if (resolvedUser && !resolvedDept) {
         try {
-          const { data: { session } } = await supabase.auth.getSession();
-          if (session?.access_token) {
+          const sessionToUse = propSession || (await supabase.auth.getSession())?.data?.session;
+          if (sessionToUse?.access_token) {
             const res = await fetch(`${API_BASE_URL}/api/voting/profile/department`, {
-              headers: { 'Authorization': `Bearer ${session.access_token}` }
+              headers: { 'Authorization': `Bearer ${sessionToUse.access_token}` }
             });
             if (res.ok) {
               const json = await res.json();
@@ -209,7 +238,42 @@ export default function VotingModal({
     return () => {
       isMounted = false;
     };
-  }, [isOpen, propUser, propProfile, initialToken, initialTeamId, initialProductId]);
+  }, [isOpen, propUser, propProfile, propSession, initialToken, initialTeamId, initialProductId]);
+
+  // Sync activeUser and clear auth checking when propUser is passed
+  useEffect(() => {
+    if (propUser) {
+      setActiveUser(propUser);
+      setAuthChecking(false);
+    }
+  }, [propUser]);
+
+  // Sync activeProfile and selectedDept when propProfile is passed
+  useEffect(() => {
+    if (propProfile) {
+      setActiveProfile(propProfile);
+      if (propProfile.department) {
+        setSelectedDept(propProfile.department);
+      }
+    }
+  }, [propProfile]);
+
+  // Automatically clear stale authentication error banner when user is verified @sece.ac.in
+  useEffect(() => {
+    if (effectiveUser && isOfficialSeceUser) {
+      setErrorInfo(prev => {
+        if (!prev) return null;
+        if (
+          prev.code === 'AUTHENTICATION_REQUIRED' ||
+          prev.code === 'AUTH_EXPIRED' ||
+          (prev.message && String(prev.message).toLowerCase().includes('authentication required'))
+        ) {
+          return null;
+        }
+        return prev;
+      });
+    }
+  }, [effectiveUser, isOfficialSeceUser]);
 
   // Sync activeToken if initialToken changes
   useEffect(() => {
@@ -218,12 +282,13 @@ export default function VotingModal({
     }
   }, [initialToken]);
 
-  // Sync selectedDept if activeProfile changes
+  // Sync selectedDept if activeProfile or propProfile changes
   useEffect(() => {
-    if (activeProfile?.department) {
-      setSelectedDept(activeProfile.department);
+    const dept = propProfile?.department || activeProfile?.department;
+    if (dept) {
+      setSelectedDept(dept);
     }
-  }, [activeProfile?.department]);
+  }, [propProfile?.department, activeProfile?.department]);
 
   // Sync activeIdeaIndex if initialProductId is passed
   useEffect(() => {
@@ -367,10 +432,14 @@ export default function VotingModal({
     setActiveIdeaIndex(0);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      let accessToken = propSession?.access_token;
+      if (!accessToken) {
+        const { data: { session } } = await supabase.auth.getSession();
+        accessToken = session?.access_token;
+      }
       const headers = {};
-      if (session?.access_token) {
-        headers['Authorization'] = `Bearer ${session.access_token}`;
+      if (accessToken) {
+        headers['Authorization'] = `Bearer ${accessToken}`;
       }
 
       const endpoint = isQr
@@ -436,8 +505,12 @@ export default function VotingModal({
     setDeptError('');
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) {
+      let accessToken = propSession?.access_token;
+      if (!accessToken) {
+        const { data: { session } } = await supabase.auth.getSession();
+        accessToken = session?.access_token;
+      }
+      if (!accessToken) {
         setDeptError('Authentication required. Please sign in again.');
         return;
       }
@@ -446,7 +519,7 @@ export default function VotingModal({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session.access_token}`
+          'Authorization': `Bearer ${accessToken}`
         },
         body: JSON.stringify({ department: selectedDept })
       });
@@ -506,8 +579,12 @@ export default function VotingModal({
     setErrorInfo(null);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) {
+      let accessToken = propSession?.access_token;
+      if (!accessToken) {
+        const { data: { session } } = await supabase.auth.getSession();
+        accessToken = session?.access_token;
+      }
+      if (!accessToken) {
         setErrorInfo({
           code: 'AUTH_EXPIRED',
           title: 'SESSION EXPIRED',
@@ -521,7 +598,7 @@ export default function VotingModal({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session.access_token}`
+          'Authorization': `Bearer ${accessToken}`
         },
         body: JSON.stringify({
           product_id: currentIdea?.id || undefined,
@@ -600,9 +677,6 @@ export default function VotingModal({
 
   const currentIdea = teamData?.products?.[activeIdeaIndex] || null;
   const eligibility = teamData?.eligibility || { can_vote: false, reason: 'Verifying eligibility...' };
-  const isOfficialSeceUser = Boolean(
-    activeUser && (activeUser.email || '').trim().toLowerCase().endsWith('@sece.ac.in')
-  );
 
   return (
     <AnimatePresence>
@@ -644,11 +718,16 @@ export default function VotingModal({
                   <h2 className="font-heading text-lg sm:text-xl font-black tracking-tight">
                     IPL 2026 Voting
                   </h2>
-                  {activeProfile?.department && (
-                    <p className="text-[11px] sm:text-xs text-slate-300 font-medium">
-                      {activeProfile.department}
+                  <div className="flex items-center gap-2">
+                    <p className="text-[11px] sm:text-xs text-amber-300 font-bold uppercase tracking-wider">
+                      {step === 'MANUAL_ENTRY' ? 'Enter Team ID' : 'Scan Idea QR'}
                     </p>
-                  )}
+                    {effectiveProfile?.department && (
+                      <span className="text-[11px] sm:text-xs text-slate-300 font-medium">
+                        • {effectiveProfile.department}
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
               <button
@@ -722,8 +801,9 @@ export default function VotingModal({
                     className="w-full py-2.5 px-4 rounded-xl bg-primary text-xs font-bold text-white hover:bg-primary/90 transition shadow-sm cursor-pointer flex items-center justify-center gap-2"
                   >
                     <Camera size={15} />
-                    <span>Scan Another Team QR</span>
+                    <span>Scan Idea QR</span>
                   </button>
+                  <p className="text-xs text-slate-500 pt-1 font-medium">Can't scan the QR code?</p>
                   <button
                     type="button"
                     onClick={() => {
@@ -732,10 +812,10 @@ export default function VotingModal({
                       setActiveToken('');
                       setStep('MANUAL_ENTRY');
                     }}
-                    className="w-full py-2.5 px-4 rounded-xl border border-slate-300 text-xs font-bold text-slate-700 hover:bg-slate-50 transition cursor-pointer flex items-center justify-center gap-2"
+                    className="w-full py-2 px-4 rounded-xl border border-slate-300 text-xs font-bold text-slate-700 hover:bg-slate-50 transition cursor-pointer flex items-center justify-center gap-2"
                   >
-                    <Search size={15} />
-                    <span>Enter Team ID Manually</span>
+                    <Search size={14} />
+                    <span>Enter Team ID</span>
                   </button>
                   <button
                     type="button"
@@ -749,7 +829,7 @@ export default function VotingModal({
             )}
 
             {/* STATE 4: AUTHENTICATED BUT NOT @sece.ac.in */}
-            {!authChecking && activeUser && !isOfficialSeceUser && (
+            {!authChecking && effectiveUser && !isOfficialSeceUser && (
               <div className="py-8 text-center space-y-4">
                 <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-50 text-amber-600 border border-amber-200 mx-auto">
                   <ShieldAlert size={32} />
@@ -759,7 +839,7 @@ export default function VotingModal({
                     Official College Account Required
                   </h3>
                   <p className="text-xs text-slate-600 max-w-sm mx-auto leading-relaxed">
-                    You are signed in as <span className="font-semibold text-slate-800">{activeUser.email}</span>. Live voting is restricted to verified <strong>@sece.ac.in</strong> institutional accounts.
+                    You are signed in as <span className="font-semibold text-slate-800">{effectiveUser.email}</span>. Live voting is restricted to verified <strong>@sece.ac.in</strong> institutional accounts.
                   </p>
                 </div>
                 <button
@@ -773,7 +853,7 @@ export default function VotingModal({
             )}
 
             {/* STATE 3: NOT AUTHENTICATED */}
-            {!authChecking && !activeUser && (
+            {!authChecking && !effectiveUser && (
               <div className="py-8 text-center space-y-4">
                 <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-50 text-amber-600 border border-amber-200 mx-auto">
                   <ShieldAlert size={32} />
@@ -877,9 +957,16 @@ export default function VotingModal({
               </div>
             )}
 
-            {/* STEP 2: CAMERA QR SCANNER */}
+            {/* STEP 2: CAMERA QR SCANNER (PRIMARY VOTING ENTRY) */}
             {isOfficialSeceUser && !authChecking && step === 'SCANNER' && (
-              <div className="space-y-4 animate-fade-in">
+              <div className="space-y-3.5 animate-fade-in">
+                {/* Primary Instruction */}
+                <div className="text-center pt-1">
+                  <p className="text-xs sm:text-sm font-bold text-slate-800">
+                    Scan the Idea QR code
+                  </p>
+                </div>
+
                 {/* Viewfinder Frame */}
                 <div className="relative w-full max-w-[280px] sm:max-w-[300px] aspect-square rounded-3xl overflow-hidden bg-slate-900 mx-auto border-2 border-slate-800 shadow-xl flex items-center justify-center">
                   <div id="voting-qr-reader" className="w-full h-full object-cover"></div>
@@ -907,82 +994,84 @@ export default function VotingModal({
                   )}
                 </div>
 
+                {/* Camera Fallback OR Camera Flip */}
                 {cameraError ? (
-                  <div className="rounded-2xl bg-amber-50 p-3.5 border border-amber-200 text-center space-y-2.5">
-                    <p className="text-xs font-bold text-amber-900">{cameraError}</p>
+                  <div className="rounded-2xl bg-amber-50 p-3.5 border border-amber-200 text-center space-y-2 max-w-[300px] mx-auto">
+                    <p className="text-xs font-bold text-amber-900">
+                      Can't scan the QR code?
+                    </p>
                     <button
                       type="button"
                       onClick={() => {
                         stopScanner();
                         setStep('MANUAL_ENTRY');
                       }}
-                      className="inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-primary text-white text-xs font-bold shadow-xs hover:bg-primary/90 transition cursor-pointer"
+                      className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-primary text-white text-xs font-bold shadow-xs hover:bg-primary/90 transition cursor-pointer"
                     >
                       <Search size={13} />
-                      <span>Enter Team ID Directly</span>
+                      <span>Enter Team ID</span>
                     </button>
                   </div>
                 ) : (
-                  <div className="flex items-center justify-between px-2 text-xs text-slate-500">
-                    <span className="font-medium">Point camera at team stall QR</span>
+                  <>
                     {cameras.length > 1 && (
+                      <div className="flex justify-center text-xs">
+                        <button
+                          type="button"
+                          onClick={handleFlipCamera}
+                          className="inline-flex items-center gap-1 text-slate-500 hover:text-slate-800 font-semibold cursor-pointer py-1 px-3 rounded-lg hover:bg-slate-100 transition"
+                        >
+                          <RefreshCw size={13} />
+                          <span>Flip Camera</span>
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Small secondary fallback link at bottom */}
+                    <div className="pt-2 text-center border-t border-slate-100">
                       <button
                         type="button"
-                        onClick={handleFlipCamera}
-                        className="inline-flex items-center gap-1 text-primary hover:text-primary/80 font-bold cursor-pointer"
+                        onClick={() => {
+                          stopScanner();
+                          setStep('MANUAL_ENTRY');
+                        }}
+                        className="text-xs font-semibold text-slate-500 hover:text-primary transition cursor-pointer inline-flex items-center gap-1"
                       >
-                        <RefreshCw size={13} />
-                        <span>Flip Camera</span>
+                        <span>Can't scan?</span>
+                        <span className="font-bold underline text-primary">Enter Team ID</span>
                       </button>
-                    )}
-                  </div>
+                    </div>
+                  </>
                 )}
-
-                {/* Having trouble scanning? -> Team ID fallback */}
-                <div className="pt-2 text-center border-t border-slate-100">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      stopScanner();
-                      setStep('MANUAL_ENTRY');
-                    }}
-                    className="text-xs font-bold text-primary hover:text-primary/80 transition cursor-pointer inline-flex items-center gap-1.5"
-                  >
-                    <span>Having trouble scanning?</span>
-                    <span className="underline">Enter Team ID</span>
-                  </button>
-                </div>
               </div>
             )}
 
             {/* STEP 3: MANUAL TEAM ID ENTRY (FALLBACK ROUTE) */}
             {isOfficialSeceUser && !authChecking && step === 'MANUAL_ENTRY' && (
-              <div className="space-y-4 animate-fade-in">
-                <div className="rounded-2xl bg-slate-50 p-4 border border-slate-200 text-center space-y-1.5">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-primary border border-blue-200/60 mx-auto">
+              <div className="space-y-4 animate-fade-in py-2">
+                <div className="text-center space-y-1">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-50 text-accent border border-amber-200/60 mx-auto mb-2">
                     <Search size={20} />
                   </div>
-                  <h3 className="font-bold text-sm text-slate-900">Enter Team ID</h3>
-                  <p className="text-xs text-slate-600">
-                    Enter the team’s registration code (e.g. <strong>IPL26-0439</strong>) or paste their QR token.
-                  </p>
+                  <h3 className="font-extrabold text-base text-slate-900">Enter Team ID</h3>
                 </div>
 
-                <div className="space-y-2">
+                <div className="space-y-3 max-w-sm mx-auto">
                   <div className="flex gap-2">
                     <input
                       type="text"
                       value={teamIdentifier}
                       onChange={(e) => setTeamIdentifier(e.target.value)}
                       onKeyDown={(e) => e.key === 'Enter' && resolveTeamByIdentifier(teamIdentifier)}
-                      placeholder="e.g. IPL26-0439"
-                      className="flex-1 rounded-xl border border-slate-300 px-3.5 py-2.5 text-xs sm:text-sm font-mono text-slate-900 uppercase focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                      placeholder="IPL26-0439"
+                      className="flex-1 rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-xs sm:text-sm font-mono text-slate-900 uppercase focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                      autoFocus
                     />
                     <button
                       type="button"
                       onClick={() => resolveTeamByIdentifier(teamIdentifier)}
                       disabled={!teamIdentifier.trim() || loading}
-                      className="rounded-xl bg-primary px-5 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-primary/90 disabled:opacity-50 cursor-pointer transition flex items-center justify-center gap-1.5"
+                      className="rounded-xl bg-primary px-5 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-primary/90 disabled:opacity-50 cursor-pointer transition flex items-center justify-center gap-1.5 shrink-0"
                     >
                       {loading ? (
                         <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" />
@@ -991,33 +1080,32 @@ export default function VotingModal({
                       )}
                     </button>
                   </div>
-                </div>
 
-                {/* Error Banner if Team Not Found */}
-                {errorInfo && (
-                  <div className="rounded-2xl bg-red-50 p-4 border border-red-200 space-y-1 text-left">
-                    <div className="flex items-center gap-1.5 font-bold text-xs text-red-900">
-                      <AlertTriangle size={15} className="text-red-600 shrink-0" />
-                      <span>{errorInfo.title}</span>
+                  {/* Error Banner if Team Not Found */}
+                  {errorInfo && (
+                    <div className="rounded-xl bg-red-50 p-3.5 border border-red-200 space-y-1 text-left">
+                      <div className="flex items-center gap-1.5 font-bold text-xs text-red-900">
+                        <AlertTriangle size={15} className="text-red-600 shrink-0" />
+                        <span>{errorInfo.title}</span>
+                      </div>
+                      <p className="text-xs text-red-700 leading-relaxed">
+                        {errorInfo.message}
+                      </p>
                     </div>
-                    <p className="text-xs text-red-700 leading-relaxed">
-                      {errorInfo.message}
-                    </p>
-                  </div>
-                )}
+                  )}
 
-                <div className="pt-2 text-center">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setErrorInfo(null);
-                      setStep('SCANNER');
-                    }}
-                    className="text-xs font-bold text-slate-500 hover:text-primary transition cursor-pointer inline-flex items-center gap-1"
-                  >
-                    <Camera size={14} />
-                    <span>Return to Camera Scanner</span>
-                  </button>
+                  <div className="pt-2 text-center">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setErrorInfo(null);
+                        setStep('SCANNER');
+                      }}
+                      className="text-xs font-semibold text-slate-500 hover:text-primary transition cursor-pointer inline-flex items-center gap-1"
+                    >
+                      <span>← Back to Scanner</span>
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
