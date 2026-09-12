@@ -1,12 +1,14 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { supabase } from '../supabaseClient'
-import { getPendingVotingToken, setPendingVotingToken, extractVotingTokenFromUrl } from '../utils/sessionNavigationState'
+import { getPendingVotingToken, setPendingVotingToken, extractVotingTokenFromUrl, getPendingVoteIdea, getPendingRegistration } from '../utils/sessionNavigationState'
 
 export default function EmailGate({ loginError, onBack }) {
   const [error, setError] = useState('')
   const [isLoggingIn, setIsLoggingIn] = useState(false)
   const pendingToken = getPendingVotingToken() || extractVotingTokenFromUrl()
+  const pendingVoteIdea = getPendingVoteIdea()
+  const isPendingRegistration = getPendingRegistration()
 
   const handleGoogleLogin = async () => {
     setError('')
@@ -17,6 +19,10 @@ export default function EmailGate({ loginError, onBack }) {
       }
       const redirectTo = pendingToken
         ? `${window.location.origin}/?token=${encodeURIComponent(pendingToken)}#vote`
+        : pendingVoteIdea?.productId
+        ? `${window.location.origin}/#idea?id=${encodeURIComponent(pendingVoteIdea.productId)}`
+        : isPendingRegistration
+        ? `${window.location.origin}/#register`
         : `${window.location.origin}/`
 
       const { error: authError } = await supabase.auth.signInWithOAuth({
@@ -55,13 +61,45 @@ export default function EmailGate({ loginError, onBack }) {
             IPL <span className="text-accent">2026</span>
           </p>
           <h1 className="mt-4 font-heading text-xl font-bold text-slate-900 md:text-2xl">
-            Sri Eshwar College Access
+            {pendingVoteIdea ? 'Sign in to Cast Your Vote' : isPendingRegistration ? 'Sign in to Register Your Team' : 'Sri Eshwar College Access'}
           </h1>
-          <p className="mt-2 text-sm text-slate-600">
-            {pendingToken
-              ? 'Sign in with your official @sece.ac.in college email to vote.'
-              : 'Please log in with your official college email account to access the IPL 2026 portal.'}
-          </p>
+          {pendingVoteIdea ? (
+            <div className="mt-3 space-y-2 text-center">
+              <p className="text-sm font-semibold text-slate-700 leading-snug">
+                Sign in with your official <span className="font-mono text-primary font-bold">@sece.ac.in</span> Google account to cast an official vote (+2 points) for{' '}
+                <span className="font-bold text-slate-900">{pendingVoteIdea.productTitle || 'this idea'}</span>.
+              </p>
+              <div className="rounded-xl bg-amber-50/80 border border-amber-200 p-3 text-[12px] text-amber-900 font-medium text-left space-y-1">
+                <p className="font-bold text-amber-950 flex items-center gap-1.5">
+                  <span>ℹ️</span> Voting Information:
+                </p>
+                <p>• Official voting requires Google sign-in and is restricted to eligible SECE users.</p>
+                <p>• Students cannot vote for their own team or teams in their own department.</p>
+                <p>• Public Likes (+1 point) do not require login and are open to all visitors.</p>
+              </div>
+            </div>
+          ) : isPendingRegistration ? (
+            <div className="mt-3 space-y-2 text-center">
+              <p className="text-sm font-semibold text-slate-700 leading-snug">
+                Sign in with your official <span className="font-mono text-primary font-bold">@sece.ac.in</span> Google account to register your team for IPL 2026.
+              </p>
+              <div className="rounded-xl bg-amber-50/80 border border-amber-200 p-3 text-[12px] text-amber-900 font-medium text-left space-y-1">
+                <p className="font-bold text-amber-950 flex items-center gap-1.5">
+                  <span>ℹ️</span> Registration Access:
+                </p>
+                <p>• Team registration requires official Google authentication (@sece.ac.in).</p>
+                <p>• After signing in, you will be directed straight to the registration form.</p>
+              </div>
+            </div>
+          ) : pendingToken ? (
+            <p className="mt-2 text-sm text-slate-600">
+              Sign in with your official @sece.ac.in college email to vote.
+            </p>
+          ) : (
+            <p className="mt-2 text-sm text-slate-600">
+              Please log in with your official college email account to access the IPL 2026 portal.
+            </p>
+          )}
         </div>
 
         <div className="space-y-5">
@@ -93,7 +131,7 @@ export default function EmailGate({ loginError, onBack }) {
               onClick={onBack}
               className="w-full text-center text-xs font-semibold text-slate-500 hover:text-slate-700 transition-colors cursor-pointer pt-2 block"
             >
-              ← Back to Countdown
+              {pendingVoteIdea ? '← Back to Idea Page' : '← Back to Previous Page'}
             </button>
           )}
         </div>

@@ -22,6 +22,7 @@ import {
 import { Html5Qrcode } from 'html5-qrcode';
 import { supabase } from '../supabaseClient';
 import MechanicalLoader from './MechanicalLoader';
+import { setPendingVoteIdea, setPendingVotingToken } from '../utils/sessionNavigationState';
 
 const OFFICIAL_DEPARTMENTS = [
   'Artificial Intelligence and Data Science',
@@ -40,14 +41,17 @@ export default function VotingModal({
   isOpen,
   onClose,
   initialToken = '',
+  initialTeamId = '',
+  initialProductId = '',
   user: propUser,
   session: propSession,
   profile: propProfile,
   onProfileUpdate,
-  onTokenConsumed
+  onTokenConsumed,
+  onRequireLogin
 }) {
   // Navigation steps: 'DEPARTMENT' | 'SCANNER' | 'MANUAL_ENTRY' | 'TEAM_VIEW' | 'SUCCESS' | 'QR_ERROR' | 'RESOLVING'
-  const [step, setStep] = useState(() => (initialToken ? 'RESOLVING' : 'SCANNER'));
+  const [step, setStep] = useState(() => (initialToken || initialTeamId ? 'RESOLVING' : 'SCANNER'));
 
   // Resolved user & profile state (self-healing for seamless auth across components)
   const [activeUser, setActiveUser] = useState(propUser || null);
@@ -183,7 +187,11 @@ export default function VotingModal({
         if (resolvedDept) {
           setSelectedDept(resolvedDept);
           const tokenToResolve = (activeToken || initialToken || '').trim();
-          if (tokenToResolve) {
+          const teamIdToResolve = (initialTeamId || '').trim();
+          if (teamIdToResolve) {
+            setStep('RESOLVING');
+            await resolveTeamByIdentifier(teamIdToResolve, false);
+          } else if (tokenToResolve) {
             setActiveToken(tokenToResolve);
             setStep('RESOLVING');
             await resolveTeamByIdentifier(tokenToResolve, true);
@@ -201,7 +209,7 @@ export default function VotingModal({
     return () => {
       isMounted = false;
     };
-  }, [isOpen, propUser, propProfile, initialToken]);
+  }, [isOpen, propUser, propProfile, initialToken, initialTeamId, initialProductId]);
 
   // Sync activeToken if initialToken changes
   useEffect(() => {
@@ -216,6 +224,16 @@ export default function VotingModal({
       setSelectedDept(activeProfile.department);
     }
   }, [activeProfile?.department]);
+
+  // Sync activeIdeaIndex if initialProductId is passed
+  useEffect(() => {
+    if (initialProductId && teamData?.products && Array.isArray(teamData.products)) {
+      const matchedIdx = teamData.products.findIndex(p => p.id === initialProductId);
+      if (matchedIdx !== -1) {
+        setActiveIdeaIndex(matchedIdx);
+      }
+    }
+  }, [initialProductId, teamData]);
 
   // Helper to stop camera scanner
   const stopScanner = useCallback(async () => {
@@ -379,6 +397,12 @@ export default function VotingModal({
         }
       } else {
         setTeamData(data);
+        if (initialProductId && Array.isArray(data.products)) {
+          const matchedIdx = data.products.findIndex(p => p.id === initialProductId);
+          if (matchedIdx !== -1) {
+            setActiveIdeaIndex(matchedIdx);
+          }
+        }
         setStep('TEAM_VIEW');
         if (onTokenConsumed) {
           try {
@@ -455,9 +479,13 @@ export default function VotingModal({
           } catch (e) {}
         }
 
-        // 4. Advance directly to team view if direct QR token exists, otherwise to scanner
+        // 4. Advance directly to team view if initialTeamId or direct QR token exists, otherwise to scanner
+        const teamIdToResolve = (initialTeamId || '').trim();
         const tokenToResolve = (activeToken || initialToken || '').trim();
-        if (tokenToResolve) {
+        if (teamIdToResolve) {
+          setStep('RESOLVING');
+          await resolveTeamByIdentifier(teamIdToResolve, false);
+        } else if (tokenToResolve) {
           setStep('RESOLVING');
           await resolveTeamByIdentifier(tokenToResolve, true);
         } else {
@@ -514,7 +542,7 @@ export default function VotingModal({
         setErrorInfo({
           code: 'ALREADY_VOTED',
           title: 'ALREADY VOTED',
-          message: json.message || 'You have already voted for this product in this voting round.'
+          message: json.message || 'You have already voted for this idea.'
         });
         setShowConfirm(false);
       } else if (!res.ok || !json.success) {
@@ -758,13 +786,38 @@ export default function VotingModal({
                     You must be signed in with your official <strong>@sece.ac.in</strong> college account to participate in live voting.
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="px-6 py-2.5 rounded-xl bg-primary text-white text-xs font-bold hover:bg-primary/90 transition shadow-sm cursor-pointer"
-                >
-                  Return to Home
-                </button>
+                <div className="space-y-2 max-w-xs mx-auto pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (teamData?.products?.[activeIdeaIndex] || initialProductId || initialTeamId) {
+                        setPendingVoteIdea({
+                          productId: teamData?.products?.[activeIdeaIndex]?.id || initialProductId || null,
+                          teamId: teamData?.team?.id || initialTeamId || null,
+                          productTitle: teamData?.products?.[activeIdeaIndex]?.product_title || '',
+                          teamName: teamData?.team?.team_name || ''
+                        });
+                      } else if (activeToken || initialToken) {
+                        setPendingVotingToken(activeToken || initialToken);
+                      }
+                      if (onRequireLogin) {
+                        onRequireLogin();
+                      } else {
+                        onClose();
+                      }
+                    }}
+                    className="w-full py-3 px-4 rounded-xl bg-primary text-xs font-bold text-white hover:bg-primary/90 transition shadow-sm cursor-pointer flex items-center justify-center gap-2"
+                  >
+                    <span>Sign in with Google (@sece.ac.in)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="w-full py-2 px-4 text-xs font-semibold text-slate-500 hover:text-slate-800 transition cursor-pointer"
+                  >
+                    Return to Home
+                  </button>
+                </div>
               </div>
             )}
 
@@ -1120,10 +1173,10 @@ export default function VotingModal({
                       <CheckCircle2 size={20} className="text-emerald-600 shrink-0 mt-0.5" />
                       <div className="space-y-1 text-left">
                         <h4 className="font-bold text-xs text-emerald-950 uppercase tracking-wider">
-                          ALREADY VOTED FOR THIS PROJECT
+                          ALREADY VOTED
                         </h4>
                         <p className="text-xs text-emerald-800 leading-relaxed font-medium">
-                          You have already cast your vote for this project.
+                          You have already voted for this idea.
                           {teamData.products.length > 1 ? " Use the arrows above to view and vote for other projects of this team." : ""}
                         </p>
                       </div>

@@ -220,8 +220,9 @@ export function clearPendingVotingToken() {
 
 /**
  * Clean up voting token and #vote hash from the browser URL without retriggering a page reload.
+ * Optionally updates hash to targetHash (e.g. #idea?id=...) atomically.
  */
-export function cleanVotingUrl() {
+export function cleanVotingUrl(targetHash = null) {
   if (typeof window === 'undefined' || !window.history || !window.history.replaceState) return
   try {
     const url = new URL(window.location.href)
@@ -232,14 +233,218 @@ export function cleanVotingUrl() {
       changed = true
     }
 
-    if (url.hash.includes('vote') || url.hash.includes('token=')) {
+    if (targetHash !== null) {
+      url.hash = targetHash
+      changed = true
+    } else if (url.hash.includes('vote') || url.hash.includes('token=')) {
       url.hash = ''
       changed = true
     }
 
     if (changed) {
-      const newUrl = url.pathname + (url.searchParams.toString() ? '?' + url.searchParams.toString() : '')
+      const searchStr = url.searchParams.toString() ? '?' + url.searchParams.toString() : ''
+      const hashStr = url.hash || ''
+      const newUrl = url.pathname + searchStr + hashStr
       window.history.replaceState(null, '', newUrl || '/')
     }
   } catch (e) {}
 }
+
+const VISITOR_TOKEN_KEY = 'ipl2026_visitor_token'
+const SESSION_TOKEN_KEY = 'ipl2026_session_token'
+const PENDING_VOTE_IDEA_KEY = 'ipl2026_pending_vote_idea'
+const PASSED_COUNTDOWN_KEY = 'ipl2026_passed_countdown'
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * Structurally extract Product / Idea ID from location.
+ * Supports:
+ * - Hash query: #idea?id=<productId> or #idea?productId=<productId>
+ * - Hash path: #idea/<productId>
+ * - Hash assign: #idea=<productId>
+ * - Query search: ?idea=<productId> or ?id=<productId>
+ */
+export function extractIdeaIdFromUrl(urlObj) {
+  if (typeof window === 'undefined' && !urlObj) return null
+  const loc = urlObj || window.location
+
+  // 1. Structured hash extraction (#idea?id=... or #idea?productId=...)
+  if (loc.hash) {
+    try {
+      const hashStr = loc.hash
+      const qIndex = hashStr.indexOf('?')
+      if (qIndex !== -1) {
+        const hashPrefix = hashStr.slice(0, qIndex).toLowerCase()
+        if (hashPrefix === '#idea' || hashPrefix === '#/idea') {
+          const hashParams = new URLSearchParams(hashStr.slice(qIndex))
+          const id = hashParams.get('id') || hashParams.get('productId') || hashParams.get('ideaId')
+          if (id && id.trim()) {
+            return id.trim()
+          }
+        }
+      } else if (hashStr.toLowerCase().startsWith('#idea/')) {
+        const candidate = hashStr.slice(6).trim()
+        if (candidate) return candidate
+      } else if (hashStr.toLowerCase().startsWith('#idea=')) {
+        const candidate = hashStr.slice(6).trim()
+        if (candidate) return candidate
+      }
+    } catch (e) {}
+  }
+
+  // 2. Structured query parameter extraction (?idea=... or ?id=...)
+  if (loc.search) {
+    try {
+      const searchParams = new URLSearchParams(loc.search)
+      const id = searchParams.get('idea') || searchParams.get('productId') || searchParams.get('id')
+      if (id && id.trim()) {
+        return id.trim()
+      }
+    } catch (e) {}
+  }
+
+  return null
+}
+
+/**
+ * Visitor Token management (localStorage).
+ * Provides anonymous identity for public Like submissions and visit telemetry.
+ */
+export function getStoredVisitorToken() {
+  if (typeof window === 'undefined') return null
+  try {
+    return localStorage.getItem(VISITOR_TOKEN_KEY) || null
+  } catch (e) {
+    return null
+  }
+}
+
+export function setStoredVisitorToken(token) {
+  if (typeof window === 'undefined' || !token) return
+  try {
+    localStorage.setItem(VISITOR_TOKEN_KEY, String(token).trim())
+  } catch (e) {}
+}
+
+/**
+ * Session Token management (sessionStorage).
+ * Provides anonymous session identity for approximate unique sessions calculation.
+ * Survives page reloads in the same tab, resets on new tab/session.
+ */
+export function getStoredSessionToken() {
+  if (typeof window === 'undefined') return null
+  try {
+    let token = sessionStorage.getItem(SESSION_TOKEN_KEY)
+    if (!token || !token.trim()) {
+      token = (typeof crypto !== 'undefined' && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : 'sess_' + Math.random().toString(36).slice(2) + Date.now().toString(36)
+      sessionStorage.setItem(SESSION_TOKEN_KEY, token)
+    }
+    return token
+  } catch (e) {
+    return null
+  }
+}
+
+/**
+ * Pending Idea Vote context across authentication redirects (sessionStorage).
+ * Preserves strictly: productId, teamId, productTitle, teamName.
+ */
+export function getPendingVoteIdea() {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = sessionStorage.getItem(PENDING_VOTE_IDEA_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (parsed && (parsed.productId || parsed.teamId)) {
+      return {
+        productId: parsed.productId || null,
+        teamId: parsed.teamId || null,
+        productTitle: parsed.productTitle || '',
+        teamName: parsed.teamName || ''
+      }
+    }
+    return null
+  } catch (e) {
+    return null
+  }
+}
+
+export function setPendingVoteIdea(ideaData) {
+  if (typeof window === 'undefined' || !ideaData) return
+  try {
+    const safeData = {
+      productId: ideaData.productId || null,
+      teamId: ideaData.teamId || null,
+      productTitle: ideaData.productTitle || '',
+      teamName: ideaData.teamName || ''
+    }
+    sessionStorage.setItem(PENDING_VOTE_IDEA_KEY, JSON.stringify(safeData))
+  } catch (e) {}
+}
+
+export function clearPendingVoteIdea() {
+  if (typeof window === 'undefined') return
+  try {
+    sessionStorage.removeItem(PENDING_VOTE_IDEA_KEY)
+  } catch (e) {}
+}
+
+/**
+ * Session-scoped countdown bypass state (sessionStorage).
+ * Allows unauthenticated visitors to explore the public homepage once they click "Continue to IPL 2026".
+ */
+export function getHasPassedCountdown() {
+  if (typeof window === 'undefined') return false
+  try {
+    return sessionStorage.getItem(PASSED_COUNTDOWN_KEY) === 'true'
+  } catch (e) {
+    return false
+  }
+}
+
+export function setHasPassedCountdown(passed) {
+  if (typeof window === 'undefined') return
+  try {
+    if (passed) {
+      sessionStorage.setItem(PASSED_COUNTDOWN_KEY, 'true')
+    } else {
+      sessionStorage.removeItem(PASSED_COUNTDOWN_KEY)
+    }
+  } catch (e) {}
+}
+
+const PENDING_REGISTRATION_KEY = 'ipl2026_pending_registration'
+
+/**
+ * Pending Team Registration context across authentication redirects (sessionStorage).
+ */
+export function getPendingRegistration() {
+  if (typeof window === 'undefined') return false
+  try {
+    return sessionStorage.getItem(PENDING_REGISTRATION_KEY) === 'true'
+  } catch (e) {
+    return false
+  }
+}
+
+export function setPendingRegistration(pending = true) {
+  if (typeof window === 'undefined') return
+  try {
+    if (pending) {
+      sessionStorage.setItem(PENDING_REGISTRATION_KEY, 'true')
+    } else {
+      sessionStorage.removeItem(PENDING_REGISTRATION_KEY)
+    }
+  } catch (e) {}
+}
+
+export function clearPendingRegistration() {
+  if (typeof window === 'undefined') return
+  try {
+    sessionStorage.removeItem(PENDING_REGISTRATION_KEY)
+  } catch (e) {}
+}
+

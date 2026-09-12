@@ -97,5 +97,36 @@ module.exports = {
     windowMs: 60 * 1000,
     max: 120, // 120 requests per minute per IP
     message: 'Leaderboard request limit exceeded. Please wait a few moments.'
+  }),
+  // Idea/Product public system rate limiters
+  ideaLookupLimiter: createRateLimiter({
+    windowMs: 60 * 1000,
+    max: 120, // 120 requests per minute per IP
+    message: 'Too many idea lookup requests. Please slow down.'
+  }),
+  ideaLikeLimiter: createRateLimiter({
+    windowMs: 60 * 1000,
+    max: 30, // 30 like attempts per minute per IP / token
+    keyGenerator: (req) => {
+      const visitorToken = req.headers['x-visitor-token'] || (req.body && req.body.visitor_token);
+      if (visitorToken) return `like_${visitorToken}`;
+      if (req.user && req.user.id) return `user_${req.user.id}`;
+      const forwarded = req.headers['x-forwarded-for'];
+      const ip = forwarded ? forwarded.split(',')[0].trim() : req.socket.remoteAddress;
+      return `ip_${ip || 'unknown'}`;
+    },
+    message: 'Too many like attempts. Please wait a moment before liking again.'
+  }),
+  ideaVisitLimiter: createRateLimiter({
+    windowMs: 60 * 1000,
+    max: 60, // 60 visit logs per minute per IP / token
+    keyGenerator: (req) => {
+      const visitorToken = req.headers['x-visitor-token'] || (req.body && req.body.visitor_token);
+      if (visitorToken) return `visit_${visitorToken}`;
+      const forwarded = req.headers['x-forwarded-for'];
+      const ip = forwarded ? forwarded.split(',')[0].trim() : req.socket.remoteAddress;
+      return `visit_ip_${ip || 'unknown'}`;
+    },
+    message: 'Too many visit requests. Please slow down.'
   })
 };

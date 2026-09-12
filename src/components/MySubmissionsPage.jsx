@@ -578,8 +578,28 @@ export default function MySubmissionsPage({
   }, [API_BASE_URL]);
 
   // Handle generating team QR
-  const handleGenerateTeamQr = async (team) => {
+  const handleGenerateTeamQr = async (team, targetProductId = null) => {
     if (!team?.teamId) return;
+
+    const ideasList = team.ideas || [];
+    let chosenPid = targetProductId;
+    if (!chosenPid && ideasList.length === 1) {
+      chosenPid = ideasList[0].id;
+    }
+
+    if (!chosenPid && ideasList.length > 1) {
+      // If team has multiple products and no product specified, open TeamQrModal in selection mode
+      setSelectedTeamForQrModal({
+        teamId: team.teamId,
+        teamName: team.teamName,
+        registrationId: team.registrationId,
+        qrToken: qrStatusMap[team.teamId]?.qrToken || '',
+        productId: null,
+        products: ideasList
+      });
+      return;
+    }
+
     setGeneratingQrTeamId(team.teamId);
     try {
       const token = await getToken();
@@ -591,13 +611,19 @@ export default function MySubmissionsPage({
         });
         return;
       }
+
+      const bodyPayload = { team_id: team.teamId };
+      if (chosenPid) {
+        bodyPayload.product_id = chosenPid;
+      }
+
       const res = await fetch(`${API_BASE_URL}/api/voting/team-qr/generate`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify({ team_id: team.teamId })
+        body: JSON.stringify(bodyPayload)
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
@@ -607,11 +633,13 @@ export default function MySubmissionsPage({
           message: data.message || 'Failed to generate permanent team QR code.'
         });
       } else {
+        const resolvedPid = data.product_id || chosenPid || null;
         setQrStatusMap((prev) => ({
           ...prev,
           [team.teamId]: {
             status: data.status,
             qrToken: data.qr_token,
+            productId: resolvedPid,
             hasQr: true,
             isActive: true,
             qrGenerationEnabled: true,
@@ -623,11 +651,16 @@ export default function MySubmissionsPage({
           title: 'Team QR Ready!',
           message: 'Permanent team QR code generated successfully.'
         });
+
+        const matchedProduct = ideasList.find(p => p.id === resolvedPid);
         setSelectedTeamForQrModal({
           teamId: team.teamId,
           teamName: team.teamName,
           registrationId: team.registrationId,
-          qrToken: data.qr_token
+          qrToken: data.qr_token,
+          productId: resolvedPid,
+          productTitle: matchedProduct?.product_title || matchedProduct?.title || null,
+          products: ideasList
         });
       }
     } catch (err) {
@@ -642,8 +675,12 @@ export default function MySubmissionsPage({
   };
 
   // Handle sharing QR
-  const handleShareTeamQr = async (team, qrToken) => {
-    const votingUrl = `${window.location.origin}/?token=${qrToken}#vote`;
+  const handleShareTeamQr = async (team, qrToken, productId = null) => {
+    const effectivePid = productId || (team?.ideas?.length === 1 ? team.ideas[0].id : null);
+    const votingUrl = effectivePid
+      ? `${window.location.origin}/#idea?id=${effectivePid}`
+      : `${window.location.origin}/?token=${qrToken}#vote`;
+
     if (navigator.share) {
       try {
         await navigator.share({
@@ -668,9 +705,13 @@ export default function MySubmissionsPage({
     }
   };
 
-  const handleDownloadQrImage = (team) => {
+  const handleDownloadQrImage = (team, productId = null, productNumber = null) => {
     const qrInfo = qrStatusMap[team?.teamId];
     const dataUrl = qrInfo?.qrToken ? qrDataUrlMap[qrInfo.qrToken] : null;
+    const effectivePid = productId || (team?.ideas?.length === 1 ? team.ideas[0].id : null);
+    const ideasList = team?.ideas || [];
+    const matchedProduct = ideasList.find(p => p.id === effectivePid);
+
     if (!dataUrl) {
       // If thumbnail not generated yet, open full modal
       setSelectedTeamForQrModal({
@@ -678,12 +719,16 @@ export default function MySubmissionsPage({
         teamName: team.teamName,
         registrationId: team.registrationId,
         qrToken: qrInfo?.qrToken,
+        productId: effectivePid,
+        productTitle: matchedProduct?.product_title || null,
+        products: ideasList
       });
       return;
     }
     const a = document.createElement("a");
     a.href = dataUrl;
-    a.download = `IPL2026_${(team.registrationId || "TEAM").replace(/[^a-zA-Z0-9_-]/g, "_")}_QR.png`;
+    const suffix = productNumber ? `_Product_${productNumber}` : (effectivePid ? `_Idea` : '');
+    a.download = `IPL2026_${(team.registrationId || "TEAM").replace(/[^a-zA-Z0-9_-]/g, "_")}${suffix}_QR.png`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -694,8 +739,10 @@ export default function MySubmissionsPage({
     });
   };
 
-  const handleCopyVotingLink = async (qrToken, teamId) => {
-    const votingUrl = `${window.location.origin}/#vote?token=${qrToken}`;
+  const handleCopyVotingLink = async (qrToken, teamId, productId = null) => {
+    const votingUrl = productId
+      ? `${window.location.origin}/#idea?id=${productId}`
+      : `${window.location.origin}/?token=${qrToken}#vote`;
     try {
       await navigator.clipboard.writeText(votingUrl);
       setCopiedLinkTeamId(teamId);
@@ -2454,15 +2501,22 @@ export default function MySubmissionsPage({
                           userEmailLower === currentTeam.members?.member2?.email?.trim().toLowerCase() ||
                           userEmailLower === currentTeam.members?.member3?.email?.trim().toLowerCase());
 
+                      const currentProduct = currentPage?.idea || (currentTeam.ideas?.length === 1 ? currentTeam.ideas[0] : null);
+                      const effectiveProductId = currentProduct?.id || null;
+                      const effectiveProductTitle = currentProduct?.product_title || currentProduct?.title || null;
+                      const effectiveProductNumber = currentProduct?.product_number || null;
+
                       const teamQrInfo = qrStatusMap[currentTeamId] || {
                         status: "NOT_GENERATED",
                         loading: false,
                       };
                       const isGeneratingThis = generatingQrTeamId === currentTeamId;
                       const qrDataUrl = teamQrInfo.qrToken ? qrDataUrlMap[teamQrInfo.qrToken] : null;
-                      const votingUrl = typeof window !== 'undefined' && teamQrInfo.qrToken
-                        ? `${window.location.origin}/#vote?token=${teamQrInfo.qrToken}`
-                        : `/#vote?token=${teamQrInfo.qrToken || ''}`;
+                      const votingUrl = effectiveProductId
+                        ? (typeof window !== 'undefined' ? `${window.location.origin}/#idea?id=${effectiveProductId}` : `/#idea?id=${effectiveProductId}`)
+                        : (typeof window !== 'undefined' && teamQrInfo.qrToken
+                            ? `${window.location.origin}/?token=${teamQrInfo.qrToken}#vote`
+                            : `/?token=${teamQrInfo.qrToken || ''}#vote`);
 
                       return (
                         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 sm:p-6 transition-all">
@@ -2516,7 +2570,7 @@ export default function MySubmissionsPage({
                           {teamQrInfo.status === "NOT_GENERATED" && (
                             <div className="space-y-4 py-1">
                               <p className="text-xs sm:text-sm text-slate-600 leading-relaxed max-w-2xl">
-                                QR not generated yet. Generate a permanent QR code for your team stall so attendees can scan and vote. Each team receives exactly one permanent QR code that remains consistent across all voting rounds.
+                                QR not generated yet. Generate a permanent QR code for your team stall so attendees can scan and vote. Each team receives a dedicated QR code that opens your innovation showcase directly.
                               </p>
 
                               {isMentor ? (
@@ -2539,7 +2593,7 @@ export default function MySubmissionsPage({
                                   <button
                                     type="button"
                                     disabled={isGeneratingThis || teamQrInfo.loading}
-                                    onClick={() => handleGenerateTeamQr(currentTeam)}
+                                    onClick={() => handleGenerateTeamQr(currentTeam, effectiveProductId)}
                                     className="w-full sm:w-auto py-3 px-6 rounded-xl bg-accent hover:bg-amber-600 text-white text-xs sm:text-sm font-extrabold shadow-sm transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                                   >
                                     {isGeneratingThis ? (
@@ -2550,7 +2604,7 @@ export default function MySubmissionsPage({
                                     ) : (
                                       <>
                                         <QrCode size={16} />
-                                        <span>Generate Team QR Code</span>
+                                        <span>{currentTeam.ideas?.length > 1 && !effectiveProductId ? 'Select Idea to Generate QR' : 'Generate Team QR Code'}</span>
                                       </>
                                     )}
                                   </button>
@@ -2571,6 +2625,9 @@ export default function MySubmissionsPage({
                                       teamName: currentTeam.teamName,
                                       registrationId: currentTeam.registrationId,
                                       qrToken: teamQrInfo.qrToken,
+                                      productId: effectiveProductId,
+                                      productTitle: effectiveProductTitle,
+                                      products: currentTeam.ideas || []
                                     })
                                   }
                                   className="group relative rounded-2xl bg-white p-2.5 border-2 border-slate-200 shadow-sm cursor-pointer hover:border-primary transition"
@@ -2601,6 +2658,12 @@ export default function MySubmissionsPage({
                               {/* Details and Action Buttons */}
                               <div className="flex-1 space-y-4 min-w-0 w-full text-center md:text-left">
                                 <div className="space-y-1">
+                                  {effectiveProductTitle && (
+                                    <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-amber-50 border border-amber-200/80 text-[11px] font-bold text-accent mb-1 max-w-full truncate">
+                                      <span>{effectiveProductNumber ? `Product #${effectiveProductNumber}:` : 'Idea:'}</span>
+                                      <span className="truncate text-slate-800">{effectiveProductTitle}</span>
+                                    </div>
+                                  )}
                                   <p className="text-xs sm:text-sm text-slate-700 leading-relaxed">
                                     Permanent team QR code is active and ready for live voting. Display this QR code at your team showcase stall so voters can scan directly with their mobile cameras.
                                   </p>
@@ -2613,7 +2676,7 @@ export default function MySubmissionsPage({
                                   </span>
                                   <button
                                     type="button"
-                                    onClick={() => handleCopyVotingLink(teamQrInfo.qrToken, currentTeamId)}
+                                    onClick={() => handleCopyVotingLink(teamQrInfo.qrToken, currentTeamId, effectiveProductId)}
                                     className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 text-[11px] font-bold text-slate-700 transition cursor-pointer shadow-2xs"
                                   >
                                     {copiedLinkTeamId === currentTeamId ? (
@@ -2640,6 +2703,9 @@ export default function MySubmissionsPage({
                                         teamName: currentTeam.teamName,
                                         registrationId: currentTeam.registrationId,
                                         qrToken: teamQrInfo.qrToken,
+                                        productId: effectiveProductId,
+                                        productTitle: effectiveProductTitle,
+                                        products: currentTeam.ideas || []
                                       })
                                     }
                                     className="py-2.5 px-4 rounded-xl bg-primary hover:bg-primary/90 text-white text-xs font-bold shadow-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
@@ -2650,16 +2716,16 @@ export default function MySubmissionsPage({
 
                                   <button
                                     type="button"
-                                    onClick={() => handleDownloadQrImage(currentTeam)}
+                                    onClick={() => handleDownloadQrImage(currentTeam, effectiveProductId, effectiveProductNumber)}
                                     className="py-2.5 px-4 rounded-xl border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
                                   >
                                     <Download size={14} />
-                                    <span>Download QR</span>
+                                    <span>Download</span>
                                   </button>
 
                                   <button
                                     type="button"
-                                    onClick={() => handleShareTeamQr(currentTeam, teamQrInfo.qrToken)}
+                                    onClick={() => handleShareTeamQr(currentTeam, teamQrInfo.qrToken, effectiveProductId)}
                                     className="py-2.5 px-4 rounded-xl border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
                                   >
                                     <Share2 size={14} />

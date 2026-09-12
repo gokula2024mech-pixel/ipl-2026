@@ -10,9 +10,35 @@ import MySubmissionsPage, { clearSubmissionsCache } from './components/MySubmiss
 import VotingModal from './components/VotingModal'
 import EntryCountdown from './components/EntryCountdown'
 import MechanicalLoader from './components/MechanicalLoader'
+import PublicIdeaPage from './components/PublicIdeaPage'
+import IdeaResolutionModal from './components/IdeaResolutionModal'
 import { supabase } from './supabaseClient'
 import { getEventState } from './utils/eventTimeline'
-import { getSessionState, saveSessionState, saveViewScroll, getViewScroll, clearSessionState, isRootOrHomeHash, normalizeHash, safeFindElement, extractVotingTokenFromUrl, getPendingVotingToken, setPendingVotingToken, clearPendingVotingToken, cleanVotingUrl } from './utils/sessionNavigationState'
+import {
+  getSessionState,
+  saveSessionState,
+  saveViewScroll,
+  getViewScroll,
+  clearSessionState,
+  isRootOrHomeHash,
+  normalizeHash,
+  safeFindElement,
+  extractVotingTokenFromUrl,
+  getPendingVotingToken,
+  setPendingVotingToken,
+  clearPendingVotingToken,
+  cleanVotingUrl,
+  extractIdeaIdFromUrl,
+  getPendingVoteIdea,
+  clearPendingVoteIdea,
+  getHasPassedCountdown,
+  setHasPassedCountdown,
+  getStoredSessionToken,
+  getStoredVisitorToken,
+  getPendingRegistration,
+  setPendingRegistration,
+  clearPendingRegistration
+} from './utils/sessionNavigationState'
 
 import About from './components/About'
 import ProgramHighlights from './components/ProgramHighlights'
@@ -45,30 +71,77 @@ export default function App() {
   const [votingToken, setVotingToken] = useState(() => {
     return extractVotingTokenFromUrl() || getPendingVotingToken() || ''
   })
-  const [viewMode, setViewMode] = useState(() => initialSessionState?.viewMode || "public")
+  const [votingInitialTeamId, setVotingInitialTeamId] = useState('')
+  const [votingInitialProductId, setVotingInitialProductId] = useState('')
+  const [ideaProductId, setIdeaProductId] = useState(() => extractIdeaIdFromUrl() || '')
+  const [ideaResolverInitialIdentifier, setIdeaResolverInitialIdentifier] = useState('')
+  const [isIdeaResolverOpen, setIsIdeaResolverOpen] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return window.location.hash === '#vote'
+    }
+    return false
+  })
+  const [hasPassedCountdown, setHasPassedCountdownState] = useState(() => getHasPassedCountdown())
+  const [viewMode, setViewMode] = useState(() => {
+    if (extractIdeaIdFromUrl()) return "idea"
+    return initialSessionState?.viewMode || "public"
+  })
   const [selectedPhase, setSelectedPhase] = useState(() => initialSessionState?.selectedPhase || 'my_submissions')
   const [currentHash, setCurrentHash] = useState(() => normalizeHash(window.location.hash || initialSessionState?.currentHash || ''))
+  const resolvingTokenRef = useRef(null)
 
-  // Handle direct QR URL deep-link or #vote
+  // Handle direct QR URL deep-link, #idea, or #vote
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const extractedToken = extractVotingTokenFromUrl()
-      if (extractedToken) {
-        setPendingVotingToken(extractedToken)
-        setVotingToken(extractedToken)
-        setIsVotingModalOpen(true)
-        if (!session) {
-          setShowAuth(true)
-        }
+      const extractedIdeaId = extractIdeaIdFromUrl()
+
+      if (extractedToken && resolvingTokenRef.current !== extractedToken) {
+        resolvingTokenRef.current = extractedToken
+        const rawApiUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000').trim().replace(/\/+$/, '')
+        const API_BASE_URL = rawApiUrl.endsWith('/api') ? rawApiUrl.slice(0, -4) : rawApiUrl
+
+        fetch(`${API_BASE_URL}/api/ideas/resolve/${encodeURIComponent(extractedToken)}`)
+          .then(res => res.json())
+          .then(data => {
+            if (data && data.success) {
+              const type = data.resolution_type
+              if (type === 'qr_product' || type === 'qr_team_single' || type === 'direct_product' || type === 'team_single') {
+                const targetProductId = data.product_id || data.product?.product_id
+                if (targetProductId) {
+                  setIdeaProductId(targetProductId)
+                  setViewMode('idea')
+                  setCurrentHash('#idea?id=' + targetProductId)
+                  cleanVotingUrl('#idea?id=' + targetProductId)
+                  setShowAuth(false)
+                  return
+                }
+              } else if (type === 'qr_team_multi' || type === 'team_multi') {
+                cleanVotingUrl()
+                setIdeaResolverInitialIdentifier(extractedToken)
+                setIsIdeaResolverOpen(true)
+                setShowAuth(false)
+                return
+              }
+            }
+            // If resolution did not succeed or returned error
+            cleanVotingUrl()
+            setIdeaResolverInitialIdentifier(extractedToken)
+            setIsIdeaResolverOpen(true)
+            setShowAuth(false)
+          })
+          .catch(err => {
+            console.error('[App] Error resolving QR token:', err)
+            cleanVotingUrl()
+            setIdeaResolverInitialIdentifier(extractedToken)
+            setIsIdeaResolverOpen(true)
+            setShowAuth(false)
+          })
+      } else if (extractedIdeaId) {
+        setIdeaProductId(extractedIdeaId)
+        setViewMode('idea')
       } else if (currentHash === '#vote') {
-        const pending = getPendingVotingToken()
-        if (pending) {
-          setVotingToken(pending)
-        }
-        setIsVotingModalOpen(true)
-        if (!session) {
-          setShowAuth(true)
-        }
+        setIsIdeaResolverOpen(true)
       }
     }
   }, [currentHash, session]);
@@ -145,6 +218,41 @@ export default function App() {
     }
     fetchServerTime()
     fetchTimerData()
+
+    // Record website visit on initial page load / refresh (strictly once per load, immune to internal SPA navigation)
+    const recordSiteVisit = async () => {
+      try {
+        const rawApiUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000').trim().replace(/\/+$/, '')
+        const API_BASE_URL = rawApiUrl.endsWith('/api') ? rawApiUrl.slice(0, -4) : rawApiUrl
+        const sessionToken = getStoredSessionToken()
+        const visitorToken = getStoredVisitorToken()
+
+        const authHeaders = {}
+        try {
+          const { data: { session: currentSession } } = await supabase.auth.getSession()
+          if (currentSession?.access_token) {
+            authHeaders['Authorization'] = `Bearer ${currentSession.access_token}`
+          }
+        } catch (e) {}
+
+        await fetch(`${API_BASE_URL}/api/analytics/site-visit`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(sessionToken ? { 'x-session-token': sessionToken } : {}),
+            ...(visitorToken ? { 'x-visitor-token': visitorToken } : {}),
+            ...authHeaders
+          },
+          body: JSON.stringify({
+            session_token: sessionToken || undefined,
+            visitor_token: visitorToken || undefined
+          })
+        })
+      } catch (err) {
+        // Non-blocking telemetry
+      }
+    }
+    recordSiteVisit()
 
     // Subscriptions
     const phasesChannel = supabase
@@ -359,20 +467,59 @@ export default function App() {
       if (end && now > end) isOpen = false
     }
 
-    if (isOpen) {
-      setIsRegistrationOpen(true)
-    } else {
+    if (!isOpen) {
       setIsRegistrationClosedModalOpen(true)
+      return
     }
+
+    // Gated behind authentication: Unauthenticated visitors must sign in first
+    if (!session?.user) {
+      setPendingRegistration(true)
+      setShowAuth(true)
+      return
+    }
+
+    // Authenticated user: open registration form directly
+    setIsRegistrationOpen(true)
   }
 
   const handleCloseRegistration = async () => {
     setIsRegistrationOpen(false)
+    clearPendingRegistration()
+    if (currentHash === '#register' || currentHash === '#registration') {
+      setCurrentHash('')
+      if (typeof window !== 'undefined' && window.location.hash) {
+        try {
+          history.replaceState(null, '', window.location.pathname + window.location.search)
+        } catch (e) {}
+      }
+    }
     if (session?.user) {
       const userProfile = await loadProfile(session.user)
       setProfile(userProfile)
     }
   }
+
+  // Auto-restore in-flight pending registration upon successful login
+  useEffect(() => {
+    if (session?.user && !loading && regTimer) {
+      const isPendingReg = getPendingRegistration()
+      if (isPendingReg) {
+        clearPendingRegistration()
+        handleOpenRegistration()
+      }
+    }
+  }, [session, loading, regTimer])
+
+  // Direct URL routing for #register / #registration / ?register=true
+  useEffect(() => {
+    if (!loading && regTimer) {
+      const isRegisterUrl = currentHash === '#register' || currentHash === '#registration' || (typeof window !== 'undefined' && window.location.search.includes('register=true'))
+      if (isRegisterUrl) {
+        handleOpenRegistration()
+      }
+    }
+  }, [loading, regTimer, currentHash])
 
   const loadProfile = async (user) => {
     try {
@@ -502,6 +649,29 @@ export default function App() {
         const savedState = getSessionState()
         let finalViewMode = "public"
 
+        // If new sign-in, record authenticated visit
+        if (eventType === "SIGNED_IN" && currentSession?.access_token) {
+          try {
+            const rawApiUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000').trim().replace(/\/+$/, '')
+            const API_BASE_URL = rawApiUrl.endsWith('/api') ? rawApiUrl.slice(0, -4) : rawApiUrl
+            const sessionToken = getStoredSessionToken()
+            const visitorToken = getStoredVisitorToken()
+            fetch(`${API_BASE_URL}/api/analytics/site-visit`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                ...(sessionToken ? { 'x-session-token': sessionToken } : {}),
+                ...(visitorToken ? { 'x-visitor-token': visitorToken } : {}),
+                'Authorization': `Bearer ${currentSession.access_token}`
+              },
+              body: JSON.stringify({
+                session_token: sessionToken || undefined,
+                visitor_token: visitorToken || undefined
+              })
+            }).catch(() => {})
+          } catch (e) {}
+        }
+
         // Account mismatch check: if stored state belongs to another user email, reset it
         if (savedState?.userEmail && savedState.userEmail !== currentSession.user.email) {
           clearSessionState()
@@ -530,11 +700,23 @@ export default function App() {
           userEmail: currentSession.user.email
         })
 
-        // Check if there was an in-flight direct QR voting token
-        const pendingToken = extractVotingTokenFromUrl() || getPendingVotingToken()
-        if (pendingToken) {
-          setVotingToken(pendingToken)
+        // Check if there was an in-flight pending vote idea
+        const pendingVote = getPendingVoteIdea()
+        if (pendingVote && pendingVote.productId) {
+          clearPendingVoteIdea()
+          setIdeaProductId(pendingVote.productId)
+          setViewMode("idea")
+          setCurrentHash('#idea?id=' + pendingVote.productId)
+          setVotingInitialTeamId(pendingVote.teamId || '')
+          setVotingInitialProductId(pendingVote.productId || '')
           setIsVotingModalOpen(true)
+        } else {
+          // Check if there was an in-flight direct QR voting token
+          const pendingToken = extractVotingTokenFromUrl() || getPendingVotingToken()
+          if (pendingToken) {
+            setVotingToken(pendingToken)
+            setIsVotingModalOpen(true)
+          }
         }
 
         setLoading(false)
@@ -588,29 +770,63 @@ export default function App() {
     )
   }
 
+  const isPhaseRunning = Boolean(timeLeft?.status?.endsWith('_active') || timeLeft?.status === 'registration_open')
+
   if (!session) {
     if (showAuth) {
       return (
         <EmailGate
           loginError={loginError}
-          onBack={() => setShowAuth(false)}
+          onBack={() => {
+            setShowAuth(false)
+            clearPendingRegistration()
+            if (currentHash === '#register' || currentHash === '#registration') {
+              setCurrentHash('')
+              if (typeof window !== 'undefined' && window.location.hash) {
+                try {
+                  history.replaceState(null, '', window.location.pathname + window.location.search)
+                } catch (e) {}
+              }
+            }
+          }}
         />
       )
     }
-    return (
-      <EntryCountdown
-        onEnter={() => setShowAuth(true)}
-        serverOffset={serverOffset}
-      />
-    )
+
+    // Protected views strictly require authentication
+    if (viewMode === 'submissions' || viewMode === 'admin') {
+      return (
+        <EmailGate
+          loginError={loginError}
+          onBack={() => setViewMode('public')}
+        />
+      )
+    }
+
+    // Active Phase / Countdown Gate:
+    // When a phase is running, unauthenticated visitors see EntryCountdown on initial visit.
+    // Direct idea links, #vote, or QR scans bypass countdown.
+    const isDirectPublicRoute = Boolean(currentHash.startsWith('#idea') || extractIdeaIdFromUrl() || currentHash === '#vote' || extractVotingTokenFromUrl() || currentHash === '#register' || currentHash === '#registration')
+    if (isPhaseRunning && !hasPassedCountdown && !isDirectPublicRoute) {
+      return (
+        <EntryCountdown
+          onEnter={() => {
+            setHasPassedCountdownState(true)
+            setHasPassedCountdown(true)
+          }}
+          serverOffset={serverOffset}
+        />
+      )
+    }
   }
 
   // Centralized Application Active View Source of Truth
   const getActiveView = () => {
     if (loading) return 'loading'
-    if (!session) return showAuth ? 'login' : 'entry'
+    if (!session && showAuth) return 'login'
     if (profile?.role === 'admin' && viewMode === 'admin') return 'admin'
     if (viewMode === 'submissions') return 'my_submissions'
+    if (viewMode === 'idea') return 'idea'
     if (isRegistrationOpen) return 'registration'
     if (isRegistrationClosedModalOpen) return 'registration_closed'
     if (isMySubmissionsOpen) return 'my_submissions_modal'
@@ -637,7 +853,8 @@ export default function App() {
     <>
       <Navbar
         onRegisterClick={handleOpenRegistration}
-        user={session.user}
+        onSignInClick={() => setShowAuth(true)}
+        user={session?.user}
         profile={profile}
         onProfileUpdate={async () => {
           if (session?.user) {
@@ -646,6 +863,10 @@ export default function App() {
           }
         }}
         onMySubmissionsClick={(phase = 'my_submissions') => {
+          if (!session) {
+            setShowAuth(true)
+            return
+          }
           setSelectedPhase(phase)
           setViewMode("submissions")
         }}
@@ -666,7 +887,7 @@ export default function App() {
         }}
         timeLeft={timeLeft}
         onReturnToAdmin={() => setViewMode("admin")}
-        onVoteClick={() => setIsVotingModalOpen(true)}
+        onVoteClick={() => setIsIdeaResolverOpen(true)}
       />
       <main>
         {viewMode === "submissions" ? (
@@ -688,6 +909,27 @@ export default function App() {
                 setProfile(userProfile);
               }
             }}
+          />
+        ) : viewMode === "idea" ? (
+          <PublicIdeaPage
+            productId={ideaProductId}
+            session={session}
+            user={session?.user}
+            profile={profile}
+            onBackToHome={() => {
+              setViewMode("public")
+              setCurrentHash("")
+              try {
+                history.replaceState(null, '', window.location.pathname + window.location.search)
+              } catch (e) {}
+            }}
+            onOpenVoteResolver={() => setIsIdeaResolverOpen(true)}
+            onTriggerVote={({ teamId, productId }) => {
+              setVotingInitialTeamId(teamId)
+              setVotingInitialProductId(productId)
+              setIsVotingModalOpen(true)
+            }}
+            onRequireLogin={() => setShowAuth(true)}
           />
         ) : (
           <>
@@ -736,7 +978,7 @@ export default function App() {
       />
 
       <RegistrationModal
-        isOpen={isRegistrationOpen}
+        isOpen={Boolean(isRegistrationOpen && session)}
         onClose={handleCloseRegistration}
         onRegistrationClosed={() => setIsRegistrationClosedModalOpen(true)}
       />
@@ -767,6 +1009,8 @@ export default function App() {
         onClose={() => {
           setIsVotingModalOpen(false)
           setVotingToken('')
+          setVotingInitialTeamId('')
+          setVotingInitialProductId('')
           clearPendingVotingToken()
           cleanVotingUrl()
         }}
@@ -775,7 +1019,10 @@ export default function App() {
           cleanVotingUrl()
         }}
         initialToken={votingToken}
+        initialTeamId={votingInitialTeamId}
+        initialProductId={votingInitialProductId}
         user={session?.user}
+        session={session}
         profile={profile}
         onProfileUpdate={async (savedDept) => {
           if (savedDept) {
@@ -797,6 +1044,35 @@ export default function App() {
               }))
             }
           }
+        }}
+        onRequireLogin={() => {
+          setIsVotingModalOpen(false)
+          setShowAuth(true)
+        }}
+      />
+
+      <IdeaResolutionModal
+        isOpen={isIdeaResolverOpen}
+        initialIdentifier={ideaResolverInitialIdentifier}
+        onClose={() => {
+          setIsIdeaResolverOpen(false)
+          setIdeaResolverInitialIdentifier('')
+          if (currentHash === '#vote') {
+            setCurrentHash('')
+            try {
+              history.replaceState(null, '', window.location.pathname + window.location.search)
+            } catch (e) {}
+          }
+        }}
+        onSelectProduct={(chosenProductId) => {
+          setIdeaProductId(chosenProductId)
+          setViewMode("idea")
+          setCurrentHash('#idea?id=' + chosenProductId)
+          try {
+            window.location.hash = '#idea?id=' + chosenProductId
+          } catch (e) {}
+          setIsIdeaResolverOpen(false)
+          setIdeaResolverInitialIdentifier('')
         }}
       />
     </>

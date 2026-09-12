@@ -196,14 +196,19 @@ async function getVotingControls() {
   return readLocalVotingControls();
 }
 
-async function getTeamQr(teamId, round = 1) {
+async function getTeamQr(teamId, round = 1, productId = null) {
   try {
-    const { data, error } = await supabase
+    let query = supabase
       .from('team_qr_codes')
-      .select('team_id, token, qr_token, is_active, scans_count, voting_round, created_at')
+      .select('id, team_id, product_id, token, qr_token, is_active, scans_count, voting_round, created_at')
       .eq('team_id', teamId)
-      .eq('voting_round', round)
-      .maybeSingle();
+      .eq('voting_round', round);
+
+    if (productId) {
+      query = query.eq('product_id', productId);
+    }
+
+    const { data, error } = await query.order('created_at', { ascending: true }).limit(1).maybeSingle();
 
     if (!error && data) {
       return {
@@ -215,7 +220,8 @@ async function getTeamQr(teamId, round = 1) {
   } catch (e) {
     // Ignore error and return fallback
   }
-  return fallbackQrStore.get(teamId) || null;
+  const fallbackKey = productId ? `${teamId}:${productId}` : teamId;
+  return fallbackQrStore.get(fallbackKey) || (productId ? null : fallbackQrStore.get(teamId)) || null;
 }
 
 async function getQrByToken(token) {
@@ -598,18 +604,18 @@ async function buildTeamShowcaseAndEligibility(teamId, voterUser, fromQr = false
 
   let eligibility = {
     can_vote: false,
+    voting_closed: !isVotingActive,
     reason: 'Please sign in with your @sece.ac.in account to check voting eligibility.'
   };
 
-  if (voterUser) {
-    if (!isVotingActive) {
-      eligibility = {
-        can_vote: false,
-        voting_closed: true,
-        error_code: 'VOTING_CLOSED',
-        reason: 'Community voting is currently unavailable.'
-      };
-    } else {
+  if (!isVotingActive) {
+    eligibility = {
+      can_vote: false,
+      voting_closed: true,
+      error_code: 'VOTING_CLOSED',
+      reason: 'Community voting is currently unavailable.'
+    };
+  } else if (voterUser) {
       const { data: voterProfile } = await supabase
         .from('profiles')
         .select('department, email')
@@ -619,14 +625,28 @@ async function buildTeamShowcaseAndEligibility(teamId, voterUser, fromQr = false
       const voterDept = (voterProfile?.department || voterUser?.user_metadata?.department || fallbackVoterDeptMap.get(voterUser.id) || '').trim();
       const voterEmail = (voterProfile?.email || voterUser.email || '').toLowerCase().trim();
 
-      // Product-level voting: Query all votes cast by this voter in the current round
+      // Phase 3 Product-level voting: Query all votes cast by this voter (No voting rounds in Phase 3)
       let votedProductIds = new Set();
+      try {
+        const { data: dbPv, error: pvErr } = await supabase
+          .from('product_votes')
+          .select('product_id')
+          .eq('voter_user_id', voterUser.id);
+
+        if (!pvErr && dbPv) {
+          dbPv.forEach(v => {
+            if (v.product_id) votedProductIds.add(v.product_id);
+          });
+        }
+      } catch (e) {
+        // Fallback check below
+      }
+
       try {
         const { data: dbVotes, error: voteErr } = await supabase
           .from('votes')
           .select('product_id')
-          .eq('voter_user_id', voterUser.id)
-          .eq('voting_round', currentRound);
+          .eq('voter_user_id', voterUser.id);
 
         if (!voteErr && dbVotes) {
           dbVotes.forEach(v => {
@@ -638,7 +658,7 @@ async function buildTeamShowcaseAndEligibility(teamId, voterUser, fromQr = false
       }
 
       (fallbackVotes || []).forEach(v => {
-        if (v.voter_user_id === voterUser.id && v.voting_round === currentRound && v.product_id) {
+        if (v.voter_user_id === voterUser.id && v.product_id) {
           votedProductIds.add(v.product_id);
         }
       });
@@ -687,7 +707,7 @@ async function buildTeamShowcaseAndEligibility(teamId, voterUser, fromQr = false
             already_voted: true,
             all_products_voted: true,
             error_code: 'ALREADY_VOTED',
-            reason: 'You have already voted for all projects belonging to this team in this voting round.',
+            reason: 'You have already voted for all projects belonging to this team.',
             voted_product_ids: Array.from(votedProductIds)
           };
         } else {
@@ -700,7 +720,6 @@ async function buildTeamShowcaseAndEligibility(teamId, voterUser, fromQr = false
         }
       }
     }
-  }
 
   return {
     success: true,
@@ -1031,16 +1050,45 @@ router.post('/vote', authenticateUser, voteLimiter, async (req, res) => {
       }
     }
 
-    // Concurrency atomic lock per voter:product:round
-    const inflightLockKey = `${req.user.id}:${product_id}:${voting_round}`;
+    // Concurrency atomic lock per voter:product (Phase 3: single vote per idea/product)
+    const inflightLockKey = `${req.user.id}:${product_id}`;
     if (inflightVoteLocks.has(inflightLockKey)) {
       metrics.duplicateAttemptsBlocked += 1;
       return res.status(409).json({
         success: false,
         error_code: 'ALREADY_VOTED',
-        message: 'A vote for this product is currently being processed or already recorded.'
+        message: 'You have already voted for this idea.'
       });
     }
+
+    // Fast database pre-check for existing vote on this product
+    try {
+      const { data: earlyPvCheck } = await supabase
+        .from('product_votes')
+        .select('id')
+        .eq('voter_user_id', req.user.id)
+        .eq('product_id', product_id)
+        .maybeSingle();
+
+      if (earlyPvCheck) {
+        metrics.duplicateAttemptsBlocked += 1;
+        return res.status(409).json({
+          success: false,
+          error_code: 'ALREADY_VOTED',
+          message: 'You have already voted for this idea.'
+        });
+      }
+    } catch (e) {}
+
+    if (fallbackVotes.some(v => v.voter_user_id === req.user.id && (v.product_id === product_id || (!v.product_id && v.team_id === team_id)))) {
+      metrics.duplicateAttemptsBlocked += 1;
+      return res.status(409).json({
+        success: false,
+        error_code: 'ALREADY_VOTED',
+        message: 'You have already voted for this idea.'
+      });
+    }
+
     inflightVoteLocks.add(inflightLockKey);
 
     // 4. Call PostgreSQL atomic function 'cast_vote'
@@ -1052,16 +1100,16 @@ router.post('/vote', authenticateUser, voteLimiter, async (req, res) => {
     });
 
     if (!rpcErr && rpcResult) {
+      inflightVoteLocks.delete(inflightLockKey);
       if (!rpcResult.success) {
         if (rpcResult.error_code === 'ALREADY_VOTED') {
           metrics.duplicateAttemptsBlocked += 1;
           return res.status(409).json({
             success: false,
             error_code: 'ALREADY_VOTED',
-            message: rpcResult.message || 'You have already voted for this product.'
+            message: 'You have already voted for this idea.'
           });
         }
-        inflightVoteLocks.delete(inflightLockKey);
         return res.status(403).json({
           success: false,
           error_code: rpcResult.error_code,
@@ -1078,22 +1126,23 @@ router.post('/vote', authenticateUser, voteLimiter, async (req, res) => {
         product_title: rpcResult.product_title,
         team_id: rpcResult.team_id || team_id,
         team_name: rpcResult.team_name,
-        voting_round: voting_round,
+        voting_round: 1,
         new_product_votes: rpcResult.new_product_votes,
         new_team_votes: rpcResult.new_team_votes,
         new_vote_count: rpcResult.new_product_votes,
-        message: rpcResult.message
+        message: rpcResult.message || 'Your vote has been officially recorded!'
       });
     }
 
     if (rpcErr) {
       // Check if unique constraint violation
-      if (rpcErr.message && (rpcErr.message.includes('unique_voter_product_round') || rpcErr.message.includes('unique_voter_team_round') || rpcErr.code === '23505')) {
+      if (rpcErr.message && (rpcErr.message.includes('unique_voter_product') || rpcErr.message.includes('unique_voter_team_round') || rpcErr.code === '23505')) {
+        inflightVoteLocks.delete(inflightLockKey);
         metrics.duplicateAttemptsBlocked += 1;
         return res.status(409).json({
           success: false,
           error_code: 'ALREADY_VOTED',
-          message: 'You have already voted for this product.'
+          message: 'You have already voted for this idea.'
         });
       }
 
@@ -1146,55 +1195,85 @@ router.post('/vote', authenticateUser, voteLimiter, async (req, res) => {
           });
         }
 
-        // Check if voter already voted for this specific product
+        // Check if voter already voted for this specific product (Phase 3: single vote per idea)
         let alreadyVoted = false;
         try {
-          const { data: existingVote } = await supabase
-            .from('votes')
+          const { data: existingPv } = await supabase
+            .from('product_votes')
             .select('id')
             .eq('voter_user_id', req.user.id)
             .eq('product_id', product_id)
-            .eq('voting_round', voting_round)
             .maybeSingle();
 
-          if (existingVote) alreadyVoted = true;
+          if (existingPv) alreadyVoted = true;
         } catch (e) {
-          // Table may not have product_id column yet
+          console.warn('[Voting API] Check product_votes notice:', e.message);
         }
 
         if (!alreadyVoted) {
-          alreadyVoted = fallbackVotes.some(v => v.voter_user_id === req.user.id && (v.product_id === product_id || (!v.product_id && v.team_id === team_id)) && v.voting_round === voting_round);
+          try {
+            const { data: existingVote } = await supabase
+              .from('votes')
+              .select('id')
+              .eq('voter_user_id', req.user.id)
+              .eq('product_id', product_id)
+              .maybeSingle();
+
+            if (existingVote) alreadyVoted = true;
+          } catch (e) {
+            // Table may not have product_id column yet
+          }
+        }
+
+        if (!alreadyVoted) {
+          alreadyVoted = fallbackVotes.some(v => v.voter_user_id === req.user.id && (v.product_id === product_id || (!v.product_id && v.team_id === team_id)));
         }
 
         if (alreadyVoted) {
+          inflightVoteLocks.delete(inflightLockKey);
           metrics.duplicateAttemptsBlocked += 1;
           return res.status(409).json({
             success: false,
             error_code: 'ALREADY_VOTED',
-            message: 'You have already voted for this product in this voting round.'
+            message: 'You have already voted for this idea.'
           });
         }
 
-        // Insert into votes table
+        // Insert into product_votes ledger table
         let inserted = false;
         try {
-          const { error: insErr } = await supabase.from('votes').insert([{
+          const { data: insPvData, error: insPvErr } = await supabase.from('product_votes').insert([{
             voter_user_id: req.user.id,
             product_id: product_id,
             team_id: team_id,
             voter_department: voterDept,
-            voting_round: voting_round
-          }]);
+            voting_round: 1
+          }]).select();
 
-          if (!insErr) {
+          if (!insPvErr && insPvData) {
             inserted = true;
-          } else if (insErr.code === '23505' || insErr.message?.includes('unique')) {
+          } else if (insPvErr && (insPvErr.code === '23505' || insPvErr.message?.includes('unique'))) {
+            inflightVoteLocks.delete(inflightLockKey);
             metrics.duplicateAttemptsBlocked += 1;
-            return res.status(409).json({ success: false, error_code: 'ALREADY_VOTED', message: 'You have already voted for this product.' });
+            return res.status(409).json({
+              success: false,
+              error_code: 'ALREADY_VOTED',
+              message: 'You have already voted for this idea.'
+            });
           }
         } catch (e) {
-          // Table pending migration
+          console.warn('[Voting API] Insert product_votes notice:', e.message);
         }
+
+        // Also record in legacy votes table if supported
+        try {
+          await supabase.from('votes').insert([{
+            voter_user_id: req.user.id,
+            team_id: team_id,
+            voter_department: voterDept,
+            voting_round: 1
+          }]);
+        } catch (e) {}
 
         if (!inserted) {
           fallbackVotes.push({
@@ -1203,42 +1282,65 @@ router.post('/vote', authenticateUser, voteLimiter, async (req, res) => {
             product_id: product_id,
             team_id: team_id,
             voter_department: voterDept,
-            voting_round: voting_round,
+            voting_round: 1,
             created_at: new Date().toISOString()
           });
         }
 
-        // Increment product_votes & team_votes
+        // Increment product_vote_counts & team_votes
         let newProductVotes = 1;
         let newTeamVotes = 1;
         try {
-          const { data: existingPv } = await supabase.from('product_votes').select('total_votes').eq('product_id', product_id).eq('voting_round', voting_round).maybeSingle();
-          newProductVotes = (existingPv?.total_votes || 0) + 1;
-          await supabase.from('product_votes').upsert({
+          const { count: pvCount, error: countErr } = await supabase
+            .from('product_votes')
+            .select('*', { count: 'exact', head: true })
+            .eq('product_id', product_id);
+
+          if (!countErr && typeof pvCount === 'number' && pvCount > 0) {
+            newProductVotes = pvCount;
+          } else {
+            const { data: existingPvc } = await supabase
+              .from('product_vote_counts')
+              .select('total_votes')
+              .eq('product_id', product_id)
+              .maybeSingle();
+            newProductVotes = (existingPvc?.total_votes || 0) + 1;
+          }
+
+          await supabase.from('product_vote_counts').upsert({
             product_id,
             team_id,
-            voting_round,
+            voting_round: 1,
             total_votes: newProductVotes,
+            vote_count: newProductVotes,
             last_vote_at: new Date().toISOString(),
             updated_at: new Date().toISOString()
           }, { onConflict: 'product_id, voting_round' });
-        } catch (e) {}
+        } catch (e) {
+          console.warn('[Voting API] Error updating product_vote_counts:', e.message);
+        }
 
         try {
-          const { data: existingTv } = await supabase.from('team_votes').select('vote_count').eq('team_id', team_id).eq('voting_round', voting_round).maybeSingle();
-          newTeamVotes = (existingTv?.vote_count || 0) + 1;
+          const { count: teamVoteCount } = await supabase
+            .from('product_votes')
+            .select('*', { count: 'exact', head: true })
+            .eq('team_id', team_id);
+
+          newTeamVotes = typeof teamVoteCount === 'number' && teamVoteCount > 0 ? teamVoteCount : 1;
+
           await supabase.from('team_votes').upsert({
             team_id,
-            voting_round,
+            voting_round: 1,
             vote_count: newTeamVotes,
             updated_at: new Date().toISOString()
           }, { onConflict: 'team_id, voting_round' });
         } catch (e) {
-          newTeamVotes = fallbackVotes.filter(v => v.team_id === team_id && v.voting_round === voting_round).length;
+          newTeamVotes = fallbackVotes.filter(v => v.team_id === team_id).length;
         }
 
         metrics.voteTimestamps.push(Date.now());
         leaderboardCache.cachedAt = 0;
+        inflightVoteLocks.delete(inflightLockKey);
 
         const currentProduct = showcase.products?.find(p => p.id === product_id);
         const prodTitle = currentProduct?.product_title || productRow?.product_title || 'Innovation Project';
@@ -1249,7 +1351,7 @@ router.post('/vote', authenticateUser, voteLimiter, async (req, res) => {
           product_title: prodTitle,
           team_id,
           team_name: showcase.team?.team_name,
-          voting_round,
+          voting_round: 1,
           new_product_votes: newProductVotes,
           new_team_votes: newTeamVotes,
           new_vote_count: newProductVotes,
@@ -1257,12 +1359,16 @@ router.post('/vote', authenticateUser, voteLimiter, async (req, res) => {
         });
       }
 
+      inflightVoteLocks.delete(inflightLockKey);
       return res.status(500).json({
         success: false,
         message: 'Vote submission failed. Please ensure the database migration has been run.'
       });
     }
   } catch (err) {
+    if (typeof inflightLockKey !== 'undefined') {
+      inflightVoteLocks.delete(inflightLockKey);
+    }
     console.error('[Voting API] /vote error:', err.message);
     return res.status(500).json({ success: false, message: 'Internal server error processing vote.' });
   }
@@ -1412,22 +1518,35 @@ router.get('/my-votes', authenticateUser, async (req, res) => {
 
     let votesList = [];
     try {
-      const { data: votes, error } = await supabase
-        .from('votes')
+      const { data: pvVotes, error: pvErr } = await supabase
+        .from('product_votes')
         .select('id, product_id, team_id, created_at, products(product_title, innovation_domain), teams(team_name)')
         .eq('voter_user_id', req.user.id)
-        .eq('voting_round', round)
         .order('created_at', { ascending: false });
 
-      if (!error && Array.isArray(votes) && votes.length > 0) {
-        votesList = votes;
+      if (!pvErr && Array.isArray(pvVotes) && pvVotes.length > 0) {
+        votesList = pvVotes;
       }
     } catch (e) {
       // Fallback
     }
 
     if (votesList.length === 0) {
-      votesList = fallbackVotes.filter(v => v.voter_user_id === req.user.id && v.voting_round === round);
+      try {
+        const { data: votes, error } = await supabase
+          .from('votes')
+          .select('id, product_id, team_id, created_at, products(product_title, innovation_domain), teams(team_name)')
+          .eq('voter_user_id', req.user.id)
+          .order('created_at', { ascending: false });
+
+        if (!error && Array.isArray(votes) && votes.length > 0) {
+          votesList = votes;
+        }
+      } catch (e) {}
+    }
+
+    if (votesList.length === 0) {
+      votesList = fallbackVotes.filter(v => v.voter_user_id === req.user.id);
     }
 
     const votedProductIds = votesList.map(v => v.product_id).filter(Boolean);
@@ -1435,7 +1554,7 @@ router.get('/my-votes', authenticateUser, async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      voting_round: round,
+      voting_round: 1,
       voted_product_ids: votedProductIds,
       voted_team_ids: votedTeamIds,
       votes: votesList.map(v => ({
@@ -1605,6 +1724,7 @@ router.get('/profile/department', authenticateUser, async (req, res) => {
 router.get('/team-qr-status/:team_id', authenticateUser, async (req, res) => {
   try {
     const { team_id } = req.params;
+    const { product_id } = req.query;
 
     let isAdmin = req.user?.user_metadata?.role === 'admin';
     if (!isAdmin) {
@@ -1632,8 +1752,8 @@ router.get('/team-qr-status/:team_id', authenticateUser, async (req, res) => {
     const controls = await getVotingControls();
     const isQrGenActive = controls?.is_qr_generation_active ?? false;
 
-    // Query team_qr_codes
-    const qrRow = await getTeamQr(team_id);
+    // Query team_qr_codes (scoped to product_id if provided)
+    const qrRow = await getTeamQr(team_id, controls?.current_voting_round || 1, product_id || null);
 
     if (!qrRow) {
       return res.status(200).json({
@@ -1665,6 +1785,7 @@ router.get('/team-qr-status/:team_id', authenticateUser, async (req, res) => {
       has_qr: true,
       is_active: true,
       qr_token: qrRow.qr_token,
+      product_id: qrRow.product_id || product_id || null,
       qr_generation_enabled: true,
       created_at: qrRow.created_at
     });
@@ -1681,7 +1802,7 @@ router.get('/team-qr-status/:team_id', authenticateUser, async (req, res) => {
 // -------------------------------------------------------------
 router.post(['/team-qr/generate', '/generate-team-qr'], authenticateUser, async (req, res) => {
   try {
-    const { team_id } = req.body;
+    const { team_id, product_id } = req.body;
     if (!team_id) {
       return res.status(400).json({ success: false, message: 'team_id is required.' });
     }
@@ -1724,55 +1845,176 @@ router.post(['/team-qr/generate', '/generate-team-qr'], authenticateUser, async 
       }
     }
 
-    // Check if permanent QR already exists (Guarantee ONE permanent QR per team)
-    const existingQr = await getTeamQr(team_id);
+    // Server-side validation of product_id if provided
+    let verifiedProductId = null;
+    if (product_id) {
+      const cleanProductId = String(product_id).trim();
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!uuidRegex.test(cleanProductId)) {
+        return res.status(400).json({
+          success: false,
+          error_code: 'INVALID_PRODUCT_ID',
+          message: 'Invalid product_id format.'
+        });
+      }
+
+      const { data: prod, error: prodErr } = await supabase
+        .from('products')
+        .select('id, team_id, product_title, product_number, status')
+        .eq('id', cleanProductId)
+        .maybeSingle();
+
+      if (prodErr || !prod) {
+        return res.status(404).json({
+          success: false,
+          error_code: 'PRODUCT_NOT_FOUND',
+          message: 'The requested product was not found.'
+        });
+      }
+
+      if (prod.team_id !== team_id) {
+        return res.status(403).json({
+          success: false,
+          error_code: 'PRODUCT_TEAM_MISMATCH',
+          message: 'The requested product does not belong to this team.'
+        });
+      }
+
+      verifiedProductId = cleanProductId;
+    }
+
+    // Check if permanent QR already exists (for this product or team)
+    const currentRound = controls?.current_voting_round || 1;
+    const existingQr = await getTeamQr(team_id, controls?.current_voting_round || 1, verifiedProductId);
     if (existingQr) {
       return res.status(200).json({
         success: true,
         status: existingQr.is_active !== false ? 'ACTIVE' : 'DISABLED_BY_ADMIN',
         qr_token: existingQr.qr_token,
+        product_id: existingQr.product_id || verifiedProductId || null,
         created_at: existingQr.created_at,
         message: 'Existing permanent team QR retrieved.'
       });
     }
 
-    // Create new permanent token
-    const newToken = crypto.randomBytes(16).toString('hex');
-    const qrObj = {
-      team_id,
-      qr_token: newToken,
-      is_active: true,
-      created_at: new Date().toISOString()
-    };
-
-    try {
-      const { data: inserted, error: insertErr } = await supabase
+    // PART 4: Check for pre-existing legacy row (product_id IS NULL)
+    // If a single-product team requests a product-specific QR, safely associate the legacy row
+    if (verifiedProductId) {
+      const { data: legacyQr } = await supabase
         .from('team_qr_codes')
-        .insert([{
-          team_id,
-          token: newToken,
-          qr_token: newToken,
-          voting_round: controls?.current_voting_round || 1,
-          is_active: true
-        }])
-        .select('token, qr_token, created_at')
-        .single();
+        .select('id, team_id, token, qr_token, voting_round, is_active, created_at')
+        .eq('team_id', team_id)
+        .eq('voting_round', currentRound)
+        .is('product_id', null)
+        .maybeSingle();
 
-      if (!insertErr && inserted) {
-        qrObj.qr_token = inserted.token || inserted.qr_token;
-        qrObj.created_at = inserted.created_at;
+      if (legacyQr) {
+        // Query active products count for this team
+        const { count: teamProductsCount } = await supabase
+          .from('products')
+          .select('*', { count: 'exact', head: true })
+          .eq('team_id', team_id)
+          .or('status.eq.active,status.is.null');
+
+        // Safe conversion ONLY for single-product teams
+        if (teamProductsCount === 1) {
+          const { data: updatedQr, error: updateErr } = await supabase
+            .from('team_qr_codes')
+            .update({
+              product_id: verifiedProductId,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', legacyQr.id)
+            .select('id, team_id, token, qr_token, product_id, is_active, created_at')
+            .maybeSingle();
+
+          if (updateErr || !updatedQr) {
+            console.error('[Voting API] /team-qr/generate failed to update legacy QR:', updateErr?.message);
+            return res.status(500).json({
+              success: false,
+              error_code: 'QR_PERSISTENCE_FAILED',
+              message: 'Unable to persist the product QR code.'
+            });
+          }
+
+          const updatedObj = {
+            team_id,
+            product_id: updatedQr.product_id || verifiedProductId,
+            qr_token: updatedQr.token || updatedQr.qr_token || legacyQr.token,
+            is_active: updatedQr.is_active !== false,
+            created_at: updatedQr.created_at || legacyQr.created_at
+          };
+          fallbackQrStore.set(`${team_id}:${verifiedProductId}`, updatedObj);
+          fallbackQrTokenMap.set(updatedObj.qr_token, updatedObj);
+
+          return res.status(200).json({
+            success: true,
+            status: updatedObj.is_active ? 'ACTIVE' : 'DISABLED_BY_ADMIN',
+            qr_token: updatedObj.qr_token,
+            product_id: updatedObj.product_id,
+            created_at: updatedObj.created_at,
+            message: 'Permanent team QR associated with product successfully.'
+          });
+        }
       }
-    } catch (e) {
-      // Table pending migration
     }
 
-    fallbackQrStore.set(team_id, qrObj);
+    // Create new permanent token and insert into team_qr_codes
+    const newToken = crypto.randomBytes(16).toString('hex');
+    const insertData = {
+      team_id,
+      token: newToken,
+      qr_token: newToken,
+      voting_round: currentRound,
+      is_active: true
+    };
+    if (verifiedProductId) {
+      insertData.product_id = verifiedProductId;
+    }
+
+    let inserted = null;
+    try {
+      const { data, error: insertErr } = await supabase
+        .from('team_qr_codes')
+        .insert([insertData])
+        .select('id, team_id, token, qr_token, product_id, is_active, created_at')
+        .maybeSingle();
+
+      if (insertErr || !data) {
+        console.error('[Voting API] /team-qr/generate database persistence failed:', insertErr?.message);
+        return res.status(500).json({
+          success: false,
+          error_code: 'QR_PERSISTENCE_FAILED',
+          message: 'Unable to persist the product QR code.'
+        });
+      }
+      inserted = data;
+    } catch (dbEx) {
+      console.error('[Voting API] /team-qr/generate database exception:', dbEx.message);
+      return res.status(500).json({
+        success: false,
+        error_code: 'QR_PERSISTENCE_FAILED',
+        message: 'Unable to persist the product QR code.'
+      });
+    }
+
+    const qrObj = {
+      team_id: inserted.team_id || team_id,
+      product_id: inserted.product_id || verifiedProductId || null,
+      qr_token: inserted.token || inserted.qr_token || newToken,
+      is_active: inserted.is_active !== false,
+      created_at: inserted.created_at || new Date().toISOString()
+    };
+
+    const fallbackKey = verifiedProductId ? `${team_id}:${verifiedProductId}` : team_id;
+    fallbackQrStore.set(fallbackKey, qrObj);
     fallbackQrTokenMap.set(qrObj.qr_token, qrObj);
 
     return res.status(200).json({
       success: true,
       status: 'ACTIVE',
       qr_token: qrObj.qr_token,
+      product_id: qrObj.product_id,
       created_at: qrObj.created_at,
       message: 'Permanent team QR generated successfully.'
     });
@@ -1789,6 +2031,7 @@ router.post(['/team-qr/generate', '/generate-team-qr'], authenticateUser, async 
 router.get('/team-qr/:team_id', authenticateUser, async (req, res) => {
   try {
     const { team_id } = req.params;
+    const { product_id } = req.query;
 
     let isAdmin = req.user?.user_metadata?.role === 'admin';
     if (!isAdmin) {
@@ -1827,7 +2070,7 @@ router.get('/team-qr/:team_id', authenticateUser, async (req, res) => {
       });
     }
 
-    const qrRow = await getTeamQr(team_id);
+    const qrRow = await getTeamQr(team_id, controls?.current_voting_round || 1, product_id || null);
     if (!qrRow) {
       return res.status(404).json({ success: false, message: 'QR Code not generated yet for this team.' });
     }
@@ -1839,6 +2082,7 @@ router.get('/team-qr/:team_id', authenticateUser, async (req, res) => {
     return res.status(200).json({
       success: true,
       team_id,
+      product_id: qrRow.product_id || product_id || null,
       qr_token: qrRow.qr_token,
       is_active: qrRow.is_active !== false,
       created_at: qrRow.created_at

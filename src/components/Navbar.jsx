@@ -29,7 +29,7 @@ const MOBILE_NAV_LINKS = [
   { label: 'Contact Us', href: '#contact' },
 ]
 
-export default function Navbar({ onRegisterClick, user, profile, onProfileUpdate, onMySubmissionsClick, timeLeft: _timeLeft, onReturnToAdmin, onNavClick, onVoteClick }) {
+export default function Navbar({ onRegisterClick, onSignInClick, user, profile, onProfileUpdate, onMySubmissionsClick, timeLeft: _timeLeft, onReturnToAdmin, onNavClick, onVoteClick }) {
   const [mobileOpen, setMobileOpen] = useState(false)
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
@@ -459,13 +459,24 @@ export default function Navbar({ onRegisterClick, user, profile, onProfileUpdate
               </button>
             </>
           ) : (
-            <a
-              href={REGISTRATION_FORM_URL}
-              onClick={handleRegister}
-              className="inline-flex items-center rounded-full bg-accent px-5 py-2.5 text-sm font-semibold text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-amber-600 hover:shadow-lg"
-            >
-              Register Now
-            </a>
+            <div className="flex items-center gap-3">
+              {onSignInClick && (
+                <button
+                  type="button"
+                  onClick={onSignInClick}
+                  className="rounded-full border border-slate-300 bg-white px-4 py-2 text-xs font-bold text-slate-700 shadow-xs hover:bg-slate-50 transition-colors cursor-pointer"
+                >
+                  Sign In
+                </button>
+              )}
+              <a
+                href={REGISTRATION_FORM_URL}
+                onClick={handleRegister}
+                className="inline-flex items-center rounded-full bg-accent px-5 py-2.5 text-xs font-bold text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-amber-600 hover:shadow-lg cursor-pointer"
+              >
+                Register Now
+              </a>
+            </div>
           )}
         </div>
 
@@ -664,11 +675,23 @@ export default function Navbar({ onRegisterClick, user, profile, onProfileUpdate
                   </button>
                 </li>
               ) : (
-                <li className="pt-2">
+                <li className="pt-2 space-y-2">
+                  {onSignInClick && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMobileOpen(false)
+                        onSignInClick()
+                      }}
+                      className="w-full block rounded-full border border-slate-300 bg-white px-4 py-3 text-center text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50 cursor-pointer"
+                    >
+                      Sign In
+                    </button>
+                  )}
                   <a
                     href={REGISTRATION_FORM_URL}
                     onClick={handleRegister}
-                    className="block rounded-full bg-accent px-4 py-3 text-center text-base font-semibold text-white shadow-md transition-all hover:bg-amber-600 active:scale-[0.98]"
+                    className="block rounded-full bg-accent px-4 py-3 text-center text-base font-semibold text-white shadow-md transition-all hover:bg-amber-600 active:scale-[0.98] cursor-pointer"
                   >
                     Register Now
                   </a>

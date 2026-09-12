@@ -23,7 +23,11 @@ import {
   HelpCircle,
   Eye,
   Check,
-  Copy
+  Copy,
+  BarChart3,
+  Activity,
+  Heart,
+  TrendingUp
 } from 'lucide-react';
 
 const DEPARTMENTS = [
@@ -42,6 +46,7 @@ const DEPARTMENTS = [
 
 const TABS = [
   { id: 'overview', label: 'Overview', mobileLabel: 'Overview', icon: Layers },
+  { id: 'analytics', label: 'Engagement Analytics', mobileLabel: 'Analytics', icon: BarChart3 },
   { id: 'voter_reports', label: 'Voter Reports', mobileLabel: 'Voter Reports', icon: Users },
   { id: 'team_reports', label: 'Product / Team Reports', mobileLabel: 'Team Reports', icon: Building2 },
   { id: 'export_drive', label: 'Export & Drive', mobileLabel: 'Export & Drive', icon: FileSpreadsheet }
@@ -226,7 +231,7 @@ export default function AdminVotingManagement({
   const [subTab, setSubTab] = useState(() => {
     try {
       const cached = sessionStorage.getItem('admin_voting_subtab');
-      if (cached && ['overview', 'voter_reports', 'team_reports', 'export_drive'].includes(cached)) {
+      if (cached && ['overview', 'analytics', 'voter_reports', 'team_reports', 'export_drive'].includes(cached)) {
         return cached;
       }
       return 'overview';
@@ -278,6 +283,17 @@ export default function AdminVotingManagement({
   const [loadingMetrics, setLoadingMetrics] = useState(true);
   const [updatingControls, setUpdatingControls] = useState(false);
   const [fetchError, setFetchError] = useState(null);
+
+  // Engagement Analytics State
+  const [analyticsMetrics, setAnalyticsMetrics] = useState(null);
+  const [analyticsIdeas, setAnalyticsIdeas] = useState([]);
+  const [dailyVisits, setDailyVisits] = useState([]);
+  const [authenticatedVisitors, setAuthenticatedVisitors] = useState([]);
+  const [analyticsDateRange, setAnalyticsDateRange] = useState('all');
+  const [loadingAnalytics, setLoadingAnalytics] = useState(false);
+  const [analyticsSearchQuery, setAnalyticsSearchQuery] = useState('');
+  const [exportingAnalytics, setExportingAnalytics] = useState(false);
+  const [exportingAnalyticsXlsx, setExportingAnalyticsXlsx] = useState(false);
 
   // Voter Reports State
   const [voterSearchQuery, setVoterSearchQuery] = useState('');
@@ -489,16 +505,99 @@ export default function AdminVotingManagement({
     }
   }, [API_BASE_URL, authHeaders, notify]);
 
+  // 5b. Fetch Engagement Analytics
+  const fetchAnalytics = useCallback(async (overrideRange) => {
+    setLoadingAnalytics(true);
+    const range = overrideRange || analyticsDateRange;
+    try {
+      const [ovResult, ideasResult] = await Promise.all([
+        safeFetchJson(`${API_BASE_URL}/api/admin/analytics/overview?range=${range}`, { headers: authHeaders }),
+        safeFetchJson(`${API_BASE_URL}/api/admin/analytics/ideas`, { headers: authHeaders })
+      ]);
+      if (ovResult.ok && ovResult.data?.metrics) {
+        setAnalyticsMetrics(ovResult.data.metrics);
+        setDailyVisits(ovResult.data.daily_visits || []);
+        setAuthenticatedVisitors(ovResult.data.authenticated_visitors || []);
+      }
+      if (ideasResult.ok && ideasResult.data?.ideas) {
+        setAnalyticsIdeas(ideasResult.data.ideas);
+      }
+    } catch (err) {
+      console.warn('[AdminVotingManagement] Failed to fetch analytics:', err);
+      notify('error', 'Analytics Load Error', err.message);
+    } finally {
+      setLoadingAnalytics(false);
+    }
+  }, [API_BASE_URL, authHeaders, notify, analyticsDateRange]);
+
+  // Handle Export Analytics CSV
+  const handleExportAnalyticsCsv = async () => {
+    setExportingAnalytics(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admin/analytics/export?range=${analyticsDateRange}`, { headers: authHeaders });
+      if (!res.ok) throw new Error(`Export failed with status ${res.status}`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `ipl2026_engagement_analytics_${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      notify('success', 'Export Ready', 'Downloaded engagement analytics CSV report.');
+    } catch (err) {
+      notify('error', 'Export Failed', err.message);
+    } finally {
+      setExportingAnalytics(false);
+    }
+  };
+
+  // Handle Export Analytics XLSX
+  const handleExportAnalyticsXlsx = async () => {
+    setExportingAnalyticsXlsx(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admin/analytics/export.xlsx?range=${analyticsDateRange}`, { headers: authHeaders });
+      if (!res.ok) throw new Error(`Excel export failed with status ${res.status}`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `IPL_2026_Website_Analytics_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      notify('success', 'Excel Export Ready', 'Downloaded IPL_2026_Website_Analytics.xlsx');
+    } catch (err) {
+      notify('error', 'Excel Export Failed', err.message);
+    } finally {
+      setExportingAnalyticsXlsx(false);
+    }
+  };
+
+  const filteredAnalyticsIdeas = useMemo(() => {
+    if (!analyticsSearchQuery.trim()) return analyticsIdeas;
+    const q = analyticsSearchQuery.toLowerCase();
+    return analyticsIdeas.filter(i =>
+      i.product_title?.toLowerCase().includes(q) ||
+      i.team_name?.toLowerCase().includes(q) ||
+      i.registration_id?.toLowerCase().includes(q)
+    );
+  }, [analyticsIdeas, analyticsSearchQuery]);
+
   // Load sub-page data on tab change
   useEffect(() => {
-    if (subTab === 'voter_reports') {
+    if (subTab === 'analytics') {
+      fetchAnalytics();
+    } else if (subTab === 'voter_reports') {
       fetchVoters(voterSearchQuery);
     } else if (subTab === 'team_reports') {
       fetchTeams(teamSearchQuery, teamDeptFilter);
     } else if (subTab === 'export_drive') {
       fetchReportHistory();
     }
-  }, [subTab, fetchVoters, fetchTeams, fetchReportHistory, voterSearchQuery, teamSearchQuery, teamDeptFilter]);
+  }, [subTab, fetchAnalytics, fetchVoters, fetchTeams, fetchReportHistory, voterSearchQuery, teamSearchQuery, teamDeptFilter]);
 
   // 6. Handle Download Excel
   const handleDownloadExcel = async (type) => {
@@ -800,6 +899,366 @@ export default function AdminVotingManagement({
                   {metrics.lastVoteAt ? new Date(metrics.lastVoteAt).toLocaleDateString() : 'Continuous Voting'}
                 </p>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* SUB-PAGE: ENGAGEMENT ANALYTICS                                */}
+      {/* ============================================================== */}
+      {/* ============================================================== */}
+      {/* SUB-PAGE: ENGAGEMENT & WEBSITE VISITOR ANALYTICS               */}
+      {/* ============================================================== */}
+      {subTab === 'analytics' && (
+        <div className="space-y-6">
+          {/* Top Control Bar: Date Range Filter + Action Buttons */}
+          <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                <Filter size={14} className="text-primary" /> Range:
+              </span>
+              <div className="flex items-center bg-slate-100 p-1 rounded-xl">
+                {[
+                  { id: 'all', label: 'All Time' },
+                  { id: 'today', label: 'Today' },
+                  { id: '7d', label: 'Last 7 Days' },
+                  { id: '30d', label: 'Last 30 Days' }
+                ].map((btn) => (
+                  <button
+                    key={btn.id}
+                    type="button"
+                    onClick={() => {
+                      setAnalyticsDateRange(btn.id);
+                      fetchAnalytics(btn.id);
+                    }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                      analyticsDateRange === btn.id
+                        ? 'bg-white text-primary shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    {btn.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => fetchAnalytics()}
+                disabled={loadingAnalytics}
+                className="py-2 px-3.5 rounded-xl text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition cursor-pointer flex items-center gap-2 shadow-sm"
+              >
+                <RefreshCw size={14} className={loadingAnalytics ? 'animate-spin' : ''} />
+                <span>Refresh</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleExportAnalyticsXlsx}
+                disabled={exportingAnalyticsXlsx}
+                className="py-2 px-4 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 transition cursor-pointer flex items-center gap-2 shadow-sm"
+              >
+                <FileSpreadsheet size={15} />
+                <span>{exportingAnalyticsXlsx ? 'Generating Excel...' : 'Download Excel (.xlsx)'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleExportAnalyticsCsv}
+                disabled={exportingAnalytics}
+                className="py-2 px-3.5 rounded-xl text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition cursor-pointer flex items-center gap-2 shadow-sm"
+              >
+                <Download size={14} />
+                <span>{exportingAnalytics ? 'Exporting...' : 'Export CSV'}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* SECTION 1: WEBSITE VISITOR ANALYTICS */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+              <div className="flex items-center gap-2">
+                <Users size={18} className="text-blue-600" />
+                <h3 className="font-heading font-black text-slate-900 text-base">Website Visitor Analytics</h3>
+              </div>
+              <span className="text-[11px] font-semibold text-slate-500 bg-blue-50 text-blue-700 px-2.5 py-0.5 rounded-full border border-blue-200">
+                Privacy-Preserving Telemetry
+              </span>
+            </div>
+
+            {/* 6 Summary Cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
+              <article className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 space-y-1">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Website Views (Total)</span>
+                <p className="font-heading text-2xl font-black text-blue-600">
+                  {(analyticsMetrics?.website_page_views || 0).toLocaleString()}
+                </p>
+                <p className="text-[10px] text-slate-500">All website page visits</p>
+              </article>
+
+              <article className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 space-y-1">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Unique Sessions</span>
+                <p className="font-heading text-2xl font-black text-indigo-600">
+                  {(analyticsMetrics?.website_unique_sessions || 0).toLocaleString()}
+                </p>
+                <p className="text-[10px] text-slate-500">Distinct browser sessions</p>
+              </article>
+
+              <article className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 space-y-1">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Authenticated</span>
+                <p className="font-heading text-2xl font-black text-emerald-600">
+                  {(analyticsMetrics?.authenticated_visitors || 0).toLocaleString()}
+                </p>
+                <p className="text-[10px] text-slate-500">Logged-in @sece.ac.in users</p>
+              </article>
+
+              <article className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 space-y-1">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Anonymous</span>
+                <p className="font-heading text-2xl font-black text-slate-600">
+                  {(analyticsMetrics?.anonymous_visitors || 0).toLocaleString()}
+                </p>
+                <p className="text-[10px] text-slate-500">Public anonymous sessions</p>
+              </article>
+
+              <article className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 space-y-1">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Today Visits</span>
+                <p className="font-heading text-2xl font-black text-cyan-600">
+                  {(analyticsMetrics?.website_views_today || 0).toLocaleString()}
+                </p>
+                <p className="text-[10px] text-slate-500">Since 00:00 today</p>
+              </article>
+
+              <article className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 space-y-1">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Today Unique</span>
+                <p className="font-heading text-2xl font-black text-purple-600">
+                  {(analyticsMetrics?.today_unique_visitors || 0).toLocaleString()}
+                </p>
+                <p className="text-[10px] text-slate-500">Distinct sessions today</p>
+              </article>
+            </div>
+
+            {/* Daily Visits & Who Visited Tables */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Table 1: Daily Visitor Traffic */}
+              <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200 space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                    <Activity size={16} className="text-blue-600" /> Daily Website Traffic
+                  </h4>
+                  <span className="text-xs text-slate-400 font-semibold">
+                    {dailyVisits.length} days recorded
+                  </span>
+                </div>
+
+                <div className="overflow-x-auto max-h-[320px] overflow-y-auto">
+                  {dailyVisits.length === 0 ? (
+                    <div className="py-8 text-center text-slate-400 text-xs">No daily visit records found.</div>
+                  ) : (
+                    <table className="w-full text-left text-xs">
+                      <thead className="sticky top-0 bg-white shadow-xs">
+                        <tr className="border-b border-slate-100 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                          <th className="pb-2.5 pr-3">Date</th>
+                          <th className="pb-2.5 pr-3 text-right">Total Visits</th>
+                          <th className="pb-2.5 pr-3 text-right">Unique</th>
+                          <th className="pb-2.5 pr-3 text-right">Auth</th>
+                          <th className="pb-2.5 pl-3 text-right">Anon</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-slate-700">
+                        {dailyVisits.map((d) => (
+                          <tr key={d.date} className="hover:bg-slate-50/80 transition-colors">
+                            <td className="py-2.5 pr-3 font-semibold text-slate-900">{d.display_date || d.date}</td>
+                            <td className="py-2.5 pr-3 text-right font-mono font-bold text-blue-600">{d.total_visits}</td>
+                            <td className="py-2.5 pr-3 text-right font-mono font-bold text-indigo-600">{d.unique_visitors}</td>
+                            <td className="py-2.5 pr-3 text-right font-mono font-semibold text-emerald-600">{d.authenticated_visitors}</td>
+                            <td className="py-2.5 pl-3 text-right font-mono text-slate-500">{d.anonymous_visitors}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </div>
+
+              {/* Table 2: Authenticated Visitors ("Who Visited") */}
+              <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200 space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                      <ShieldCheck size={16} className="text-emerald-600" /> Authenticated Visitors
+                    </h4>
+                    <span className="text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-md">
+                      Admin Only
+                    </span>
+                  </div>
+                  <span className="text-xs text-slate-400 font-semibold">
+                    {authenticatedVisitors.length} users
+                  </span>
+                </div>
+
+                <div className="overflow-x-auto max-h-[320px] overflow-y-auto">
+                  {authenticatedVisitors.length === 0 ? (
+                    <div className="py-8 text-center text-slate-400 text-xs">No authenticated visitor sessions recorded yet.</div>
+                  ) : (
+                    <table className="w-full text-left text-xs">
+                      <thead className="sticky top-0 bg-white shadow-xs">
+                        <tr className="border-b border-slate-100 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                          <th className="pb-2.5 pr-3">Visitor</th>
+                          <th className="pb-2.5 pr-3">Department</th>
+                          <th className="pb-2.5 pr-3 text-right">Visits</th>
+                          <th className="pb-2.5 pl-3 text-right">Last Active</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-slate-700">
+                        {authenticatedVisitors.map((u) => (
+                          <tr key={u.user_id} className="hover:bg-slate-50/80 transition-colors">
+                            <td className="py-2.5 pr-3 max-w-[160px]">
+                              <p className="font-bold text-[#0B1B3A] truncate">{u.name}</p>
+                              <p className="text-[10px] text-slate-400 font-mono truncate">{u.email}</p>
+                            </td>
+                            <td className="py-2.5 pr-3 text-slate-600 truncate max-w-[120px]">{u.department}</td>
+                            <td className="py-2.5 pr-3 text-right">
+                              <span className="font-mono font-black text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                                {u.total_visits}
+                              </span>
+                            </td>
+                            <td className="py-2.5 pl-3 text-right text-slate-500 whitespace-nowrap text-[11px]">
+                              {u.last_visit ? new Date(u.last_visit).toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'N/A'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* SECTION 2: IDEA ENGAGEMENT & SCORING */}
+          <div className="space-y-4 pt-4 border-t border-slate-200">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+              <div className="flex items-center gap-2">
+                <BarChart3 size={18} className="text-primary" />
+                <h3 className="font-heading font-black text-slate-900 text-base">Idea Page Engagement & Public Scoring</h3>
+              </div>
+              <span className="text-xs text-slate-400 font-semibold">
+                Score Formula: Likes + (Votes × 2)
+              </span>
+            </div>
+
+            {/* Top 5 Idea Cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
+              <article className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 space-y-1">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Idea Views</span>
+                <p className="font-heading text-2xl font-black text-[#0B1B3A]">
+                  {(analyticsMetrics?.idea_page_views || 0).toLocaleString()}
+                </p>
+                <p className="text-[10px] text-slate-500">Total idea page views</p>
+              </article>
+
+              <article className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 space-y-1">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Idea Sessions</span>
+                <p className="font-heading text-2xl font-black text-purple-600">
+                  {(analyticsMetrics?.idea_unique_sessions || 0).toLocaleString()}
+                </p>
+                <p className="text-[10px] text-slate-500">Distinct idea visitors</p>
+              </article>
+
+              <article className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 space-y-1">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Total Likes</span>
+                <p className="font-heading text-2xl font-black text-rose-600">
+                  {(analyticsMetrics?.total_likes || 0).toLocaleString()}
+                </p>
+                <p className="text-[10px] text-slate-500">+1 pt per verified like</p>
+              </article>
+
+              <article className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 space-y-1">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Total Votes</span>
+                <p className="font-heading text-2xl font-black text-emerald-600">
+                  {(analyticsMetrics?.total_votes || 0).toLocaleString()}
+                </p>
+                <p className="text-[10px] text-slate-500">+2 pts per student vote</p>
+              </article>
+
+              <article className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 space-y-1">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Total Score</span>
+                <p className="font-heading text-2xl font-black text-primary">
+                  {(analyticsMetrics?.total_score || 0).toLocaleString()}
+                </p>
+                <p className="text-[10px] text-slate-500">Likes + (Votes × 2)</p>
+              </article>
+            </div>
+
+            {/* Search Input for Idea Table */}
+            <div className="relative">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+              <input
+                type="text"
+                value={analyticsSearchQuery}
+                onChange={(e) => setAnalyticsSearchQuery(e.target.value)}
+                placeholder="Search ideas by title, team name, or registration ID..."
+                className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 text-xs sm:text-sm text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+              />
+            </div>
+
+            {/* Innovation Idea Engagement Table */}
+            <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200 space-y-3">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <BarChart3 size={16} className="text-primary" /> Innovation Idea Engagement Table
+                </h4>
+                <span className="text-xs text-slate-400 font-semibold">
+                  Score Formula: Likes + (Votes × 2)
+                </span>
+              </div>
+
+              {loadingAnalytics ? (
+                <div className="py-12 text-center text-slate-400 text-xs">Loading engagement analytics...</div>
+              ) : filteredAnalyticsIdeas.length === 0 ? (
+                <div className="py-12 text-center text-slate-400 text-xs">No matching innovation ideas found.</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-100 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                        <th className="pb-2.5 pr-3">Rank</th>
+                        <th className="pb-2.5 pr-4">Idea / Product Title</th>
+                        <th className="pb-2.5 pr-4">Team Name</th>
+                        <th className="pb-2.5 pr-3 text-right">Views</th>
+                        <th className="pb-2.5 pr-3 text-right">Unique</th>
+                        <th className="pb-2.5 pr-3 text-right">Likes</th>
+                        <th className="pb-2.5 pr-3 text-right">Votes</th>
+                        <th className="pb-2.5 pr-3 text-right">Score</th>
+                        <th className="pb-2.5 pl-3">Last Viewed</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 text-slate-700">
+                      {filteredAnalyticsIdeas.map((idea) => (
+                        <tr key={idea.product_id} className="hover:bg-slate-50/80 transition-colors">
+                          <td className="py-3 pr-3 font-bold text-slate-900">#{idea.rank}</td>
+                          <td className="py-3 pr-4 max-w-[240px]">
+                            <p className="font-bold text-[#0B1B3A] truncate">{idea.product_title}</p>
+                            <p className="text-[10px] text-slate-400 font-mono">{idea.registration_id}</p>
+                          </td>
+                          <td className="py-3 pr-4 font-semibold text-slate-700 truncate max-w-[160px]">{idea.team_name}</td>
+                          <td className="py-3 pr-3 text-right font-mono font-bold text-blue-600">{(idea.page_views || 0).toLocaleString()}</td>
+                          <td className="py-3 pr-3 text-right font-mono font-bold text-indigo-600">{(idea.unique_sessions || 0).toLocaleString()}</td>
+                          <td className="py-3 pr-3 text-right font-mono font-bold text-rose-600">{(idea.likes || 0).toLocaleString()}</td>
+                          <td className="py-3 pr-3 text-right font-mono font-bold text-primary">{(idea.votes || 0).toLocaleString()}</td>
+                          <td className="py-3 pr-3 text-right font-black text-emerald-700 font-mono text-sm">{(idea.score || 0).toLocaleString()}</td>
+                          <td className="py-3 pl-3 text-slate-500 whitespace-nowrap text-[11px]">
+                            {idea.last_viewed_at ? new Date(idea.last_viewed_at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }) : 'Never'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </div>
         </div>

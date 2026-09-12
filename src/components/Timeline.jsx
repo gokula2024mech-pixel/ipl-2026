@@ -171,27 +171,55 @@ export default function Timeline({ regTimer: propRegTimer, dbPhases: propDbPhase
   }, [activeMilestoneIndex, reducedMotion])
 
   /* =========================================================
-     DESKTOP SERPENTINE ROADMAP COORDINATES (1440 x 1060 Canvas)
-     Exact zig-zag serpentine flow from Reference Image 2
+     DESKTOP SINGLE CONTINUOUS JOURNEY PATH COORDINATES
+     Canvas: 1280 x 1420. Center line: X = 640.
+     ONE continuous vertical S-curve journey flowing down the center:
+     Start (640, 50) -> Node 0 (590, 160) -> Node 1 (690, 380) ->
+     Node 2 (570, 600) -> Node 3 (710, 820) -> Node 4 (560, 1040) ->
+     Node 5 (720, 1260) -> End (640, 1370)
+     Every segment maintains vertical tangents (dx/dy = 0) at nodes,
+     guaranteeing C1 continuity with ZERO kinks and ZERO branches.
      ========================================================= */
   const DESKTOP_SEGMENTS = useMemo(() => [
-    // Segment 0: START (80, 110) -> Registration Node (480, 330)
-    { p0: [80, 110], c1: [100, 180], c2: [260, 310], p3: [480, 330] },
-    // Segment 1: Registration Node (480, 330) -> Phase 1 Node (860, 420)
-    { p0: [480, 330], c1: [580, 340], c2: [720, 380], p3: [860, 420] },
-    // Segment 2: Phase 1 Node (860, 420) -> Phase 2 Node (440, 540) [Deep U-turn across from right to left]
-    { p0: [860, 420], c1: [980, 440], c2: [600, 580], p3: [440, 540] },
-    // Segment 3: Phase 2 Node (440, 540) -> Design Refinement Node (820, 670) [Deep U-turn across from left to right]
-    { p0: [440, 540], c1: [400, 570], c2: [740, 660], p3: [820, 670] },
-    // Segment 4: Design Refinement Node (820, 670) -> Phase 3 Pitch Node (480, 840) [Deep U-turn across from right to left]
-    { p0: [820, 670], c1: [850, 710], c2: [540, 830], p3: [480, 840] },
-    // Segment 5: Phase 3 Pitch Node (480, 840) -> END Expo (1100, 890) [Sweeping bottom road to the right]
-    { p0: [480, 840], c1: [540, 870], c2: [800, 890], p3: [1100, 890] },
+    // Seg 0: START (640, 50) -> Registration Node 0 (590, 160)
+    { p0: [640, 50], c1: [640, 100], c2: [590, 110], p3: [590, 160] },
+    // Seg 1: Node 0 (590, 160) -> Ideation Node 1 (690, 380) [gentle wave right]
+    { p0: [590, 160], c1: [590, 260], c2: [690, 280], p3: [690, 380] },
+    // Seg 2: Node 1 (690, 380) -> Prototype Node 2 (570, 600) [gentle wave left]
+    { p0: [690, 380], c1: [690, 480], c2: [570, 500], p3: [570, 600] },
+    // Seg 3: Node 2 (570, 600) -> Refinement Node 3 (710, 820) [gentle wave right]
+    { p0: [570, 600], c1: [570, 700], c2: [710, 720], p3: [710, 820] },
+    // Seg 4: Node 3 (710, 820) -> Pitch Prep Node 4 (560, 1040) [gentle wave left]
+    { p0: [710, 820], c1: [710, 920], c2: [560, 940], p3: [560, 1040] },
+    // Seg 5: Node 4 (560, 1040) -> Final Expo Node 5 (720, 1260) [gentle wave right]
+    { p0: [560, 1040], c1: [560, 1140], c2: [720, 1160], p3: [720, 1260] },
+    // Seg 6: Node 5 (720, 1260) -> GRAND FINALE Trophy (640, 1370) [return to center]
+    { p0: [720, 1260], c1: [720, 1310], c2: [640, 1320], p3: [640, 1370] },
   ], [])
 
-  // Calculate character (x, y, angle) along the active desktop segment
+  // Structured desktop milestone nodes configuration
+  // Cards strictly alternate Left and Right positions
+  // Distance between card and node is uniformly 100px with ZERO road crossing
+  const DESKTOP_NODES = useMemo(() => [
+    { idx: 0, x: 590, y: 160, isLeft: true, cardLeft: 140, color: '#10b981', label: '1' },
+    { idx: 1, x: 690, y: 380, isLeft: false, cardLeft: 790, color: '#0284c7', label: '2' },
+    { idx: 2, x: 570, y: 600, isLeft: true, cardLeft: 120, color: '#f59e0b', label: '3' },
+    { idx: 3, x: 710, y: 820, isLeft: false, cardLeft: 810, color: '#a855f7', label: '4' },
+    { idx: 4, x: 560, y: 1040, isLeft: true, cardLeft: 110, color: '#0ea5e9', label: '5' },
+    { idx: 5, x: 720, y: 1260, isLeft: false, cardLeft: 820, color: '#eab308', label: '6' },
+  ], [])
+
+  // Full continuous SVG path data string
+  const masterPathD = useMemo(() => {
+    return DESKTOP_SEGMENTS.map((seg, i) => {
+      const prefix = i === 0 ? `M ${seg.p0[0]} ${seg.p0[1]}` : ''
+      return `${prefix} C ${seg.c1[0]} ${seg.c1[1]}, ${seg.c2[0]} ${seg.c2[1]}, ${seg.p3[0]} ${seg.p3[1]}`
+    }).join(' ')
+  }, [DESKTOP_SEGMENTS])
+
+  // Calculate character (x, y, tilt) along the active desktop segment
   const desktopCharacterPos = useMemo(() => {
-    const segIdx = Math.min(activeMilestoneIndex, DESKTOP_SEGMENTS.length - 1)
+    const segIdx = Math.min(Math.max(0, activeMilestoneIndex), DESKTOP_SEGMENTS.length - 1)
     const seg = DESKTOP_SEGMENTS[segIdx]
     const u = reducedMotion ? 1 : walkProgress
     const inv = 1 - u
@@ -220,10 +248,10 @@ export default function Timeline({ regTimer: propRegTimer, dbPhases: propDbPhase
       6 * inv * u * (seg.c2[1] - seg.c1[1]) +
       3 * u * u * (seg.p3[1] - seg.c2[1])
 
-    let angle = (Math.atan2(dy, dx) * 180) / Math.PI
-    const clampedAngle = Math.max(-14, Math.min(14, angle))
+    let tilt = (Math.atan2(dx, dy) * 180) / Math.PI
+    const clampedTilt = Math.max(-8, Math.min(8, tilt))
 
-    return { x, y, angle: clampedAngle, flip: dx < -5 }
+    return { x, y, tilt: clampedTilt, flip: dx < -2 }
   }, [activeMilestoneIndex, walkProgress, DESKTOP_SEGMENTS, reducedMotion])
 
   return (
@@ -239,20 +267,20 @@ export default function Timeline({ regTimer: propRegTimer, dbPhases: propDbPhase
           50% { transform: translateY(0px) rotate(0deg); }
           75% { transform: translateY(-3px) rotate(-2deg); }
         }
-        @keyframes roadPulseFlow {
-          0% { stroke-dashoffset: 60; }
+        @keyframes journeyShimmer {
+          0% { stroke-dashoffset: 36; }
           100% { stroke-dashoffset: 0; }
         }
         .student-walking {
           animation: studentWalkCycle 0.45s ease-in-out infinite;
         }
-        .road-pulse-active {
-          stroke-dasharray: 12 18;
-          animation: roadPulseFlow 1.2s linear infinite;
+        .journey-shimmer-active {
+          stroke-dasharray: 6 12;
+          animation: journeyShimmer 1.2s linear infinite;
         }
       `}</style>
 
-      <div className="mx-auto w-[96vw] max-w-[1600px] px-2 sm:px-4 md:px-6 lg:px-8">
+      <div className="mx-auto w-[96vw] max-w-[1440px] px-2 sm:px-4 md:px-6 lg:px-8">
         <SectionHeading
           eyebrow="TIMELINE"
           title="Your 4-Week Journey"
@@ -260,312 +288,285 @@ export default function Timeline({ regTimer: propRegTimer, dbPhases: propDbPhase
         />
 
         {/* =========================================================
-            DESKTOP SERPENTINE ROADMAP (Hidden on < 1024px)
-            Matches Reference Image 2 visual layout exactly
+            DESKTOP EVENT JOURNEY ROADMAP (Hidden on < 1024px)
+            Balanced 1280 x 1420 Canvas with ONE Continuous Central S-Curve Journey
             ========================================================= */}
-        <div className="hidden lg:block relative w-full max-w-[1440px] h-[1060px] mx-auto select-none mt-6">
+        <div className="hidden lg:block relative w-full max-w-[1280px] h-[1420px] mx-auto select-none mt-6">
           
-          {/* Continuous Full SVG Winding Roadmap Path */}
+          {/* Continuous Full SVG Event Journey Path */}
           <svg
-            viewBox="0 0 1440 1060"
+            viewBox="0 0 1280 1420"
             className="absolute inset-0 w-full h-full pointer-events-none z-0 overflow-visible"
           >
             <defs>
-              {/* Electric Glow Filter */}
-              <filter id="electricGlow" x="-20%" y="-20%" width="140%" height="140%">
-                <feDropShadow dx="0" dy="0" stdDeviation="6" floodColor="#38bdf8" floodOpacity="0.8" />
+              {/* Subtle Ambient Glow for the Path */}
+              <filter id="pathAmbientGlow" x="-20%" y="-20%" width="140%" height="140%">
+                <feGaussianBlur stdDeviation="5" result="blur" />
+                <feComposite in="SourceGraphic" in2="blur" operator="over" />
               </filter>
-              {/* Road Gradient */}
-              <linearGradient id="activeRoadGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+
+              {/* Master Gradient for Progress Path */}
+              <linearGradient id="journeyMasterGrad" x1="0%" y1="0%" x2="0%" y2="100%">
                 <stop offset="0%" stopColor="#10b981" />
-                <stop offset="60%" stopColor="#0284c7" />
-                <stop offset="100%" stopColor="#3b82f6" />
+                <stop offset="25%" stopColor="#0284c7" />
+                <stop offset="50%" stopColor="#f59e0b" />
+                <stop offset="75%" stopColor="#8b5cf6" />
+                <stop offset="90%" stopColor="#0ea5e9" />
+                <stop offset="100%" stopColor="#eab308" />
+              </linearGradient>
+
+              {/* Active Milestone Segment Gradient */}
+              <linearGradient id="activeMilestoneGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" stopColor="#10b981" />
+                <stop offset="50%" stopColor="#0284c7" />
+                <stop offset="100%" stopColor="#38bdf8" />
               </linearGradient>
             </defs>
 
-            {/* 1. Road Outer Shadow (Depth) */}
+            {/* 1. Soft Ambient Halo along the Continuous Path */}
             <path
-              d="M 80 110
-                 C 100 180, 260 310, 480 330
-                 C 580 340, 720 380, 860 420
-                 C 980 440, 920 520, 760 550
-                 C 600 580, 480 520, 440 540
-                 C 400 570, 480 640, 640 650
-                 C 740 660, 800 640, 820 670
-                 C 850 710, 780 790, 640 810
-                 C 540 830, 500 820, 480 840
-                 C 540 870, 800 890, 1100 890"
+              d={masterPathD}
               fill="none"
-              stroke="#0f172a"
-              strokeWidth="28"
+              stroke="#38bdf8"
+              strokeWidth="10"
               strokeLinecap="round"
               strokeLinejoin="round"
-              opacity="0.12"
-              transform="translate(0, 8)"
+              opacity="0.10"
+              filter="url(#pathAmbientGlow)"
             />
 
-            {/* 2. Main Dark Navy 3D Ribbon Road Body */}
+            {/* 2. Base Guide Path: ONE continuous line connecting start to finish */}
             <path
-              d="M 80 110
-                 C 100 180, 260 310, 480 330
-                 C 580 340, 720 380, 860 420
-                 C 980 440, 920 520, 760 550
-                 C 600 580, 480 520, 440 540
-                 C 400 570, 480 640, 640 650
-                 C 740 660, 800 640, 820 670
-                 C 850 710, 780 790, 640 810
-                 C 540 830, 500 820, 480 840
-                 C 540 870, 800 890, 1100 890"
+              d={masterPathD}
               fill="none"
-              stroke="#1e293b"
-              strokeWidth="22"
+              stroke="#cbd5e1"
+              strokeWidth="4"
               strokeLinecap="round"
               strokeLinejoin="round"
-              className="drop-shadow-sm"
+              opacity="0.70"
             />
 
-            {/* 3. Road Outer Trim Borders */}
-            <path
-              d="M 80 110
-                 C 100 180, 260 310, 480 330
-                 C 580 340, 720 380, 860 420
-                 C 980 440, 920 520, 760 550
-                 C 600 580, 480 520, 440 540
-                 C 400 570, 480 640, 640 650
-                 C 740 660, 800 640, 820 670
-                 C 850 710, 780 790, 640 810
-                 C 540 830, 500 820, 480 840
-                 C 540 870, 800 890, 1100 890"
-              fill="none"
-              stroke="#334155"
-              strokeWidth="22"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              opacity="0.5"
-            />
-
-            {/* 4. Center Dashed Lane Marking */}
-            <path
-              d="M 80 110
-                 C 100 180, 260 310, 480 330
-                 C 580 340, 720 380, 860 420
-                 C 980 440, 920 520, 760 550
-                 C 600 580, 480 520, 440 540
-                 C 400 570, 480 640, 640 650
-                 C 740 660, 800 640, 820 670
-                 C 850 710, 780 790, 640 810
-                 C 540 830, 500 820, 480 840
-                 C 540 870, 800 890, 1100 890"
-              fill="none"
-              stroke="#ffffff"
-              strokeWidth="2.5"
-              strokeDasharray="8 10"
-              strokeLinecap="round"
-              opacity="0.85"
-            />
-
-            {/* 5. Active Glowing Segment Overlay (Registration -> Phase 1) */}
+            {/* 3. Illuminated Completed & Active Segments */}
             {DESKTOP_SEGMENTS.map((seg, idx) => {
               const isPast = idx < activeMilestoneIndex
               const isCurrent = idx === activeMilestoneIndex
               if (!isPast && !isCurrent) return null
 
+              const pathD = `M ${seg.p0[0]} ${seg.p0[1]} C ${seg.c1[0]} ${seg.c1[1]}, ${seg.c2[0]} ${seg.c2[1]}, ${seg.p3[0]} ${seg.p3[1]}`
+
               return (
-                <g key={`active-seg-${idx}`}>
-                  {/* Glowing Road Overlay */}
+                <g key={`prog-seg-${idx}`}>
+                  {/* Glowing Progress Stroke */}
                   <path
-                    d={`M ${seg.p0[0]} ${seg.p0[1]} C ${seg.c1[0]} ${seg.c1[1]}, ${seg.c2[0]} ${seg.c2[1]}, ${seg.p3[0]} ${seg.p3[1]}`}
+                    d={pathD}
                     fill="none"
-                    stroke={isCurrent ? 'url(#activeRoadGrad)' : '#10b981'}
-                    strokeWidth={isCurrent ? '22' : '22'}
+                    stroke={isCurrent ? 'url(#activeMilestoneGrad)' : '#10b981'}
+                    strokeWidth="4"
                     strokeLinecap="round"
-                    opacity={isCurrent ? '0.9' : '0.75'}
+                    strokeLinejoin="round"
+                    opacity={isCurrent ? '1' : '0.9'}
                   />
-                  {/* Center Electric Pulse Flow */}
-                  <path
-                    d={`M ${seg.p0[0]} ${seg.p0[1]} C ${seg.c1[0]} ${seg.c1[1]}, ${seg.c2[0]} ${seg.c2[1]}, ${seg.p3[0]} ${seg.p3[1]}`}
-                    fill="none"
-                    stroke="#ffffff"
-                    strokeWidth="3.5"
-                    className={isCurrent ? 'road-pulse-active' : ''}
-                    strokeDasharray={isCurrent ? '12 18' : 'none'}
-                    strokeLinecap="round"
-                    opacity="1"
-                  />
+
+                  {/* Shimmering Core Pulse on Active Segment */}
+                  {isCurrent && (
+                    <path
+                      d={pathD}
+                      fill="none"
+                      stroke="#ffffff"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      className="journey-shimmer-active"
+                      opacity="0.95"
+                    />
+                  )}
                 </g>
               )
             })}
 
-            {/* Milestone Glowing Concentric Ring Nodes on Road */}
+            {/* 4. Subtle, Minimal Alignment Guide Lines from Nodes to Cards */}
+            {DESKTOP_NODES.map((node) => {
+              const isPast = node.idx < activeMilestoneIndex
+              const isCurrent = node.idx === activeMilestoneIndex
+              const isHovered = hoveredIndex === node.idx
+              const strokeColor = isHovered
+                ? node.color
+                : isPast
+                ? '#10b981'
+                : isCurrent
+                ? '#0284c7'
+                : '#cbd5e1'
+              const nodeEdgeX = node.isLeft ? node.x - 18 : node.x + 18
+              const cardEdgeX = node.isLeft ? node.cardLeft + 350 : node.cardLeft
+
+              return (
+                <line
+                  key={`guide-line-${node.idx}`}
+                  x1={nodeEdgeX}
+                  y1={node.y}
+                  x2={cardEdgeX}
+                  y2={node.y}
+                  stroke={strokeColor}
+                  strokeWidth="1.5"
+                  strokeDasharray="3 3"
+                  opacity={isHovered ? '0.9' : isCurrent ? '0.7' : '0.45'}
+                  className="transition-colors duration-300"
+                />
+              )
+            })}
+
+            {/* 5. Clean Circular Milestone Nodes Positioned Directly ON the Continuous Path */}
             {[
-              { x: 80, y: 110, idx: -1, color: '#10b981' }, // Start Node
-              { x: 480, y: 330, idx: 0, color: '#10b981' },  // Registration
-              { x: 860, y: 420, idx: 1, color: '#0284c7' },  // Phase 1
-              { x: 440, y: 540, idx: 2, color: '#f59e0b' },  // Phase 2
-              { x: 820, y: 670, idx: 3, color: '#a855f7' },  // Refinement
-              { x: 480, y: 840, idx: 4, color: '#0ea5e9' },  // Phase 3
-              { x: 1100, y: 890, idx: 5, color: '#eab308' }, // End Node
-            ].map(({ x, y, idx, color }) => {
+              { x: 640, y: 50, idx: -1, label: 'START' },
+              ...DESKTOP_NODES,
+              { x: 640, y: 1370, idx: 6, label: 'END' },
+            ].map(({ x, y, idx, label }) => {
               const isStart = idx === -1
-              const isEnd = idx === 5
-              const status = idx >= 0 && idx < 5 ? milestoneStatuses[idx] : isStart ? 'completed' : 'upcoming'
+              const isEnd = idx === 6
+              const status = idx >= 0 && idx < 6 ? milestoneStatuses[idx] : isStart ? 'completed' : 'upcoming'
               const isHovered = hoveredIndex === idx
               const isCurrent = idx === activeMilestoneIndex
 
               return (
-                <g key={`node-${idx}`} transform={`translate(${x}, ${y})`}>
-                  {/* Outer Pulsing Aura for Active Milestone */}
+                <g key={`station-${idx}`} transform={`translate(${x}, ${y})`}>
+                  {/* Subtle Pulse Aura for Active Milestone */}
                   {isCurrent && (
-                    <circle
-                      r={24}
-                      fill="none"
-                      stroke="#38bdf8"
-                      strokeWidth="2.5"
-                      className="animate-ping opacity-75"
-                    />
+                    <>
+                      <circle
+                        r={24}
+                        fill="none"
+                        stroke="#38bdf8"
+                        strokeWidth="1.5"
+                        className="animate-ping opacity-50"
+                      />
+                      <circle
+                        r={20}
+                        fill="none"
+                        stroke="#0284c7"
+                        strokeWidth="1.5"
+                        opacity="0.25"
+                      />
+                    </>
                   )}
 
-                  {/* Outer Halo Ring */}
+                  {/* Outer Node Circle */}
                   <circle
-                    r={isHovered ? 18 : 14}
+                    r={isHovered ? 18 : 15}
                     fill={status === 'completed' || isStart ? '#ecfdf5' : isCurrent ? '#f0f9ff' : '#ffffff'}
-                    stroke={status === 'completed' || isStart ? '#10b981' : isCurrent ? '#0284c7' : isEnd ? '#eab308' : color}
-                    strokeWidth={isCurrent || isHovered ? 4 : 3}
-                    className="transition-all duration-300 drop-shadow-md"
+                    stroke={status === 'completed' || isStart ? '#10b981' : isCurrent ? '#0284c7' : isEnd ? '#eab308' : '#cbd5e1'}
+                    strokeWidth={isCurrent || isHovered ? 3 : 2}
+                    className="transition-all duration-300 drop-shadow-xs"
                   />
-                  {/* Inner Solid Core */}
-                  <circle
-                    r={isHovered ? 9 : 7}
-                    fill={status === 'completed' || isStart ? '#059669' : isCurrent ? '#0284c7' : isEnd ? '#ca8a04' : color}
-                  />
+
+                  {/* Core Indicator */}
+                  {status === 'completed' || isStart ? (
+                    <circle r={9} fill="#059669" />
+                  ) : isCurrent ? (
+                    <circle r={8} fill="#0284c7" />
+                  ) : isEnd ? (
+                    <circle r={8} fill="#ca8a04" />
+                  ) : (
+                    <circle r={6} fill="#94a3b8" opacity="0.6" />
+                  )}
+
+                  {/* Phase Number or Checkmark */}
+                  {status === 'completed' ? (
+                    <path
+                      d="M -3 0 L -1 3 L 4 -2"
+                      fill="none"
+                      stroke="#ffffff"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  ) : (
+                    !isStart && !isEnd && (
+                      <text
+                        x="0"
+                        y="3"
+                        textAnchor="middle"
+                        fill={isCurrent ? '#ffffff' : '#64748b'}
+                        fontSize="9"
+                        fontWeight="800"
+                        fontFamily="monospace"
+                      >
+                        {label}
+                      </text>
+                    )
+                  )}
                 </g>
               )
             })}
           </svg>
 
           {/* =========================================================
-              ANIMATED 3D CARTOON STUDENT (REFERENCE IMAGE 3)
-              Travels once on active segment, then STANDS facing active phase
+              ANIMATED 3D CARTOON STUDENT
+              Travels along continuous central journey to active milestone
               ========================================================= */}
           <div
             className={`absolute z-20 pointer-events-none transition-transform duration-75 ${isWalking ? 'student-walking' : ''}`}
             style={{
               left: `${desktopCharacterPos.x}px`,
               top: `${desktopCharacterPos.y}px`,
-              transform: `translate(-50%, -90%) rotate(${desktopCharacterPos.angle}deg) ${desktopCharacterPos.flip ? 'scaleX(-1)' : ''}`,
+              transform: `translate(-50%, -90%) rotate(${desktopCharacterPos.tilt}deg) ${desktopCharacterPos.flip ? 'scaleX(-1)' : ''}`,
             }}
           >
-            {/* Soft Contact Shadow under feet */}
-            <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-12 h-3.5 bg-slate-950/25 rounded-full blur-[2.5px]" />
+            {/* Soft Contact Ground Shadow */}
+            <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-10 h-3 bg-slate-950/20 rounded-full blur-[2px]" />
             
-            {/* 3D Cartoon Student Image (Reference Image 3) */}
+            {/* 3D Student Character */}
             <img
               src={studentImg}
               alt="IPL Student Character"
-              className="w-20 h-24 object-contain drop-shadow-lg select-none"
+              className="w-16 h-20 object-contain drop-shadow-md select-none"
               draggable="false"
             />
           </div>
 
           {/* =========================================================
-              START MARKER (Top-Left, aligned with Start Node 80, 110)
+              TOP START BADGE (Centered directly on the journey start)
               ========================================================= */}
-          <div className="absolute left-[20px] top-[50px] z-10 flex items-center gap-2.5">
-            <div className="flex h-11 w-11 items-center justify-center rounded-full bg-white border-2 border-amber-300 shadow-md">
-              <Flag size={20} className="text-amber-500 fill-amber-500" />
+          <div className="absolute left-1/2 -translate-x-1/2 top-[10px] z-10 flex items-center gap-2">
+            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-white border-2 border-emerald-300 shadow-sm">
+              <Flag size={16} className="text-emerald-600 fill-emerald-500" />
             </div>
-            <span className="rounded-full bg-slate-900 text-white font-mono font-black text-xs px-3.5 py-1.5 uppercase tracking-widest shadow-md">
+            <span className="rounded-full bg-slate-900 text-white font-mono font-black text-xs px-3 py-1 uppercase tracking-widest shadow-xs">
               START
             </span>
           </div>
 
           {/* =========================================================
-              MILESTONE CARDS (Positioned Around Serpentine Roadmap with Ample Space)
+              MILESTONE CARDS (Alternating Left & Right with Zero Road Crossings)
               ========================================================= */}
-
-          {/* 1. Registration & Team Formation (Upper-Left) */}
-          <div
-            className="absolute left-[110px] top-[70px] w-[350px] z-10"
-            onMouseEnter={() => setHoveredIndex(0)}
-            onMouseLeave={() => setHoveredIndex(null)}
-          >
-            <MilestoneCard
-              event={TIMELINE_EVENTS[0]}
-              index={0}
-              status={milestoneStatuses[0]}
-              isHovered={hoveredIndex === 0}
-              iconConfig={MILESTONE_ICONS[0]}
-            />
-          </div>
-
-          {/* 2. Phase 1: Ideation & Concept Design (Upper-Right) */}
-          <div
-            className="absolute left-[900px] top-[120px] w-[360px] z-10"
-            onMouseEnter={() => setHoveredIndex(1)}
-            onMouseLeave={() => setHoveredIndex(null)}
-          >
-            <MilestoneCard
-              event={TIMELINE_EVENTS[1]}
-              index={1}
-              status={milestoneStatuses[1]}
-              isHovered={hoveredIndex === 1}
-              iconConfig={MILESTONE_ICONS[1]}
-            />
-          </div>
-
-          {/* 3. Phase 2: Prototype Development (Middle-Left) */}
-          <div
-            className="absolute left-[60px] top-[410px] w-[350px] z-10"
-            onMouseEnter={() => setHoveredIndex(2)}
-            onMouseLeave={() => setHoveredIndex(null)}
-          >
-            <MilestoneCard
-              event={TIMELINE_EVENTS[2]}
-              index={2}
-              status={milestoneStatuses[2]}
-              isHovered={hoveredIndex === 2}
-              iconConfig={MILESTONE_ICONS[2]}
-            />
-          </div>
-
-          {/* 4. Design Refinement & Testing (Middle-Right) */}
-          <div
-            className="absolute left-[860px] top-[490px] w-[360px] z-10"
-            onMouseEnter={() => setHoveredIndex(3)}
-            onMouseLeave={() => setHoveredIndex(null)}
-          >
-            <MilestoneCard
-              event={TIMELINE_EVENTS[3]}
-              index={3}
-              status={milestoneStatuses[3]}
-              isHovered={hoveredIndex === 3}
-              iconConfig={MILESTONE_ICONS[3]}
-            />
-          </div>
-
-          {/* 5. Phase 3: Pitch Preparation (Lower-Left) */}
-          <div
-            className="absolute left-[100px] top-[720px] w-[350px] z-10"
-            onMouseEnter={() => setHoveredIndex(4)}
-            onMouseLeave={() => setHoveredIndex(null)}
-          >
-            <MilestoneCard
-              event={TIMELINE_EVENTS[4]}
-              index={4}
-              status={milestoneStatuses[4]}
-              isHovered={hoveredIndex === 4}
-              iconConfig={MILESTONE_ICONS[4]}
-            />
-          </div>
+          {DESKTOP_NODES.map((node) => (
+            <div
+              key={`desktop-card-${node.idx}`}
+              className="absolute w-[350px] z-10 transition-all duration-300"
+              style={{
+                left: `${node.cardLeft}px`,
+                top: `${node.y}px`,
+                transform: 'translateY(-50%)'
+              }}
+              onMouseEnter={() => setHoveredIndex(node.idx)}
+              onMouseLeave={() => setHoveredIndex(null)}
+            >
+              <MilestoneCard
+                event={TIMELINE_EVENTS[node.idx]}
+                index={node.idx}
+                status={milestoneStatuses[node.idx]}
+                isHovered={hoveredIndex === node.idx}
+                iconConfig={MILESTONE_ICONS[node.idx]}
+              />
+            </div>
+          ))}
 
           {/* =========================================================
-              END MARKER (Bottom-Right, directly attached to End Node 1100, 890)
+              BOTTOM GRAND FINALE END BADGE (Centered on journey finish)
               ========================================================= */}
-          <div className="absolute left-[1125px] top-[865px] -translate-y-1/2 z-10 flex items-center gap-2.5">
-            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white border-2 border-amber-400 shadow-xl">
-              <Trophy size={22} className="text-amber-500 fill-amber-400" />
+          <div className="absolute left-1/2 -translate-x-1/2 top-[1395px] z-10 flex items-center gap-2">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white border-2 border-amber-400 shadow-md">
+              <Trophy size={18} className="text-amber-500 fill-amber-400" />
             </div>
-            <span className="rounded-full bg-slate-900 text-white font-mono font-black text-xs px-4 py-2 uppercase tracking-widest shadow-md">
+            <span className="rounded-full bg-slate-900 text-white font-mono font-black text-xs px-3.5 py-1.5 uppercase tracking-widest shadow-xs">
               END
             </span>
           </div>
@@ -573,83 +574,85 @@ export default function Timeline({ regTimer: propRegTimer, dbPhases: propDbPhase
         </div>
 
         {/* =========================================================
-            MOBILE RESPONSIVE WINDING JOURNEY (< 1024px)
+            MOBILE RESPONSIVE CONTINUOUS VERTICAL JOURNEY (< 1024px)
+            Clean single-column vertical roadmap with continuous path spine
             ========================================================= */}
-        <div className="block lg:hidden relative mx-auto max-w-lg mt-6">
+        <div className="block lg:hidden relative mx-auto max-w-xl mt-6 px-2 sm:px-4">
           
           {/* Top START Badge */}
-          <div className="flex items-center gap-2.5 mb-8 pl-1">
-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white border-2 border-amber-300 shadow-md shrink-0">
-              <Flag size={18} className="text-amber-500 fill-amber-500" />
+          <div className="flex items-center gap-2.5 mb-6 pl-1">
+            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-white border-2 border-emerald-300 shadow-sm shrink-0">
+              <Flag size={16} className="text-emerald-600 fill-emerald-500" />
             </div>
-            <span className="rounded-full bg-slate-900 text-white font-mono font-black text-xs px-3.5 py-1.5 uppercase tracking-widest shadow-md">
+            <span className="rounded-full bg-slate-900 text-white font-mono font-black text-xs px-3 py-1 uppercase tracking-widest shadow-xs">
               START
             </span>
           </div>
 
-          {/* Mobile Continuous Ribbon Spine */}
-          <div className="absolute top-10 bottom-14 left-5 w-2 pointer-events-none z-0 rounded-full bg-slate-800">
-            <div className="w-full h-full border-l-2 border-dashed border-white/60" />
-          </div>
+          {/* Mobile Milestones with Continuous Path Spine */}
+          <div className="relative pl-6 sm:pl-8">
+            {/* Single Continuous Vertical Guide Spine */}
+            <div className="absolute left-[13px] sm:left-[17px] top-3 bottom-6 w-0.5 bg-slate-200" />
 
-          {/* Mobile Milestone Cards Stack */}
-          <div className="space-y-8 pl-10 relative">
-            {TIMELINE_EVENTS.map((event, idx) => {
-              const status = milestoneStatuses[idx]
-              const isCurrent = idx === activeMilestoneIndex
+            <div className="space-y-6 sm:space-y-8">
+              {TIMELINE_EVENTS.map((event, idx) => {
+                const status = milestoneStatuses[idx]
+                const isCurrent = idx === activeMilestoneIndex
 
-              return (
-                <div key={`mob-${event.title}`} className="relative">
-                  {/* Mobile Milestone Node */}
-                  <div className="absolute -left-10 top-5 -translate-x-1/2 flex items-center justify-center">
-                    <div className={`h-6 w-6 rounded-full border-2 flex items-center justify-center shadow-xs transition-colors ${
-                      status === 'completed'
-                        ? 'bg-emerald-500 border-white text-white'
-                        : status === 'in_progress'
-                        ? 'bg-blue-600 border-white text-white ring-4 ring-blue-100 animate-pulse'
-                        : 'bg-white border-slate-400 text-slate-500'
-                    }`}>
-                      {status === 'completed' ? (
-                        <CheckCircle2 size={12} className="stroke-[3]" />
-                      ) : (
-                        <span className="font-mono text-[9px] font-black">{idx + 1}</span>
+                return (
+                  <div key={`mob-${event.title}`} className="relative flex items-start">
+                    {/* Node Marker centered on continuous vertical spine */}
+                    <div className="absolute -left-[27px] sm:-left-[31px] top-4 -translate-x-1/2 z-10">
+                      <div className={`h-7 w-7 rounded-full border-2 flex items-center justify-center shadow-xs transition-colors ${
+                        status === 'completed'
+                          ? 'bg-emerald-500 border-white text-white'
+                          : status === 'in_progress'
+                          ? 'bg-blue-600 border-white text-white ring-4 ring-blue-100 animate-pulse'
+                          : 'bg-white border-slate-300 text-slate-500'
+                      }`}>
+                        {status === 'completed' ? (
+                          <CheckCircle2 size={13} className="stroke-[3]" />
+                        ) : (
+                          <span className="font-mono text-[10px] font-black">{idx + 1}</span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Milestone Card */}
+                    <div className="flex-1 min-w-0 pl-2">
+                      {isCurrent && (
+                        <div className="mb-2.5 flex items-center gap-2 bg-blue-50/95 border border-blue-200/90 rounded-xl px-3 py-1.5 w-fit shadow-2xs">
+                          <img
+                            src={studentImg}
+                            alt="Student Character"
+                            className="w-6 h-8 object-contain shrink-0"
+                          />
+                          <span className="text-[10px] font-black text-blue-900 uppercase tracking-wider">
+                            Current Program Phase
+                          </span>
+                        </div>
                       )}
+
+                      <MilestoneCard
+                        event={event}
+                        index={idx}
+                        status={status}
+                        isHovered={false}
+                        iconConfig={MILESTONE_ICONS[idx]}
+                      />
                     </div>
                   </div>
-
-                  {/* Character Walking on Active Mobile Segment */}
-                  {isCurrent && (
-                    <div className="mb-2 flex items-center gap-2.5 bg-amber-50/90 border border-amber-200/80 rounded-xl px-3 py-1.5 w-fit shadow-2xs">
-                      <img
-                        src={studentImg}
-                        alt="Student Character"
-                        className="w-6 h-8 object-contain"
-                      />
-                      <span className="text-[10px] font-black text-amber-900 uppercase tracking-wider">
-                        Current Program Progress
-                      </span>
-                    </div>
-                  )}
-
-                  {/* Mobile Card */}
-                  <MilestoneCard
-                    event={event}
-                    index={idx}
-                    status={status}
-                    isHovered={false}
-                    iconConfig={MILESTONE_ICONS[idx]}
-                  />
-                </div>
-              )
-            })}
+                )
+              })}
+            </div>
           </div>
 
           {/* Bottom END Badge */}
           <div className="flex items-center gap-2.5 mt-8 pl-1">
-            <div className="flex h-11 w-11 items-center justify-center rounded-full bg-white border-2 border-amber-400 shadow-lg shrink-0">
-              <Trophy size={20} className="text-amber-500 fill-amber-400" />
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white border-2 border-amber-400 shadow-md shrink-0">
+              <Trophy size={18} className="text-amber-500 fill-amber-400" />
             </div>
-            <span className="rounded-full bg-slate-900 text-white font-mono font-black text-xs px-4 py-2 uppercase tracking-widest shadow-md">
+            <span className="rounded-full bg-slate-900 text-white font-mono font-black text-xs px-3.5 py-1.5 uppercase tracking-widest shadow-xs">
               END
             </span>
           </div>
