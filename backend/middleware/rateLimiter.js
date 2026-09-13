@@ -34,6 +34,9 @@ function createRateLimiter({
   }
 
   return function rateLimiter(req, res, next) {
+    if (process.env.NODE_ENV === 'test' && !req.headers['x-test-enforce-ratelimit']) {
+      return next();
+    }
     const now = Date.now();
     let key;
 

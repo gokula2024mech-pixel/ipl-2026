@@ -342,19 +342,24 @@ function PodiumCard({ team, place, isPulse, prefersReducedMotion = false }) {
 
         {/* Parent Team Name & Registration ID */}
         <p
-          className={`font-semibold text-slate-600 break-words leading-relaxed mt-1.5 max-w-full ${
+          className={`font-semibold text-slate-600 break-words leading-relaxed mt-1.5 max-w-full flex items-center justify-center gap-1.5 flex-wrap ${
             isFirst ? "text-xs sm:text-sm lg:text-base text-slate-700" : "text-xs sm:text-sm"
           }`}
         >
-          {team.productTitle ? `Team: ${team.teamName}` : (team.leadingProductTitle || "Project Showcase")}
+          <span>{team.productTitle ? `Team: ${team.teamName}` : (team.leadingProductTitle || "Project Showcase")}</span>
           {(team.registrationId || team.registration_id) && (
-            <span className="ml-2 inline-block px-2 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-[11px] font-mono font-bold text-slate-600">
+            <span className="inline-block px-2 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-[11px] font-mono font-bold text-slate-600">
               {team.registrationId || team.registration_id}
+            </span>
+          )}
+          {team.isShortlisted && (
+            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-900 border border-amber-300">
+              ★ Shortlisted
             </span>
           )}
         </p>
 
-        {/* Score & Raw Breakdown (Likes + Votes) */}
+        {/* Score & Raw Breakdown (Votes & Score) */}
         <div className="w-full mt-5 pt-4 border-t border-slate-200/70">
           <div className="flex flex-col items-center justify-center">
             <div className="flex items-center gap-1.5">
@@ -375,9 +380,6 @@ function PodiumCard({ team, place, isPulse, prefersReducedMotion = false }) {
             </span>
             {/* Raw Breakdown Pills */}
             <div className="flex items-center gap-2 mt-2 text-xs font-bold">
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-rose-50 text-rose-600 border border-rose-200 shadow-2xs">
-                ❤️ {(team.likesCount || team.likes_count || 0).toLocaleString()} Likes
-              </span>
               <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200 shadow-2xs">
                 🗳️ {(team.votesCount || team.votes_count || team.voteCount || 0).toLocaleString()} Votes
               </span>
@@ -523,8 +525,10 @@ export default function Leaderboard({ user, session, profile, onProfileUpdate } 
               totalScore: ideaJson.leaderboard.reduce((acc, i) => acc + (i.total_score || 0), 0),
               totalLikes: ideaJson.total_likes || 0,
               totalVotes: ideaJson.total_votes || 0,
-              totalProducts: ideaJson.total_ideas || ideaJson.leaderboard.length,
-              totalTeams: ideaJson.total_ideas || ideaJson.leaderboard.length,
+              totalProducts: ideaJson.total || ideaJson.total_ideas || ideaJson.leaderboard.length,
+              totalTeams: ideaJson.total || ideaJson.total_ideas || ideaJson.leaderboard.length,
+              shortlistedCount: ideaJson.shortlisted_count || 0,
+              nonShortlistedCount: ideaJson.non_shortlisted_count || 0,
               round: 1,
               teams: ideaJson.leaderboard.map((item) => ({
                 id: item.product_id,
@@ -538,6 +542,9 @@ export default function Leaderboard({ user, session, profile, onProfileUpdate } 
                 team_name: item.team_name,
                 registrationId: item.registration_id,
                 registration_id: item.registration_id,
+                isShortlisted: Boolean(item.is_shortlisted),
+                is_shortlisted: Boolean(item.is_shortlisted),
+                category: item.category || null,
                 likesCount: item.likes_count || 0,
                 likes_count: item.likes_count || 0,
                 votesCount: item.votes_count || 0,
@@ -554,34 +561,36 @@ export default function Leaderboard({ user, session, profile, onProfileUpdate } 
             setVotingStats(freshVoting);
             return;
           }
+        } else {
+          const errData = await ideaRes.json().catch(() => ({}));
+          console.warn('[Idea Leaderboard] Phase 3 shortlist error or unavailable. Failing closed:', errData?.error_code);
+          const emptyState = {
+            totalScore: 0,
+            totalLikes: 0,
+            totalVotes: 0,
+            totalProducts: 0,
+            totalTeams: 0,
+            round: 1,
+            teams: []
+          };
+          cachedVotingStats = emptyState;
+          setVotingStats(emptyState);
+          return;
         }
       } catch (ideaErr) {
-        console.warn("[Idea Leaderboard] Direct idea leaderboard fetch failed, attempting fallback:", ideaErr.message);
-      }
-
-      // 2. Fallback: team/product voting route
-      const res = await fetch(`${API_BASE_URL}/api/voting/leaderboard?round=1`);
-      const json = await res.json();
-
-      if (json.success && json.data) {
-        const freshVoting = {
-          totalVotes: json.data.total_votes || 0,
+        console.warn("[Idea Leaderboard] Direct idea leaderboard fetch failed, failing closed:", ideaErr.message);
+        const emptyState = {
+          totalScore: 0,
           totalLikes: 0,
-          totalScore: (json.data.total_votes || 0) * 2,
-          totalProducts: json.data.total_products || (json.data.products ? json.data.products.length : 0),
-          totalTeams: json.data.total_teams || 0,
-          round: json.data.voting_round || 1,
-          teams: (json.data.products || json.data.teams || []).map((t, i) => ({
-            ...t,
-            productId: t.productId || t.id,
-            likesCount: t.likesCount || 0,
-            votesCount: t.voteCount || 0,
-            totalScore: t.totalScore || ((t.voteCount || 0) * 2),
-            rank: t.rank || i + 1
-          }))
+          totalVotes: 0,
+          totalProducts: 0,
+          totalTeams: 0,
+          round: 1,
+          teams: []
         };
-        cachedVotingStats = freshVoting;
-        setVotingStats(freshVoting);
+        cachedVotingStats = emptyState;
+        setVotingStats(emptyState);
+        return;
       }
     } catch (err) {
       console.warn("[Voting Leaderboard] Fetch error:", err.message);
@@ -1017,6 +1026,13 @@ export default function Leaderboard({ user, session, profile, onProfileUpdate } 
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "team_votes" },
+        () => {
+          fetchVotingRankings(true);
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "phase3_shortlist" },
         () => {
           fetchVotingRankings(true);
         }
@@ -2346,8 +2362,8 @@ export default function Leaderboard({ user, session, profile, onProfileUpdate } 
     return (
       <div className="mx-auto w-full max-w-[1400px] px-3 sm:px-4 md:px-6 lg:px-8 mt-6 min-w-0 space-y-6">
 
-        {/* Public KPI Grid (3 Columns) */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+        {/* Public KPI Grid (2 Columns: Total Ideas & Total Votes) */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
           {/* Card 1: Total Ideas */}
           <div className="rounded-2xl bg-white p-4 sm:p-5 border border-slate-200 shadow-2xs space-y-1">
             <div className="flex items-center justify-between text-slate-400">
@@ -2359,18 +2375,7 @@ export default function Leaderboard({ user, session, profile, onProfileUpdate } 
             </p>
           </div>
 
-          {/* Card 2: Total Likes */}
-          <div className="rounded-2xl bg-white p-4 sm:p-5 border border-slate-200 shadow-2xs space-y-1">
-            <div className="flex items-center justify-between text-slate-400">
-              <span className="text-[11px] font-bold uppercase tracking-wider">Total Likes</span>
-              <span className="text-rose-500 font-bold">❤️</span>
-            </div>
-            <p className="font-heading text-2xl sm:text-3xl font-black text-[#0B1B3A]">
-              <AnimatedCounter value={votingStats.totalLikes || 0} prefersReducedMotion={prefersReducedMotion} />
-            </p>
-          </div>
-
-          {/* Card 3: Total Votes */}
+          {/* Card 2: Total Votes */}
           <div className="rounded-2xl bg-white p-4 sm:p-5 border border-slate-200 shadow-2xs space-y-1">
             <div className="flex items-center justify-between text-slate-400">
               <span className="text-[11px] font-bold uppercase tracking-wider">Total Votes</span>
@@ -2517,7 +2522,6 @@ export default function Leaderboard({ user, session, profile, onProfileUpdate } 
                     <tr>
                       <th className="py-4 px-6 w-20 text-center">Rank</th>
                       <th className="py-4 px-6">Idea & Team</th>
-                      <th className="py-4 px-6 w-24 text-center">Likes</th>
                       <th className="py-4 px-6 w-24 text-center">Votes</th>
                       <th className="py-4 px-6 w-28 text-center">Score</th>
                       <th className="py-4 px-6 w-24 text-center">Action</th>
@@ -2548,6 +2552,11 @@ export default function Leaderboard({ user, session, profile, onProfileUpdate } 
                               <p className="font-heading font-black text-base sm:text-lg text-slate-900 group-hover:text-primary transition break-words">
                                 {team.productTitle || team.leadingProductTitle || team.teamName}
                               </p>
+                              {team.isShortlisted && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-900 border border-amber-300">
+                                  Shortlisted
+                                </span>
+                              )}
                               {isPulse && (
                                 <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-200 text-amber-900 animate-pulse">
                                   +1 LIVE UPDATE
@@ -2562,11 +2571,6 @@ export default function Leaderboard({ user, session, profile, onProfileUpdate } 
                                 </span>
                               )}
                             </p>
-                          </td>
-                          <td className="py-4 px-6 text-center">
-                            <span className="inline-flex items-center gap-1 font-bold text-rose-600 text-sm sm:text-base">
-                              ❤️ <AnimatedCounter value={team.likesCount || team.likes_count || 0} prefersReducedMotion={prefersReducedMotion} />
-                            </span>
                           </td>
                           <td className="py-4 px-6 text-center">
                             <span className="inline-flex items-center gap-1 font-bold text-blue-700 text-sm sm:text-base">
@@ -2619,6 +2623,11 @@ export default function Leaderboard({ user, session, profile, onProfileUpdate } 
                               <h4 className="font-heading font-black text-sm sm:text-base text-slate-900 group-hover:text-primary transition break-words">
                                 {team.productTitle || team.leadingProductTitle || team.teamName}
                               </h4>
+                              {team.isShortlisted && (
+                                <span className="inline-block px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                                  Shortlisted
+                                </span>
+                              )}
                               {isPulse && (
                                 <span className="inline-block px-1.5 py-0.5 rounded-full text-[9px] font-black bg-amber-200 text-amber-900">
                                   +1
@@ -2643,7 +2652,6 @@ export default function Leaderboard({ user, session, profile, onProfileUpdate } 
 
                       <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 flex-wrap gap-2">
                         <div className="flex items-center gap-2.5 font-bold">
-                          <span className="text-rose-600">❤️ {(team.likesCount || team.likes_count || 0).toLocaleString()} Likes</span>
                           <span className="text-blue-700">🗳️ {(team.votesCount || team.votes_count || team.voteCount || 0).toLocaleString()} Votes</span>
                         </div>
                         <span className="text-primary font-bold inline-flex items-center gap-0.5 group-hover:underline">View Idea →</span>

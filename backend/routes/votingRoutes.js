@@ -8,6 +8,7 @@ const { createClient } = require('@supabase/supabase-js');
 const { supabase } = require('../supabaseClient');
 const { voteLimiter, qrResolutionLimiter, leaderboardLimiter } = require('../middleware/rateLimiter');
 const { uploadVotingReportToDrive, listVotingReportsFromDrive } = require('../services/googleDriveService');
+const shortlistService = require('../services/phase3ShortlistService');
 
 // Persistent storage path for voting controls
 const CONTROLS_FILE_PATH = path.join(__dirname, '..', 'config', 'voting_controls.json');
@@ -530,6 +531,26 @@ async function buildTeamShowcaseAndEligibility(teamId, voterUser, fromQr = false
     }];
   }
 
+  // Phase 3 Shortlist Status Lookup for Showcase Products
+  let shortlistedProductIds = new Set();
+  try {
+    const { data: slProducts, error: slErr } = await supabase
+      .from('phase3_shortlist')
+      .select('product_id')
+      .in('product_id', safeProducts.map(p => p.id));
+
+    if (!slErr && slProducts) {
+      slProducts.forEach(sl => {
+        if (sl.product_id) shortlistedProductIds.add(sl.product_id);
+      });
+    }
+  } catch (e) {}
+
+  safeProducts = safeProducts.map(p => ({
+    ...p,
+    is_shortlisted: shortlistedProductIds.has(p.id)
+  }));
+
   let displayMembers = [];
   let memberDepartments = [];
   let memberEmails = [];
@@ -730,6 +751,7 @@ async function buildTeamShowcaseAndEligibility(teamId, voterUser, fromQr = false
             reason: 'You have already voted for all projects belonging to this team.',
             voted_product_ids: Array.from(votedProductIds)
           };
+
         } else {
           eligibility = {
             can_vote: true,
@@ -975,6 +997,16 @@ router.post('/vote', authenticateUser, voteLimiter, async (req, res) => {
       });
     }
 
+    // Verify college email domain requirement (@sece.ac.in)
+    const voterEmail = (req.user?.email || '').toLowerCase().trim();
+    if (!voterEmail || !voterEmail.endsWith('@sece.ac.in')) {
+      return res.status(403).json({
+        success: false,
+        error_code: 'INVALID_EMAIL_DOMAIN',
+        message: 'Voting is strictly restricted to verified @sece.ac.in accounts.'
+      });
+    }
+
     // 2. Validate and resolve product_id & team_id
     let productRow = null;
     if (product_id) {
@@ -1197,6 +1229,7 @@ router.post('/vote', authenticateUser, voteLimiter, async (req, res) => {
         console.warn('[Voting API] cast_vote RPC missing in DB, executing direct safe fallback');
         
         // Direct Fallback Execution
+
         const showcase = await buildTeamShowcaseAndEligibility(team_id, req.user);
 
         // Check team-level own team eligibility
@@ -1438,34 +1471,56 @@ router.get('/leaderboard', leaderboardLimiter, async (req, res) => {
       });
     }
 
-    // 1. Try get_voting_leaderboard RPC
-    const { data: rpcData, error: rpcErr } = await supabase.rpc('get_voting_leaderboard', {
-      p_voting_round: round
-    });
+    // 1. Authoritative Phase 3 Shortlist Query (Fail-Closed)
+    let slRows = [];
+    try {
+      if (req.testStore) {
+        slRows = req.testStore.shortlist || [];
+      } else {
+        slRows = await shortlistService.getAuthoritativeShortlist({ supabaseClient: supabase });
+      }
+    } catch (slErr) {
+      console.error('[Voting API] Error querying phase3_shortlist in /leaderboard:', slErr.message);
+      return res.status(500).json({
+        success: false,
+        error_code: 'SHORTLIST_UNAVAILABLE',
+        message: 'Phase 3 shortlist source is unavailable.'
+      });
+    }
 
-    if (!rpcErr && rpcData) {
-      leaderboardCache.data = rpcData;
+    if (!slRows || slRows.length === 0) {
+      const emptyPayload = {
+        voting_round: round,
+        total_votes: 0,
+        total_products: 0,
+        total_teams: 0,
+        products: [],
+        teams: []
+      };
+      leaderboardCache.data = emptyPayload;
       leaderboardCache.cachedAt = now;
       return res.status(200).json({
         success: true,
         cached: false,
-        data: rpcData
+        data: emptyPayload
       });
     }
 
-    // 2. Direct fallback query if RPC isn't deployed yet
-    console.warn('[Voting API] get_voting_leaderboard RPC unavailable, running direct query fallback:', rpcErr?.message);
+    const shortlistedSet = new Set(
+      (slRows || []).map(r => r.product_id).filter(Boolean)
+    );
 
+    // 2. Query active products and resolve finalist details
     const [
       { data: productsData, error: prodsErr },
       { data: teamsData },
       { data: productVotesData },
       { data: registrationsData }
     ] = await Promise.all([
-      supabase.from('products').select('id, team_id, product_title, innovation_domain, trl_level, legacy_registration_id, status, created_at').or('status.eq.active,status.is.null'),
-      supabase.from('teams').select('id, team_name, created_at'),
-      supabase.from('product_votes').select('product_id, total_votes, last_vote_at').eq('voting_round', round),
-      supabase.from('registrations').select('registration_id, team_name, leader_department')
+      supabase.from('products').select('id, team_id, product_title, innovation_domain, trl_level, legacy_registration_id, status, created_at').eq('status', 'active').limit(1000),
+      supabase.from('teams').select('id, team_name, created_at').limit(1000),
+      supabase.from('product_votes').select('product_id, total_votes, last_vote_at').eq('voting_round', round).limit(1000),
+      supabase.from('registrations').select('registration_id, team_name, leader_department').limit(1000)
     ]);
 
     if (prodsErr) throw prodsErr;
@@ -1489,36 +1544,41 @@ router.get('/leaderboard', leaderboardLimiter, async (req, res) => {
       if (r.team_name) regMap.set(r.team_name.trim().toLowerCase(), r);
     });
 
-    const ranked = (productsData || []).map(p => {
-      const v = votesMap.get(p.id) || { count: 0, updated_at: p.created_at };
-      const team = teamMap.get(p.team_id);
-      const reg = p.legacy_registration_id ? regMap.get(p.legacy_registration_id) : (team ? regMap.get(team.team_name.trim().toLowerCase()) : null);
-      const dept = normalizeDepartment(reg?.leader_department);
+    // Build ranked list ONLY for authoritative finalists
+    const ranked = (productsData || [])
+      .filter(p => shortlistedSet.has(p.id))
+      .map(p => {
+        const v = votesMap.get(p.id) || { count: 0, updated_at: p.created_at };
+        const team = teamMap.get(p.team_id);
+        const reg = p.legacy_registration_id ? regMap.get(p.legacy_registration_id) : (team ? regMap.get(team.team_name.trim().toLowerCase()) : null);
+        const dept = normalizeDepartment(reg?.leader_department);
 
-      return {
-        id: p.id,
-        productId: p.id,
-        product_id: p.id,
-        productTitle: p.product_title || 'Innovation Project',
-        product_title: p.product_title || 'Innovation Project',
-        leadingProductTitle: p.product_title || 'Innovation Project',
-        leading_product_title: p.product_title || 'Innovation Project',
-        teamId: p.team_id,
-        team_id: p.team_id,
-        teamName: team?.team_name || 'Innovation Team',
-        team_name: team?.team_name || 'Innovation Team',
-        department: dept,
-        department_name: dept,
-        innovationDomain: p.innovation_domain || 'Open Innovation',
-        innovation_domain: p.innovation_domain || 'Open Innovation',
-        trlLevel: p.trl_level || null,
-        voteCount: v.count,
-        vote_count: v.count,
-        total_votes: v.count,
-        lastVoteTime: v.updated_at,
-        last_vote_time: v.updated_at
-      };
-    });
+        return {
+          id: p.id,
+          productId: p.id,
+          product_id: p.id,
+          productTitle: p.product_title || 'Innovation Project',
+          product_title: p.product_title || 'Innovation Project',
+          leadingProductTitle: p.product_title || 'Innovation Project',
+          leading_product_title: p.product_title || 'Innovation Project',
+          teamId: p.team_id,
+          team_id: p.team_id,
+          teamName: team?.team_name || 'Innovation Team',
+          team_name: team?.team_name || 'Innovation Team',
+          department: dept,
+          department_name: dept,
+          innovationDomain: p.innovation_domain || 'Open Innovation',
+          innovation_domain: p.innovation_domain || 'Open Innovation',
+          trlLevel: p.trl_level || null,
+          is_shortlisted: true,
+          isShortlisted: true,
+          voteCount: v.count,
+          vote_count: v.count,
+          total_votes: v.count,
+          lastVoteTime: v.updated_at,
+          last_vote_time: v.updated_at
+        };
+      });
 
     // Authoritative sort: voteCount DESC, lastVoteTime ASC, id ASC
     ranked.sort((a, b) => {
@@ -1533,11 +1593,15 @@ router.get('/leaderboard', leaderboardLimiter, async (req, res) => {
 
     const payload = {
       voting_round: round,
+      total: finalRanks.length,
       total_votes: totalVotes,
       total_products: finalRanks.length,
+      shortlisted_count: finalRanks.length,
+      non_shortlisted_count: 0,
       total_teams: new Set(finalRanks.map(r => r.team_id)).size,
       products: finalRanks,
-      teams: finalRanks
+      teams: finalRanks,
+      entries: finalRanks
     };
 
     leaderboardCache.data = payload;

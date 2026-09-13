@@ -25,6 +25,8 @@ import {
   Check,
   ExternalLink,
   Trash2,
+  Vote,
+  Sparkles,
 } from "lucide-react";
 import QRCode from "qrcode";
 import MechanicalLoader from "./MechanicalLoader";
@@ -315,6 +317,16 @@ export default function MySubmissionsPage({
   const [phase2IsRemoving, setPhase2IsRemoving] = useState(false);
   const [phase2Downloading, setPhase2Downloading] = useState(false);
   const phase2FileInputRef = useRef(null);
+
+  // Phase 3 states
+  const [phase3Data, setPhase3Data] = useState(null);
+  const [phase3Loading, setPhase3Loading] = useState(false);
+  const [phase3SubmittingRole, setPhase3SubmittingRole] = useState(null);
+  const [phase3RemovingRole, setPhase3RemovingRole] = useState(null);
+  const [phase3RemoveModalRole, setPhase3RemoveModalRole] = useState(null);
+  const [phase3EditingRoles, setPhase3EditingRoles] = useState({ leader: false, member1: false, member2: false });
+  const [phase3Urls, setPhase3Urls] = useState({ leader: "", member1: "", member2: "" });
+  const [phase3UrlErrors, setPhase3UrlErrors] = useState({ leader: "", member1: "", member2: "" });
 
   // Derive counts & classification locking strictly from backend teamSubmissions data
   const utilityUploadsCount = (teamSubmissions || []).filter((s) => {
@@ -1856,6 +1868,190 @@ export default function MySubmissionsPage({
       fetchPhase2Data();
     }
   }, [selectedPhase, activeRegId, fetchPhase2Data]);
+
+  // ==================== PHASE 3 DATA & SUBMISSION HANDLERS ====================
+  const fetchPhase3Data = useCallback(async () => {
+    const teamId = currentPage?.team?.teamId;
+    const regId = currentPage?.team?.registrationId;
+    if (!teamId && !regId) return;
+
+    setPhase3Loading(true);
+    try {
+      const token = await getToken();
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const params = new URLSearchParams();
+      if (teamId) params.append("teamId", teamId);
+      if (regId) params.append("registrationId", regId);
+
+      const res = await fetch(`${API_BASE_URL}/api/phase3/status?${params.toString()}`, { headers });
+      const data = await res.json();
+      if (data.success) {
+        setPhase3Data(data);
+        const lSubs = data.linkedinSubmissions || data.linkedin_submissions || {};
+        setPhase3Urls({
+          leader: lSubs.leader?.post_url || "",
+          member1: lSubs.member1?.post_url || "",
+          member2: lSubs.member2?.post_url || "",
+        });
+      } else {
+        setPhase3Data(null);
+      }
+    } catch (err) {
+      console.error("[Phase3] Error fetching Phase 3 data:", err);
+      setPhase3Data(null);
+    } finally {
+      setPhase3Loading(false);
+    }
+  }, [currentPage?.team?.teamId, currentPage?.team?.registrationId, API_BASE_URL]);
+
+  useEffect(() => {
+    if (selectedPhase === "phase_3" && (currentPage?.team?.teamId || currentPage?.team?.registrationId)) {
+      fetchPhase3Data();
+    }
+  }, [selectedPhase, currentPage?.team?.teamId, currentPage?.team?.registrationId, fetchPhase3Data]);
+
+  // Reconcile on window focus and tab visibility change (Part 5: avoid stale website state)
+  useEffect(() => {
+    if (selectedPhase !== "phase_3") return;
+
+    const onFocusOrVisible = () => {
+      if (document.visibilityState === "visible") {
+        fetchPhase3Data();
+      }
+    };
+
+    window.addEventListener("focus", onFocusOrVisible);
+    document.addEventListener("visibilitychange", onFocusOrVisible);
+
+    return () => {
+      window.removeEventListener("focus", onFocusOrVisible);
+      document.removeEventListener("visibilitychange", onFocusOrVisible);
+    };
+  }, [selectedPhase, fetchPhase3Data]);
+
+  const handleSaveLinkedInSubmission = async (role) => {
+    const rawUrl = (phase3Urls[role] || "").trim();
+    if (!rawUrl) {
+      setPhase3UrlErrors((prev) => ({ ...prev, [role]: "Please enter a LinkedIn post URL." }));
+      showToast({
+        type: "warning",
+        title: "Required",
+        message: "Please enter a LinkedIn post link before saving."
+      });
+      return;
+    }
+
+    setPhase3UrlErrors((prev) => ({ ...prev, [role]: "" }));
+    setPhase3SubmittingRole(role);
+
+    try {
+      const token = await getToken();
+      if (!token) {
+        showToast({
+          type: "error",
+          title: "Session Expired",
+          message: "Please sign in again to submit your LinkedIn post."
+        });
+        return;
+      }
+
+      const teamId = phase3Data?.teamId || currentPage?.team?.teamId;
+      const res = await fetch(`${API_BASE_URL}/api/phase3/linkedin-submission`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          teamId: teamId,
+          role: role,
+          linkedin_post_url: rawUrl
+        })
+      });
+
+      const resData = await res.json();
+      if (!res.ok || !resData.success) {
+        showToast({
+          type: "error",
+          title: "Submission Error",
+          message: resData.message || "Failed to save LinkedIn submission."
+        });
+      } else {
+        showToast({
+          type: "success",
+          title: "Submission Saved",
+          message: "LinkedIn post URL has been recorded successfully!"
+        });
+        setPhase3EditingRoles((prev) => ({ ...prev, [role]: false }));
+        await fetchPhase3Data();
+      }
+    } catch (err) {
+      console.error("[Phase3] Submission error:", err);
+      showToast({
+        type: "error",
+        title: "Submission Failed",
+        message: "Network error saving LinkedIn submission. Please try again."
+      });
+    } finally {
+      setPhase3SubmittingRole(null);
+    }
+  };
+
+  const handleRemoveLinkedInSubmission = async (role) => {
+    setPhase3RemovingRole(role);
+    try {
+      const token = await getToken();
+      if (!token) {
+        showToast({
+          type: "error",
+          title: "Session Expired",
+          message: "Please sign in again to remove your LinkedIn post submission."
+        });
+        return;
+      }
+
+      const teamId = phase3Data?.teamId || currentPage?.team?.teamId;
+      const res = await fetch(`${API_BASE_URL}/api/phase3/linkedin-submission`, {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          teamId: teamId,
+          role: role
+        })
+      });
+
+      const resData = await res.json();
+      if (!res.ok || !resData.success) {
+        showToast({
+          type: "error",
+          title: "Removal Failed",
+          message: resData.message || "Failed to remove LinkedIn post URL."
+        });
+      } else {
+        showToast({
+          type: "success",
+          title: "Submission Removed",
+          message: "LinkedIn post link removed successfully."
+        });
+        setPhase3Urls((prev) => ({ ...prev, [role]: "" }));
+        setPhase3EditingRoles((prev) => ({ ...prev, [role]: false }));
+        setPhase3RemoveModalRole(null);
+        await fetchPhase3Data();
+      }
+    } catch (err) {
+      console.error("[Phase3] Remove error:", err);
+      showToast({
+        type: "error",
+        title: "Removal Failed",
+        message: "Network error removing LinkedIn submission. Please try again."
+      });
+    } finally {
+      setPhase3RemovingRole(null);
+    }
+  };
 
   const handleDownloadPhase2Template = async () => {
     setPhase2Downloading(true);
@@ -3901,45 +4097,445 @@ export default function MySubmissionsPage({
             </div>
           ) : (
             /* ==================== PHASE 3 PAGE ==================== */
-            <div className="space-y-6">
-              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-slate-100 pb-4">
-                  <div>
-                    <span className="text-[10px] font-black text-primary uppercase tracking-widest block leading-none mb-1">
-                      Phase 3
-                    </span>
-                    <h2 className="text-lg font-black text-slate-900">
-                      Business Planning & Pitching
-                    </h2>
-                    <p className="text-xs text-slate-500 font-medium mt-1">
-                      Final pitch deck templates and presentation gateway.
-                    </p>
+            (() => {
+              const currentTeam = currentPage?.team;
+              const currentRegId = currentTeam?.registrationId || "";
+              const currentTeamName = currentTeam?.teamName || "Innovation Team";
+
+              // Products list: use phase3Data products if available, or fall back to currentTeam.ideas
+              const displayedProducts = (phase3Data?.products && phase3Data.products.length > 0)
+                ? phase3Data.products
+                : (currentTeam?.ideas || []).map((idea) => ({
+                    productId: idea.id,
+                    productTitle: idea.product_title || idea.title || "Product Idea",
+                    category: idea.category || null,
+                    legacyRegistrationId: idea.legacy_registration_id || currentRegId,
+                    isShortlisted: false,
+                    votesCount: 0,
+                    totalScore: 0,
+                  }));
+
+              const hasAnyShortlisted = displayedProducts.some(
+                (p) => Boolean(p.isShortlisted || p.is_shortlisted)
+              ) || Boolean(phase3Data?.isShortlisted || phase3Data?.is_shortlisted);
+
+              const leaderSub = phase3Data?.linkedinSubmissions?.leader || phase3Data?.linkedin_submissions?.leader;
+              const member1Sub = phase3Data?.linkedinSubmissions?.member1 || phase3Data?.linkedin_submissions?.member1;
+              const member2Sub = phase3Data?.linkedinSubmissions?.member2 || phase3Data?.linkedin_submissions?.member2;
+
+              const submittedCount = [leaderSub, member1Sub, member2Sub].filter(
+                (s) => Boolean(s?.post_url)
+              ).length;
+
+              const isLeader = currentTeam?.userRole === "Team Leader";
+
+              const slots = [
+                {
+                  role: "leader",
+                  label: "Team Leader",
+                  slotTitle: "Team Leader LinkedIn Post",
+                  name:
+                    phase3Data?.members?.leader?.name ||
+                    currentTeam?.members?.leader?.name ||
+                    "Team Leader",
+                  email:
+                    phase3Data?.members?.leader?.email ||
+                    currentTeam?.members?.leader?.email ||
+                    "",
+                  submission: leaderSub,
+                  canEdit:
+                    phase3Data?.canEdit !== undefined
+                      ? Boolean(phase3Data.canEdit.leader)
+                      : true,
+                },
+                {
+                  role: "member1",
+                  label: "Member 1",
+                  slotTitle: "Member 1 LinkedIn Post",
+                  name:
+                    phase3Data?.members?.member1?.name ||
+                    currentTeam?.members?.member2?.name ||
+                    "Member 1",
+                  email:
+                    phase3Data?.members?.member1?.email ||
+                    currentTeam?.members?.member2?.email ||
+                    "",
+                  submission: member1Sub,
+                  canEdit:
+                    phase3Data?.canEdit !== undefined
+                      ? Boolean(phase3Data.canEdit.member1)
+                      : true,
+                },
+                {
+                  role: "member2",
+                  label: "Member 2",
+                  slotTitle: "Member 2 LinkedIn Post",
+                  name:
+                    phase3Data?.members?.member2?.name ||
+                    currentTeam?.members?.member3?.name ||
+                    "Member 2",
+                  email:
+                    phase3Data?.members?.member2?.email ||
+                    currentTeam?.members?.member3?.email ||
+                    "",
+                  submission: member2Sub,
+                  canEdit:
+                    phase3Data?.canEdit !== undefined
+                      ? Boolean(phase3Data.canEdit.member2)
+                      : true,
+                },
+              ];
+
+              return (
+                <div className="space-y-6">
+                  {/* Team Products & Shortlist Status Section */}
+                  <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-5">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                      <div>
+                        <h3 className="text-base font-black text-slate-900 uppercase tracking-wide">
+                          TEAM PRODUCTS & PHASE 3 STATUS
+                        </h3>
+                        <p className="text-xs text-slate-500 font-medium">
+                          Authoritative Phase 3 qualification status and product-specific public voting metrics.
+                        </p>
+                      </div>
+                      {phase3Loading && (
+                        <span className="text-xs text-primary font-bold animate-pulse">
+                          Checking shortlist status...
+                        </span>
+                      )}
+                    </div>
+
+                    {displayedProducts.length === 0 ? (
+                      <div className="p-8 text-center bg-slate-50 rounded-xl border border-slate-200 text-slate-500 text-xs font-medium">
+                        No products found for this team registration.
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {displayedProducts.map((prod, idx) => {
+                          const isShort = Boolean(prod.isShortlisted || prod.is_shortlisted);
+                          const pTitle = prod.productTitle || prod.product_title || `Product #${idx + 1}`;
+                          const pReg = prod.legacyRegistrationId || prod.legacy_registration_id || currentRegId;
+                          const pVotes = prod.votesCount ?? prod.votes_count ?? prod.votes ?? 0;
+                          const pScore = prod.totalScore ?? prod.total_score ?? prod.score ?? 0;
+
+                          return (
+                            <div
+                              key={prod.productId || prod.product_id || idx}
+                              className="rounded-xl border border-slate-200 bg-white p-5 space-y-3.5 shadow-2xs hover:border-slate-300 transition"
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  {pReg && (
+                                    <span className="px-2 py-0.5 rounded bg-slate-100 border border-slate-200 text-[11px] font-mono font-bold text-slate-700">
+                                      {pReg}
+                                    </span>
+                                  )}
+                                  {prod.category && (
+                                    <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                      {prod.category}
+                                    </span>
+                                  )}
+                                </div>
+                                <div>
+                                  {isShort ? (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-black bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-2xs">
+                                      <CheckCircle size={12} className="text-emerald-600" />
+                                      Shortlisted for Phase 3
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-black bg-slate-100 text-slate-600 border border-slate-200">
+                                      <XCircle size={12} className="text-slate-400" />
+                                      Not Shortlisted for Phase 3
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+
+                              <div>
+                                <h4 className="font-heading font-black text-base text-slate-900 leading-snug break-words">
+                                  {pTitle}
+                                </h4>
+                                <p className="text-xs text-slate-500 font-semibold mt-1">
+                                  Team: <span className="text-slate-700">{currentTeamName}</span>
+                                </p>
+                              </div>
+
+                              {/* Metrics: Votes & Score Only (NO Likes) */}
+                              <div className="grid grid-cols-2 gap-3 pt-3 border-t border-slate-100">
+                                <div className="rounded-lg bg-blue-50/70 border border-blue-100 p-2.5">
+                                  <span className="text-[10px] font-black uppercase tracking-wider text-blue-700 block">
+                                    Total Votes
+                                  </span>
+                                  <p className="font-heading text-lg font-black text-blue-900 flex items-center gap-1 mt-0.5">
+                                    <Vote size={15} className="text-blue-600" />
+                                    {pVotes.toLocaleString()}
+                                  </p>
+                                </div>
+                                <div className="rounded-lg bg-amber-50/70 border border-amber-100 p-2.5">
+                                  <span className="text-[10px] font-black uppercase tracking-wider text-amber-700 block">
+                                    Idea Score
+                                  </span>
+                                  <p className="font-heading text-lg font-black text-amber-900 flex items-center gap-1 mt-0.5">
+                                    <Sparkles size={15} className="text-amber-500" />
+                                    {pScore.toLocaleString()}
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
-                  <span
-                    className={`text-[10px] font-black uppercase px-2.5 py-1 rounded-md border ${
-                      phase3Config?.timer_status === "running"
-                        ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                        : phase3Config?.timer_status === "paused"
-                        ? "bg-amber-50 text-amber-700 border-amber-200"
-                        : "bg-slate-100 text-slate-600 border-slate-200"
-                    }`}
-                  >
-                    {phase3Config?.timer_status
-                      ? phase3Config.timer_status.toUpperCase()
-                      : "UPCOMING"}
-                  </span>
+
+                  {/* Phase 3 LinkedIn Submissions Section — Available for ALL registered teams */}
+                  {/* Step 10K: LinkedIn Submissions Restricted to Shortlisted Teams check removed; hasAnyShortlisted gating removed so all teams can submit */}
+                  <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-6">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
+                      <div>
+                        <h3 className="text-base font-black text-slate-900 uppercase tracking-wide">
+                          PHASE 3 — LINKEDIN SUBMISSIONS
+                        </h3>
+                        <p className="text-xs text-slate-500 font-medium mt-1">
+                          Exactly 3 LinkedIn post submissions required per team (Team Leader, Member 1, Member 2).
+                        </p>
+                      </div>
+                      <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-black bg-indigo-50 text-indigo-700 border border-indigo-200 self-start sm:self-auto">
+                        {submittedCount} / 3 Submitted
+                      </span>
+                    </div>
+
+                    <div className="space-y-4">
+                      {slots.map((slot) => {
+                        const hasSavedLink = Boolean(slot.submission?.post_url);
+                        const isEditing = Boolean(phase3EditingRoles[slot.role]);
+                        const isConfirmingRemove = phase3RemoveModalRole === slot.role;
+
+                        return (
+                          <div
+                            key={slot.role}
+                            className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 sm:p-5 space-y-3"
+                          >
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200/60 pb-2.5">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-slate-200 text-slate-700">
+                                  {slot.label}
+                                </span>
+                                <strong className="text-sm font-black text-slate-900">
+                                  {slot.name}
+                                </strong>
+                                {slot.email && (
+                                  <span className="text-xs text-slate-500 font-medium">
+                                    ({slot.email})
+                                  </span>
+                                )}
+                              </div>
+                              <div>
+                                {hasSavedLink ? (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                    <CheckCircle2 size={13} className="text-emerald-600" />
+                                    ✓ Submitted
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                                    <Clock size={13} className="text-amber-600" />
+                                    Pending
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Submitted State View: Clickable URL + [ Edit ] [ Remove ] */}
+                            {hasSavedLink && !isEditing && (
+                              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-xl bg-white border border-slate-200">
+                                <div className="min-w-0 flex-1">
+                                  <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-0.5">
+                                    LinkedIn post:
+                                  </span>
+                                  <a
+                                    href={slot.submission.post_url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-xs sm:text-sm font-medium text-primary hover:underline break-all inline-flex items-center gap-1.5"
+                                  >
+                                    {slot.submission.post_url}
+                                    <ExternalLink size={13} className="shrink-0" />
+                                  </a>
+                                </div>
+
+                                {slot.canEdit ? (
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setPhase3Urls((prev) => ({ ...prev, [slot.role]: slot.submission.post_url }));
+                                        setPhase3EditingRoles((prev) => ({ ...prev, [slot.role]: true }));
+                                        setPhase3UrlErrors((prev) => ({ ...prev, [slot.role]: "" }));
+                                      }}
+                                      className="px-3 py-1.5 rounded-lg border border-slate-300 hover:border-slate-400 bg-white hover:bg-slate-50 text-xs font-bold text-slate-700 transition cursor-pointer"
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setPhase3RemoveModalRole(slot.role)}
+                                      className="px-3 py-1.5 rounded-lg border border-rose-200 hover:border-rose-300 bg-rose-50 hover:bg-rose-100 text-xs font-bold text-rose-700 transition cursor-pointer"
+                                    >
+                                      Remove
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <p className="text-[11px] text-slate-400 italic">
+                                    Any team member can upload or update this LinkedIn post.
+                                  </p>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Edit State View: Inline editing with [ Update ] and [ Cancel ] */}
+                            {hasSavedLink && isEditing && (
+                              <div className="space-y-2">
+                                <label className="block text-xs font-bold text-slate-700">
+                                  Edit LinkedIn Post URL
+                                </label>
+                                <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center">
+                                  <input
+                                    type="text"
+                                    placeholder="Paste your LinkedIn post link"
+                                    value={phase3Urls[slot.role] !== undefined ? phase3Urls[slot.role] : slot.submission.post_url}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      setPhase3Urls((prev) => ({ ...prev, [slot.role]: val }));
+                                      if (phase3UrlErrors[slot.role]) {
+                                        setPhase3UrlErrors((prev) => ({ ...prev, [slot.role]: "" }));
+                                      }
+                                    }}
+                                    disabled={phase3SubmittingRole === slot.role}
+                                    className={`flex-1 rounded-xl border px-3.5 py-2.5 text-xs sm:text-sm font-medium transition outline-none ${
+                                      phase3UrlErrors[slot.role]
+                                        ? "border-rose-400 bg-rose-50/30 text-rose-900"
+                                        : "border-slate-300 bg-white text-slate-800 focus:border-primary focus:ring-1 focus:ring-primary"
+                                    } disabled:opacity-50 disabled:bg-slate-100`}
+                                  />
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSaveLinkedInSubmission(slot.role)}
+                                      disabled={phase3SubmittingRole === slot.role}
+                                      className="rounded-xl bg-primary hover:bg-primary-hover px-4 py-2.5 text-xs font-black text-white shadow-2xs transition disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
+                                    >
+                                      {phase3SubmittingRole === slot.role ? "Updating..." : "Update"}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setPhase3EditingRoles((prev) => ({ ...prev, [slot.role]: false }));
+                                        setPhase3Urls((prev) => ({ ...prev, [slot.role]: slot.submission.post_url }));
+                                        setPhase3UrlErrors((prev) => ({ ...prev, [slot.role]: "" }));
+                                      }}
+                                      disabled={phase3SubmittingRole === slot.role}
+                                      className="rounded-xl border border-slate-300 hover:bg-slate-50 px-3.5 py-2.5 text-xs font-bold text-slate-700 transition cursor-pointer"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </div>
+                                {phase3UrlErrors[slot.role] && (
+                                  <p className="text-xs font-semibold text-rose-600">
+                                    {phase3UrlErrors[slot.role]}
+                                  </p>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Initial / Pending State View: Input field + [ Upload / Save ] */}
+                            {!hasSavedLink && (
+                              <div>
+                                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                                  LinkedIn Post Link
+                                </label>
+                                <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center">
+                                  <input
+                                    type="text"
+                                    placeholder="Paste your LinkedIn post link"
+                                    value={phase3Urls[slot.role] || ""}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      setPhase3Urls((prev) => ({ ...prev, [slot.role]: val }));
+                                      if (phase3UrlErrors[slot.role]) {
+                                        setPhase3UrlErrors((prev) => ({ ...prev, [slot.role]: "" }));
+                                      }
+                                    }}
+                                    disabled={!slot.canEdit || phase3SubmittingRole === slot.role}
+                                    className={`flex-1 rounded-xl border px-3.5 py-2.5 text-xs sm:text-sm font-medium transition outline-none ${
+                                      phase3UrlErrors[slot.role]
+                                        ? "border-rose-400 bg-rose-50/30 text-rose-900"
+                                        : "border-slate-300 bg-white text-slate-800 focus:border-primary focus:ring-1 focus:ring-primary"
+                                    } disabled:opacity-50 disabled:bg-slate-100`}
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSaveLinkedInSubmission(slot.role)}
+                                    disabled={!slot.canEdit || phase3SubmittingRole === slot.role}
+                                    className="rounded-xl bg-primary hover:bg-primary-hover px-4 py-2.5 text-xs font-black text-white shadow-2xs transition disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed shrink-0"
+                                  >
+                                    {phase3SubmittingRole === slot.role ? "Saving..." : "Upload / Save"}
+                                  </button>
+                                </div>
+
+                                {phase3UrlErrors[slot.role] && (
+                                  <p className="text-xs font-semibold text-rose-600 mt-1.5">
+                                    {phase3UrlErrors[slot.role]}
+                                  </p>
+                                )}
+
+                                {!slot.canEdit && (
+                                  <p className="text-[11px] text-slate-400 italic mt-1.5">
+                                    Any team member can upload or update this LinkedIn post.
+                                  </p>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Inline Removal Confirmation */}
+                            {isConfirmingRemove && (
+                              <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-xs space-y-2 mt-2">
+                                <div className="flex items-center gap-2 text-rose-800 font-bold">
+                                  <AlertTriangle size={15} className="shrink-0 text-rose-600" />
+                                  <span>Remove this LinkedIn post link?</span>
+                                </div>
+                                <p className="text-[11px] text-rose-700">
+                                  This will delete only this LinkedIn submission link and reset this slot to Pending.
+                                </p>
+                                <div className="flex items-center justify-end gap-2 pt-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => setPhase3RemoveModalRole(null)}
+                                    disabled={phase3RemovingRole === slot.role}
+                                    className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-bold transition cursor-pointer"
+                                  >
+                                    Cancel
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveLinkedInSubmission(slot.role)}
+                                    disabled={phase3RemovingRole === slot.role}
+                                    className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-black shadow-xs transition cursor-pointer disabled:opacity-50"
+                                  >
+                                    {phase3RemovingRole === slot.role ? "Removing..." : "Remove"}
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2 text-xs text-slate-600 font-semibold pt-1">
-                  <Calendar size={14} className="text-slate-400" />
-                  <span>
-                    Deadline:{" "}
-                    <strong className="text-slate-800">
-                      {formatDateTime(phase3Config?.scheduled_end_at)}
-                    </strong>
-                  </span>
-                </div>
-              </div>
-            </div>
+              );
+            })()
           )}
         </div>
       </div>
@@ -4308,6 +4904,54 @@ export default function MySubmissionsPage({
                 }`}
               >
                 Acknowledge & Close
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Remove Phase 3 LinkedIn Post Confirmation Modal */}
+      {phase3RemoveModalRole && createPortal(
+        <div
+          className="fixed inset-0 z-[99999] flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-xs animate-in fade-in"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="remove-linkedin-modal-title"
+        >
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl border border-slate-200 space-y-4 text-left">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-100 text-rose-600 shrink-0">
+                <AlertTriangle size={22} />
+              </div>
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-widest text-rose-600 block">
+                  CONFIRM REMOVAL
+                </span>
+                <h3 id="remove-linkedin-modal-title" className="text-base font-black text-slate-900">
+                  Remove this LinkedIn post link?
+                </h3>
+              </div>
+            </div>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Are you sure you want to remove this LinkedIn post submission? This will only remove this slot's link and reset it to Pending. Other team members and products will not be affected.
+            </p>
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setPhase3RemoveModalRole(null)}
+                disabled={Boolean(phase3RemovingRole)}
+                className="rounded-xl border border-slate-300 px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => handleRemoveLinkedInSubmission(phase3RemoveModalRole)}
+                disabled={Boolean(phase3RemovingRole)}
+                className="rounded-xl bg-rose-600 hover:bg-rose-700 px-4 py-2 text-xs font-black text-white shadow-xs transition cursor-pointer disabled:opacity-50"
+              >
+                {phase3RemovingRole ? "Removing..." : "Remove"}
               </button>
             </div>
           </div>

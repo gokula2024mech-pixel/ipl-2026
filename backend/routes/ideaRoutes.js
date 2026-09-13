@@ -20,6 +20,7 @@ const router = express.Router();
 const crypto = require('crypto');
 const { supabase } = require('../supabaseClient');
 const { getVotingControls } = require('./votingRoutes');
+const shortlistService = require('../services/phase3ShortlistService');
 const {
   ideaLookupLimiter,
   ideaLikeLimiter,
@@ -599,8 +600,9 @@ router.get('/resolve/:identifier', ideaLookupLimiter, async (req, res) => {
 });
 
 // ==============================================================================
+// ==============================================================================
 // 2.5. GET /api/ideas/leaderboard
-// Public Idea Leaderboard & Live Scoring Endpoint
+// Public Idea Leaderboard & Live Scoring Endpoint (Filtered by Phase 3 Shortlist)
 // ==============================================================================
 router.get('/leaderboard', ideaLookupLimiter, async (req, res) => {
   try {
@@ -615,15 +617,58 @@ router.get('/leaderboard', ideaLookupLimiter, async (req, res) => {
       });
     }
 
-    // Query idea_scores view, products, and registrations in parallel
+    // 1. Authoritative Phase 3 Shortlist Lookup (Fail-Closed)
+    let shortlistRows = [];
+    try {
+      if (req.testStore) {
+        shortlistRows = req.testStore.shortlist || [];
+      } else {
+        shortlistRows = await shortlistService.getAuthoritativeShortlist({ supabaseClient: supabase });
+      }
+    } catch (shortlistErr) {
+      console.error('[Idea Leaderboard] Error querying phase3_shortlist:', shortlistErr.message);
+      return res.status(500).json({
+        success: false,
+        error_code: 'SHORTLIST_UNAVAILABLE',
+        message: 'Phase 3 shortlist source is unavailable.'
+      });
+    }
+
+    if (!shortlistRows || shortlistRows.length === 0) {
+      return res.status(500).json({
+        success: false,
+        error_code: 'SHORTLIST_UNAVAILABLE',
+        message: 'Phase 3 shortlist source is unavailable or empty.'
+      });
+    }
+
+    // Map shortlist records by product_id
+    const shortlistMap = new Map();
+    (shortlistRows || []).forEach(r => {
+      if (r.product_id && !shortlistMap.has(r.product_id)) {
+        shortlistMap.set(r.product_id, r);
+      }
+    });
+
+    // 2. Query idea_scores, products, and registrations for valid products
     const [
       { data: scoreRows, error: scoreErr },
       { data: products, error: prodErr },
       { data: registrations, error: regErr }
     ] = await Promise.all([
-      supabase.from('idea_scores').select('product_id, team_id, product_title, team_name, likes_count, votes_count, total_score, last_vote_at, created_at'),
-      supabase.from('products').select('id, team_id, product_title, legacy_registration_id'),
-      supabase.from('registrations').select('registration_id, team_name')
+      supabase
+        .from('idea_scores')
+        .select('product_id, team_id, product_title, team_name, likes_count, votes_count, total_score, last_vote_at, created_at')
+        .limit(1000),
+      supabase
+        .from('products')
+        .select('id, team_id, product_title, legacy_registration_id, status')
+        .eq('status', 'active')
+        .limit(1000),
+      supabase
+        .from('registrations')
+        .select('registration_id, team_name')
+        .limit(1000)
     ]);
 
     if (scoreErr) {
@@ -635,8 +680,19 @@ router.get('/leaderboard', ideaLookupLimiter, async (req, res) => {
       });
     }
 
-    const prodMap = new Map();
-    (products || []).forEach(p => prodMap.set(p.id, p));
+    if (prodErr) {
+      console.error('[Idea Leaderboard] Error querying products:', prodErr.message);
+      return res.status(500).json({
+        success: false,
+        error_code: 'DATABASE_ERROR',
+        message: 'Failed to retrieve products for leaderboard.'
+      });
+    }
+
+    const scoreMap = new Map();
+    (scoreRows || []).forEach(row => {
+      if (row.product_id) scoreMap.set(row.product_id, row);
+    });
 
     const regMapById = new Map();
     const regMapByName = new Map();
@@ -648,64 +704,84 @@ router.get('/leaderboard', ideaLookupLimiter, async (req, res) => {
     let totalLikes = 0;
     let totalVotes = 0;
 
-    const rawList = (scoreRows || []).map(row => {
-      const p = prodMap.get(row.product_id);
-      const reg = (p?.legacy_registration_id ? regMapById.get(p.legacy_registration_id.trim().toUpperCase()) : null)
-        || (row.team_name ? regMapByName.get(row.team_name.trim().toLowerCase()) : null);
+    // Build entries ONLY for authoritative finalist products (hidden non-finalists are excluded from public leaderboard)
+    const finalistList = (products || [])
+      .filter(p => shortlistMap.has(p.id))
+      .map(p => {
+        const sl = shortlistMap.get(p.id);
+        const row = scoreMap.get(p.id) || {};
 
-      const likes = Math.max(0, parseInt(row.likes_count, 10) || 0);
-      const votes = Math.max(0, parseInt(row.votes_count, 10) || 0);
-      // Authoritative formula: Likes + (Votes * 2). Visits MUST NOT contribute.
-      const score = Math.max(0, row.total_score !== undefined && row.total_score !== null ? parseInt(row.total_score, 10) : (likes + votes * 2));
+        const reg = (sl?.registration_id ? regMapById.get(sl.registration_id.trim().toUpperCase()) : null)
+          || (p?.legacy_registration_id ? regMapById.get(p.legacy_registration_id.trim().toUpperCase()) : null)
+          || (row.team_name ? regMapByName.get(row.team_name.trim().toLowerCase()) : null);
 
-      totalLikes += likes;
-      totalVotes += votes;
+        const likes = Math.max(0, parseInt(row.likes_count, 10) || 0);
+        const votes = Math.max(0, parseInt(row.votes_count, 10) || 0);
+        // Authoritative formula: Likes + (Votes * 2). Visits MUST NOT contribute.
+        const score = Math.max(0, row.total_score !== undefined && row.total_score !== null ? parseInt(row.total_score, 10) : (likes + votes * 2));
 
-      const regId = reg?.registration_id || p?.legacy_registration_id || null;
+        totalLikes += likes;
+        totalVotes += votes;
 
-      return {
-        product_id: row.product_id,
-        productId: row.product_id,
-        id: row.product_id,
-        team_id: row.team_id,
-        teamId: row.team_id,
-        team_name: row.team_name || 'Innovation Team',
-        teamName: row.team_name || 'Innovation Team',
-        product_title: row.product_title || 'Innovation Project',
-        productTitle: row.product_title || 'Innovation Project',
-        registration_id: regId,
-        registrationId: regId,
-        likes_count: likes,
-        likesCount: likes,
-        votes_count: votes,
-        votesCount: votes,
-        voteCount: votes,
-        total_score: score,
-        totalScore: score,
-        score: score,
-        last_vote_at: row.last_vote_at || null
-      };
-    });
+        const regId = sl?.registration_id || reg?.registration_id || p?.legacy_registration_id || null;
+        const teamId = sl?.team_id || row.team_id || p?.team_id || null;
+        const teamName = row.team_name || reg?.team_name || 'Innovation Team';
+        const productTitle = row.product_title || p?.product_title || 'Innovation Project';
 
-    // Deterministic tie-breaker: total_score DESC, likes_count DESC, votes_count DESC, product_id ASC
-    rawList.sort((a, b) => {
+        return {
+          product_id: p.id,
+          productId: p.id,
+          id: p.id,
+          team_id: teamId,
+          teamId: teamId,
+          team_name: teamName,
+          teamName: teamName,
+          product_title: productTitle,
+          productTitle: productTitle,
+          registration_id: regId,
+          registrationId: regId,
+          category: sl?.category || null,
+          is_shortlisted: true,
+          isShortlisted: true,
+          likes_count: likes,
+          likesCount: likes,
+          votes_count: votes,
+          votesCount: votes,
+          voteCount: votes,
+          total_score: score,
+          totalScore: score,
+          score: score,
+          last_vote_at: row.last_vote_at || null
+        };
+      });
+
+    // 3. Authoritative Sorting across all finalists:
+    // 1. score DESC
+    // 2. likes DESC
+    // 3. votes DESC
+    // 4. product_id ASC
+    finalistList.sort((a, b) => {
       if (b.total_score !== a.total_score) return b.total_score - a.total_score;
       if (b.likes_count !== a.likes_count) return b.likes_count - a.likes_count;
       if (b.votes_count !== a.votes_count) return b.votes_count - a.votes_count;
-      return a.product_id.localeCompare(b.product_id);
+      return String(a.product_id).localeCompare(String(b.product_id));
     });
 
-    // Assign rank 1, 2, 3...
-    const rankedLeaderboard = rawList.map((item, idx) => ({
+    // 4. Assign continuous ranks 1..N across authoritative finalists
+    const rankedLeaderboard = finalistList.map((item, idx) => ({
       ...item,
       rank: idx + 1
     }));
 
     const responsePayload = {
+      total: rankedLeaderboard.length,
       total_ideas: rankedLeaderboard.length,
+      shortlisted_count: rankedLeaderboard.length,
+      non_shortlisted_count: 0,
       total_likes: totalLikes,
       total_votes: totalVotes,
-      leaderboard: rankedLeaderboard
+      leaderboard: rankedLeaderboard,
+      entries: rankedLeaderboard
     };
 
     // Update in-memory cache
@@ -1102,5 +1178,10 @@ router.post('/:productId/visit', ideaVisitLimiter, async (req, res) => {
     });
   }
 });
+
+// Invalidation hook for Phase 3 shortlist synchronization
+router.invalidateLeaderboardCache = () => {
+  ideaLeaderboardCache.cachedAt = 0;
+};
 
 module.exports = router;

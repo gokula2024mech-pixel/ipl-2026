@@ -27,7 +27,8 @@ import {
   BarChart3,
   Activity,
   Heart,
-  TrendingUp
+  TrendingUp,
+  Upload
 } from 'lucide-react';
 
 const DEPARTMENTS = [
@@ -316,6 +317,20 @@ export default function AdminVotingManagement({
   const [reportHistory, setReportHistory] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
 
+  // Phase 3 Shortlist Management State (STEP 10E)
+  const [shortlistStatus, setShortlistStatus] = useState(null);
+  const [loadingShortlistStatus, setLoadingShortlistStatus] = useState(false);
+  const [shortlistSourceType, setShortlistSourceType] = useState('drive'); // 'drive' | 'manual'
+  const [shortlistDriveFiles, setShortlistDriveFiles] = useState([]);
+  const [loadingDriveFiles, setLoadingDriveFiles] = useState(false);
+  const [selectedDriveFileId, setSelectedDriveFileId] = useState('');
+  const [selectedManualFile, setSelectedManualFile] = useState(null);
+  const [shortlistSyncMode, setShortlistSyncMode] = useState('INCREMENTAL'); // 'INCREMENTAL' | 'FULL_REPLACEMENT'
+  const [shortlistPreview, setShortlistPreview] = useState(null);
+  const [loadingPreview, setLoadingPreview] = useState(false);
+  const [executingSync, setExecutingSync] = useState(false);
+  const [syncResult, setSyncResult] = useState(null);
+
   // Stable ref for onShowToast callback to prevent re-fetch loops on parent re-renders
   const onShowToastRef = useRef(onShowToast);
   useEffect(() => {
@@ -421,6 +436,159 @@ export default function AdminVotingManagement({
       notify('error', 'Update Error', err.message);
     } finally {
       setUpdatingControls(false);
+    }
+  };
+
+  // Phase 3 Shortlist Handlers (STEP 10E)
+  const fetchShortlistStatus = useCallback(async () => {
+    setLoadingShortlistStatus(true);
+    try {
+      const res = await safeFetchJson(`${API_BASE_URL}/api/admin/shortlist`, { headers: authHeaders });
+      if (res.ok && res.data?.success) {
+        setShortlistStatus(res.data);
+      }
+    } catch (err) {
+      console.warn('[AdminVotingManagement] Failed to fetch shortlist status:', err);
+    } finally {
+      setLoadingShortlistStatus(false);
+    }
+  }, [API_BASE_URL, authHeaders]);
+
+  const fetchDriveShortlistFiles = useCallback(async () => {
+    setLoadingDriveFiles(true);
+    try {
+      const res = await safeFetchJson(`${API_BASE_URL}/api/admin/shortlist/drive/files`, { headers: authHeaders });
+      if (res.ok && res.data?.success) {
+        const files = res.data.files || [];
+        setShortlistDriveFiles(files);
+        if (files.length > 0) {
+          setSelectedDriveFileId(prev => prev || files[0].file_id);
+        }
+      }
+    } catch (err) {
+      console.warn('[AdminVotingManagement] Failed to fetch Drive shortlist files:', err);
+    } finally {
+      setLoadingDriveFiles(false);
+    }
+  }, [API_BASE_URL, authHeaders]);
+
+  useEffect(() => {
+    fetchShortlistStatus();
+    fetchDriveShortlistFiles();
+  }, [fetchShortlistStatus, fetchDriveShortlistFiles]);
+
+  const handlePreviewShortlist = async () => {
+    setShortlistPreview(null);
+    setSyncResult(null);
+    setLoadingPreview(true);
+
+    try {
+      if (shortlistSourceType === 'drive') {
+        if (!selectedDriveFileId) {
+          notify('error', 'Selection Required', 'Please select a Google Drive file to preview.');
+          return;
+        }
+        const res = await safeFetchJson(`${API_BASE_URL}/api/admin/shortlist/drive/preview`, {
+          method: 'POST',
+          headers: { ...authHeaders, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ file_id: selectedDriveFileId, mode: shortlistSyncMode })
+        });
+        if (res.ok && res.data?.success) {
+          setShortlistPreview(res.data.preview);
+          if (res.data.preview?.is_valid) {
+            notify('success', 'Preview Ready', `Found ${res.data.preview.valid_registrations?.length || 0} valid registrations.`);
+          } else {
+            notify('warning', 'Validation Issues', 'The candidate file contains validation warnings or errors.');
+          }
+        } else {
+          notify('error', 'Preview Failed', res.message || 'Could not generate shortlist preview.');
+        }
+      } else {
+        // Manual file upload
+        if (!selectedManualFile) {
+          notify('error', 'File Required', 'Please select an Excel (.xlsx, .xls) or CSV file to upload.');
+          return;
+        }
+        const formData = new FormData();
+        formData.append('file', selectedManualFile);
+
+        const token = authHeaders.Authorization;
+        const res = await fetch(`${API_BASE_URL}/api/admin/shortlist/preview?mode=${shortlistSyncMode}`, {
+          method: 'POST',
+          headers: token ? { Authorization: token } : {},
+          body: formData
+        });
+        const data = await res.json();
+        if (res.ok && data?.success) {
+          setShortlistPreview(data.preview);
+          if (data.preview?.is_valid) {
+            notify('success', 'Preview Ready', `Found ${data.preview.valid_registrations?.length || 0} valid registrations.`);
+          } else {
+            notify('warning', 'Validation Issues', 'The uploaded file contains validation warnings or errors.');
+          }
+        } else {
+          notify('error', 'Preview Failed', data?.message || 'Could not generate shortlist preview.');
+        }
+      }
+    } catch (err) {
+      notify('error', 'Preview Error', err.message);
+    } finally {
+      setLoadingPreview(false);
+    }
+  };
+
+  const handleExecuteSync = async () => {
+    if (!shortlistPreview || !shortlistPreview.is_valid) {
+      notify('error', 'Preview Required', 'You must run a valid preview before synchronizing the shortlist.');
+      return;
+    }
+
+    if (shortlistSyncMode === 'FULL_REPLACEMENT') {
+      const confirmMsg = `Are you sure you want to perform a FULL REPLACEMENT?
+This will replace the active shortlist with ${shortlistPreview.valid_registrations?.length || 0} teams and remove ${shortlistPreview.to_remove || 0} teams from the shortlist.
+(Historical votes and likes are safely preserved).`;
+      if (!window.confirm(confirmMsg)) {
+        return;
+      }
+    }
+
+    setExecutingSync(true);
+    try {
+      let resData;
+      if (shortlistSourceType === 'drive') {
+        const res = await safeFetchJson(`${API_BASE_URL}/api/admin/shortlist/drive/sync`, {
+          method: 'POST',
+          headers: { ...authHeaders, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ file_id: selectedDriveFileId, mode: shortlistSyncMode })
+        });
+        resData = res.data;
+        if (!res.ok || !resData?.success) {
+          throw new Error(res.message || resData?.message || 'Sync failed.');
+        }
+      } else {
+        const formData = new FormData();
+        formData.append('file', selectedManualFile);
+
+        const token = authHeaders.Authorization;
+        const res = await fetch(`${API_BASE_URL}/api/admin/shortlist/sync?mode=${shortlistSyncMode}`, {
+          method: 'POST',
+          headers: token ? { Authorization: token } : {},
+          body: formData
+        });
+        resData = await res.json();
+        if (!res.ok || !resData?.success) {
+          throw new Error(resData?.message || 'Sync failed.');
+        }
+      }
+
+      setSyncResult(resData);
+      notify('success', 'Shortlist Synchronized', `Synchronized successfully: ${resData.upserted_count ?? 0} upserted, ${resData.removed_count ?? 0} removed. Total: ${resData.total_shortlisted ?? 0}`);
+      fetchShortlistStatus();
+      fetchMetrics(true);
+    } catch (err) {
+      notify('error', 'Sync Error', err.message);
+    } finally {
+      setExecutingSync(false);
     }
   };
 
@@ -946,6 +1114,367 @@ export default function AdminVotingManagement({
                 </p>
               </div>
             </div>
+          </div>
+
+          {/* Phase 3 Shortlist Management Card (STEP 10E) */}
+          <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200 space-y-5">
+            {/* Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
+              <div>
+                <h4 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                  <FileSpreadsheet size={18} className="text-primary" /> Phase 3 Shortlist Source
+                </h4>
+                <p className="text-xs text-slate-500 mt-1">
+                  Manage authoritative shortlist entries for Phase 3 public leaderboard and voting eligibility.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-500 font-medium">Authoritative Registry:</span>
+                <span className="px-3 py-1 rounded-full text-xs font-black bg-blue-50 text-blue-700 ring-1 ring-blue-600/20 flex items-center gap-1.5">
+                  <ShieldCheck size={13} className="text-blue-600" />
+                  {loadingShortlistStatus ? (
+                    <RefreshCw size={11} className="animate-spin" />
+                  ) : (
+                    `${shortlistStatus?.total_shortlisted ?? 0} Shortlisted`
+                  )}
+                  {shortlistStatus?.category_breakdown && (
+                    <span className="font-semibold text-blue-600/80 text-[11px]">
+                      (HW: {shortlistStatus.category_breakdown.hardware}, SW: {shortlistStatus.category_breakdown.software})
+                    </span>
+                  )}
+                </span>
+                <button
+                  type="button"
+                  onClick={fetchShortlistStatus}
+                  title="Refresh Shortlist Status"
+                  disabled={loadingShortlistStatus}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition cursor-pointer"
+                >
+                  <RefreshCw size={13} className={loadingShortlistStatus ? 'animate-spin' : ''} />
+                </button>
+              </div>
+            </div>
+
+            {/* Source Selection Tabs */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl w-fit">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShortlistSourceType('drive');
+                    setShortlistPreview(null);
+                    setSyncResult(null);
+                  }}
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+                    shortlistSourceType === 'drive'
+                      ? 'bg-white text-primary shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <HardDrive size={14} />
+                  <span>Google Drive</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShortlistSourceType('manual');
+                    setShortlistPreview(null);
+                    setSyncResult(null);
+                  }}
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+                    shortlistSourceType === 'manual'
+                      ? 'bg-white text-primary shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Upload size={14} />
+                  <span>Manual Upload</span>
+                </button>
+              </div>
+
+              {/* Synchronization Mode Selector */}
+              <div className="flex items-center gap-3 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl text-xs">
+                <span className="font-bold text-slate-700">Sync Mode:</span>
+                <label className="inline-flex items-center gap-1.5 cursor-pointer font-medium text-slate-700">
+                  <input
+                    type="radio"
+                    name="shortlistSyncMode"
+                    value="INCREMENTAL"
+                    checked={shortlistSyncMode === 'INCREMENTAL'}
+                    onChange={(e) => {
+                      setShortlistSyncMode(e.target.value);
+                      setShortlistPreview(null);
+                      setSyncResult(null);
+                    }}
+                    className="text-primary focus:ring-primary h-3.5 w-3.5"
+                  />
+                  <span>Incremental</span>
+                </label>
+                <label className="inline-flex items-center gap-1.5 cursor-pointer font-medium text-slate-700">
+                  <input
+                    type="radio"
+                    name="shortlistSyncMode"
+                    value="FULL_REPLACEMENT"
+                    checked={shortlistSyncMode === 'FULL_REPLACEMENT'}
+                    onChange={(e) => {
+                      setShortlistSyncMode(e.target.value);
+                      setShortlistPreview(null);
+                      setSyncResult(null);
+                    }}
+                    className="text-primary focus:ring-primary h-3.5 w-3.5"
+                  />
+                  <span>Full Replacement</span>
+                </label>
+              </div>
+            </div>
+
+            {/* Source Input Area */}
+            <div className="p-4 rounded-xl bg-slate-50 border border-slate-100 space-y-3">
+              {shortlistSourceType === 'drive' ? (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                      <HardDrive size={14} className="text-primary" /> Select Shortlist File from Google Drive:
+                    </label>
+                    <button
+                      type="button"
+                      onClick={fetchDriveShortlistFiles}
+                      disabled={loadingDriveFiles}
+                      className="text-[11px] font-bold text-primary hover:underline flex items-center gap-1 cursor-pointer"
+                    >
+                      <RefreshCw size={11} className={loadingDriveFiles ? 'animate-spin' : ''} />
+                      <span>{loadingDriveFiles ? 'Scanning Drive...' : 'Refresh Drive Files'}</span>
+                    </button>
+                  </div>
+
+                  {shortlistDriveFiles.length === 0 ? (
+                    <div className="p-4 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800 flex items-start gap-2">
+                      <AlertCircle size={15} className="text-amber-600 shrink-0 mt-0.5" />
+                      <div>
+                        <p className="font-bold">No candidate shortlist spreadsheets found in Google Drive root folder.</p>
+                        <p className="text-[11px] text-amber-700 mt-0.5">
+                          Ensure an Excel (.xlsx, .xls) or Google Sheet is located in your configured IPL Drive root or subfolders, or switch to <strong>Manual Upload</strong> above.
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <select
+                        value={selectedDriveFileId}
+                        onChange={(e) => {
+                          setSelectedDriveFileId(e.target.value);
+                          setShortlistPreview(null);
+                          setSyncResult(null);
+                        }}
+                        className="w-full text-xs font-semibold p-2.5 rounded-xl border border-slate-300 bg-white text-slate-800 focus:ring-2 focus:ring-primary focus:outline-none"
+                      >
+                        {shortlistDriveFiles.map((file) => (
+                          <option key={file.file_id} value={file.file_id}>
+                            {file.name} {file.size ? `(${(file.size / 1024).toFixed(1)} KB)` : ''} {file.modified_time ? `— ${new Date(file.modified_time).toLocaleDateString()}` : ''}
+                          </option>
+                        ))}
+                      </select>
+
+                      {/* File Details Bar */}
+                      {(() => {
+                        const activeFile = shortlistDriveFiles.find(f => f.file_id === selectedDriveFileId);
+                        if (!activeFile) return null;
+                        return (
+                          <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 px-1">
+                            <span>
+                              <strong>Modified:</strong> {activeFile.modified_time ? new Date(activeFile.modified_time).toLocaleString() : 'Unknown'}
+                              {activeFile.size ? ` • Size: ${(activeFile.size / 1024).toFixed(1)} KB` : ''}
+                            </span>
+                            {activeFile.web_view_link && (
+                              <a
+                                href={activeFile.web_view_link}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-primary hover:underline flex items-center gap-1 font-semibold"
+                              >
+                                <span>Open in Google Drive</span>
+                                <ExternalLink size={11} />
+                              </a>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                /* Manual Upload Area */
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                    <Upload size={14} className="text-primary" /> Select Shortlist Excel or CSV from Device:
+                  </label>
+                  <input
+                    type="file"
+                    accept=".xlsx,.xls,.csv"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0] || null;
+                      setSelectedManualFile(file);
+                      setShortlistPreview(null);
+                      setSyncResult(null);
+                    }}
+                    className="w-full text-xs text-slate-700 file:mr-3 file:py-2 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-primary file:text-white hover:file:bg-primary/90 cursor-pointer"
+                  />
+                  <p className="text-[11px] text-slate-400">
+                    Supports .xlsx, .xls, and .csv files (up to 15MB). Dynamically resolves Registration ID columns across sheets.
+                  </p>
+                </div>
+              )}
+
+              {/* Mode Explanation Notice */}
+              <div className="text-[11px] text-slate-600 bg-white p-3 rounded-lg border border-slate-200">
+                {shortlistSyncMode === 'INCREMENTAL' ? (
+                  <span>
+                    <strong>Incremental Mode:</strong> Adds new shortlisted teams and updates existing mappings. Teams not in this file will <strong>remain</strong> in the shortlist.
+                  </span>
+                ) : (
+                  <span className="text-amber-800">
+                    <strong>Full Replacement Mode:</strong> Authoritatively replaces the shortlist. Only teams present in this file will remain shortlisted. Teams omitted will be removed from the shortlist. (Historical votes and likes are safely preserved).
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Action Bar: Preview & Sync Buttons */}
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={handlePreviewShortlist}
+                disabled={loadingPreview || executingSync || (shortlistSourceType === 'drive' ? !selectedDriveFileId : !selectedManualFile)}
+                className="py-2.5 px-4 rounded-xl text-xs font-extrabold text-slate-700 bg-white border border-slate-300 hover:bg-slate-50 transition cursor-pointer flex items-center gap-2 shadow-xs disabled:opacity-50"
+              >
+                <Eye size={15} className="text-primary" />
+                <span>{loadingPreview ? 'Generating Preview...' : 'Preview Shortlist'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleExecuteSync}
+                disabled={!shortlistPreview || !shortlistPreview.is_valid || executingSync || loadingPreview}
+                className="py-2.5 px-5 rounded-xl text-xs font-extrabold text-white bg-primary hover:bg-primary/90 transition cursor-pointer flex items-center gap-2 shadow-sm disabled:opacity-50"
+              >
+                <CheckCircle2 size={15} />
+                <span>
+                  {executingSync
+                    ? 'Synchronizing Shortlist...'
+                    : shortlistSyncMode === 'FULL_REPLACEMENT'
+                    ? 'Execute Full Replacement'
+                    : 'Execute Incremental Sync'}
+                </span>
+              </button>
+            </div>
+
+            {/* Preview Results Display */}
+            {shortlistPreview && (
+              <div className="rounded-xl border p-4 space-y-3 bg-slate-50/50">
+                <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-black text-slate-800 uppercase tracking-wider">Preview Results:</span>
+                    <span className={`px-2 py-0.5 rounded-full text-[11px] font-extrabold ${
+                      shortlistPreview.is_valid
+                        ? 'bg-emerald-100 text-emerald-800 ring-1 ring-emerald-600/20'
+                        : 'bg-rose-100 text-rose-800 ring-1 ring-rose-600/20'
+                    }`}>
+                      {shortlistPreview.is_valid ? 'Validation Passed — Ready to Sync' : 'Blocking Errors Detected'}
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-slate-500 font-semibold">Mode: {shortlistPreview.mode}</span>
+                </div>
+
+                {/* Preview Metric Badges */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                  <div className="bg-white p-3 rounded-xl border border-slate-200 text-center">
+                    <span className="text-[10px] uppercase font-bold text-slate-400">Rows Selected</span>
+                    <p className="text-lg font-black text-slate-900">{shortlistPreview.rows_selected ?? shortlistPreview.total_rows_detected ?? 0}</p>
+                  </div>
+                  <div className="bg-white p-3 rounded-xl border border-slate-200 text-center">
+                    <span className="text-[10px] uppercase font-bold text-emerald-600">Valid Teams</span>
+                    <p className="text-lg font-black text-emerald-700">{shortlistPreview.valid_registrations?.length ?? 0}</p>
+                  </div>
+                  <div className="bg-white p-3 rounded-xl border border-slate-200 text-center">
+                    <span className="text-[10px] uppercase font-bold text-blue-600">New Teams</span>
+                    <p className="text-lg font-black text-blue-700">{shortlistPreview.new_teams ?? 0}</p>
+                  </div>
+                  <div className="bg-white p-3 rounded-xl border border-slate-200 text-center">
+                    <span className="text-[10px] uppercase font-bold text-slate-500">Already Shortlisted</span>
+                    <p className="text-lg font-black text-slate-700">{shortlistPreview.existing_shortlisted_teams ?? 0}</p>
+                  </div>
+                  <div className="bg-white p-3 rounded-xl border border-slate-200 text-center">
+                    <span className="text-[10px] uppercase font-bold text-rose-500">Duplicates Blocked</span>
+                    <p className="text-lg font-black text-rose-700">{shortlistPreview.duplicates?.length ?? 0}</p>
+                  </div>
+                  <div className="bg-white p-3 rounded-xl border border-slate-200 text-center">
+                    <span className="text-[10px] uppercase font-bold text-amber-600">To Remove</span>
+                    <p className="text-lg font-black text-amber-700">{shortlistPreview.to_remove ?? 0}</p>
+                  </div>
+                </div>
+
+                {/* Ignored Section Note Rows Banner */}
+                {shortlistPreview.ignored_rows_count > 0 && (
+                  <div className="text-[11px] text-slate-600 bg-slate-100/90 px-3 py-2 rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-bold text-slate-800">
+                        {shortlistPreview.physical_rows_detected || (shortlistPreview.total_rows_detected + shortlistPreview.ignored_rows_count)} physical workbook rows detected:
+                      </span>
+                      <span>
+                        {shortlistPreview.ignored_rows_count} section-note row ({shortlistPreview.ignored_note_rows?.[0]?.raw_id || '10 Teams from SIH'}) safely ignored before validation.
+                      </span>
+                    </div>
+                    <span className="font-extrabold text-emerald-700 whitespace-nowrap">
+                      {shortlistPreview.valid_registrations?.length ?? 90} Valid Finalist Teams
+                    </span>
+                  </div>
+                )}
+
+                {/* Validation Errors / Warnings List */}
+                {!shortlistPreview.is_valid && (
+                  <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl space-y-1.5 text-xs text-rose-800 max-h-48 overflow-y-auto">
+                    <div className="font-bold flex items-center gap-1.5">
+                      <AlertCircle size={14} className="text-rose-600 shrink-0" />
+                      <span>The following blocking issues must be resolved before synchronizing:</span>
+                    </div>
+                    <ul className="list-disc list-inside space-y-0.5 text-[11px] text-rose-700 pl-1">
+                      {shortlistPreview.duplicates?.map((dup, i) => (
+                        <li key={`dup-${i}`}>
+                          {dup.product_title ? (
+                            <>Duplicate Product: <strong>{dup.product_title}</strong> ({dup.registration_id}) — sheet: {dup.sheet}, row: {dup.rowNumber || dup.row_number}</>
+                          ) : (
+                            <>Duplicate Entry: <strong>{dup.registration_id}</strong> (sheet: {dup.sheet}, row: {dup.rowNumber || dup.row_number})</>
+                          )}
+                        </li>
+                      ))}
+                      {shortlistPreview.missing_registration_ids?.map((m, i) => (
+                        <li key={`m-${i}`}>Unregistered ID: <strong>{m.registration_id}</strong> (sheet: {m.sheet}, row: {m.rowNumber || m.row_number})</li>
+                      ))}
+                      {shortlistPreview.ambiguous_products?.map((a, i) => (
+                        <li key={`a-${i}`}>Ambiguous Multi-Product: <strong>{a.registration_id}</strong> ({a.error || `Product #${a.product_number}: ${a.product_title}`})</li>
+                      ))}
+                      {shortlistPreview.invalid_format_ids?.map((inv, i) => (
+                        <li key={`inv-${i}`}>Invalid Format: <strong>{inv.rawId || inv.raw_id}</strong> — {inv.error}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Sync Execution Result Banner */}
+            {syncResult && (
+              <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 flex items-start gap-2.5">
+                <CheckCircle2 size={16} className="text-emerald-600 shrink-0 mt-0.5" />
+                <div className="space-y-0.5">
+                  <p className="font-bold">Phase 3 Shortlist Synchronized Successfully</p>
+                  <p className="text-[11px] text-emerald-700">
+                    Source: <strong>{syncResult.source === 'google_drive' ? 'Google Drive' : 'Manual Upload'}</strong> • Mode: <strong>{syncResult.mode}</strong> • Upserted: <strong>{syncResult.upserted_count ?? 0}</strong> • Removed: <strong>{syncResult.removed_count ?? 0}</strong> • Total Active Shortlist: <strong>{syncResult.total_shortlisted ?? 0}</strong>. Public leaderboard and voting authorization updated.
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

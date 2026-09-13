@@ -12,6 +12,13 @@ const TEMPLATES_FOLDER_ID = process.env.GOOGLE_DRIVE_TEMPLATES_FOLDER_ID || '11B
 let cachedDriveClient = null
 
 /**
+ * Set a mock Drive client for testing purposes
+ */
+function setDriveClientForTesting(client) {
+  cachedDriveClient = client
+}
+
+/**
  * Initialize and return an authenticated Google Drive API client
  */
 function getDriveClient() {
@@ -984,10 +991,216 @@ async function getAllPhase2Submissions() {
   return resultMap
 }
 
+/**
+ * Phase 3 Shortlist Google Drive Integration Helpers
+ */
+
+/**
+ * List available candidate Phase 3 shortlist source files from Google Drive
+ * Scoped to ROOT_FOLDER_ID and its direct subfolders (e.g. Phase 3, Shortlist).
+ * Filters for Excel (.xlsx, .xls) and CSV (.csv) files and Google Sheets.
+ * Returns sanitized metadata list with ZERO credential exposure.
+ *
+ * @param {string} [customFolderId] Optional custom folder ID to search within
+ * @returns {Promise<Array<{ file_id: string, name: string, mime_type: string, size: number | null, modified_time: string | null, web_view_link: string | null }>>}
+ */
+async function listPhase3ShortlistFiles(customFolderId = null) {
+  const drive = getDriveClient()
+  const rootId = customFolderId || ROOT_FOLDER_ID
+
+  const folderIds = [rootId]
+  try {
+    const subfoldersRes = await drive.files.list({
+      q: `'${rootId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+      fields: 'files(id, name)',
+      spaces: 'drive',
+      includeItemsFromAllDrives: true,
+      supportsAllDrives: true
+    })
+    const subfolders = subfoldersRes.data?.files || []
+    for (const f of subfolders) {
+      const norm = (f.name || '').toLowerCase()
+      if (norm.includes('phase 3') || norm.includes('phase3') || norm.includes('shortlist') || norm.includes('admin')) {
+        folderIds.push(f.id)
+      }
+    }
+  } catch (err) {
+    console.warn('[GoogleDriveService] Note querying subfolders for shortlist files:', err.message)
+  }
+
+  const parentQuery = folderIds.length === 1
+    ? `'${folderIds[0]}' in parents`
+    : `(${folderIds.map(id => `'${id}' in parents`).join(' or ')})`
+
+  const mimeOrNameQuery = `(${[
+    "mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'",
+    "mimeType = 'application/vnd.ms-excel'",
+    "mimeType = 'text/csv'",
+    "mimeType = 'application/vnd.google-apps.spreadsheet'",
+    "name contains '.xlsx'",
+    "name contains '.xls'",
+    "name contains '.csv'"
+  ].join(' or ')})`
+
+  const response = await drive.files.list({
+    q: `${parentQuery} and trashed = false and ${mimeOrNameQuery}`,
+    fields: 'files(id, name, mimeType, size, modifiedTime, webViewLink)',
+    spaces: 'drive',
+    includeItemsFromAllDrives: true,
+    supportsAllDrives: true
+  })
+
+  const files = response.data?.files || []
+
+  // Map to safe, sanitized metadata
+  const results = files.map(f => ({
+    file_id: f.id,
+    name: f.name,
+    mime_type: f.mimeType,
+    size: f.size ? parseInt(f.size, 10) : null,
+    modified_time: f.modifiedTime || null,
+    web_view_link: f.webViewLink || null
+  }))
+
+  results.sort((a, b) => new Date(b.modified_time || 0) - new Date(a.modified_time || 0))
+
+  return results
+}
+
+/**
+ * Download a candidate shortlist file from Google Drive into a memory Buffer.
+ * Supports binary Excel (.xlsx, .xls), CSV, and exports Google Sheets.
+ * Strictly verifies fileId safety (no path traversal, no URLs).
+ * Enforces file size limits (max 15MB) and supported MIME types.
+ *
+ * @param {string} fileId
+ * @returns {Promise<{ buffer: Buffer, metadata: { file_id: string, name: string, mime_type: string, size: number, modified_time: string | null, web_view_link: string | null } }>}
+ */
+async function downloadDriveFileToBuffer(fileId) {
+  if (!fileId || typeof fileId !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(fileId.trim())) {
+    const err = new Error('Invalid Google Drive file ID format.')
+    err.code = 'INVALID_FILE_ID'
+    err.status = 400
+    throw err
+  }
+
+  const cleanFileId = fileId.trim()
+  const drive = getDriveClient()
+
+  // 1. Fetch metadata
+  let metadata
+  try {
+    const metaRes = await drive.files.get({
+      fileId: cleanFileId,
+      fields: 'id, name, mimeType, size, modifiedTime, webViewLink, trashed, parents',
+      supportsAllDrives: true
+    })
+    metadata = metaRes.data
+  } catch (apiErr) {
+    const err = new Error(apiErr.message || 'Error accessing Drive file')
+    if (apiErr.status === 404 || apiErr.code === 404) {
+      err.code = 'DRIVE_FILE_NOT_FOUND'
+      err.status = 404
+      err.message = 'The requested Google Drive file was not found.'
+    } else if (apiErr.status === 403 || apiErr.code === 403) {
+      err.code = 'DRIVE_PERMISSION_DENIED'
+      err.status = 403
+      err.message = 'Permission denied accessing the requested Google Drive file.'
+    } else {
+      err.code = 'DRIVE_FILE_UNAVAILABLE'
+      err.status = 502
+    }
+    throw err
+  }
+
+  if (!metadata || metadata.trashed) {
+    const err = new Error('The requested Google Drive file is in trash or unavailable.')
+    err.code = 'DRIVE_FILE_NOT_FOUND'
+    err.status = 404
+    throw err
+  }
+
+  // 2. Validate file type and extension
+  const fileName = metadata.name || ''
+  const ext = path.extname(fileName).toLowerCase()
+  const mime = (metadata.mimeType || '').toLowerCase()
+
+  const isGoogleSheet = mime === 'application/vnd.google-apps.spreadsheet'
+  const isExcel = ext === '.xlsx' || ext === '.xls' || mime.includes('spreadsheet') || mime.includes('ms-excel')
+  const isCsv = ext === '.csv' || mime.includes('csv') || (ext === '.csv' && mime.includes('text/plain'))
+
+  if (!isGoogleSheet && !isExcel && !isCsv) {
+    const err = new Error(`Unsupported file type: '${fileName}'. Only .xlsx, .xls, and .csv files or Google Sheets are supported.`)
+    err.code = 'DRIVE_UNSUPPORTED_TYPE'
+    err.status = 422
+    throw err
+  }
+
+  // 3. Check declared size if available (max 15MB)
+  const MAX_BYTES = 15 * 1024 * 1024
+  if (metadata.size && parseInt(metadata.size, 10) > MAX_BYTES) {
+    const err = new Error(`Drive file size exceeds maximum limit of 15MB.`)
+    err.code = 'DRIVE_FILE_TOO_LARGE'
+    err.status = 413
+    throw err
+  }
+
+  // 4. Download / Export buffer
+  let buffer
+  try {
+    if (isGoogleSheet) {
+      const exportRes = await drive.files.export({
+        fileId: cleanFileId,
+        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      }, { responseType: 'arraybuffer' })
+      buffer = Buffer.from(exportRes.data)
+    } else {
+      const downloadRes = await drive.files.get({
+        fileId: cleanFileId,
+        alt: 'media',
+        supportsAllDrives: true
+      }, { responseType: 'arraybuffer' })
+      buffer = Buffer.from(downloadRes.data)
+    }
+  } catch (dlErr) {
+    const err = new Error('Failed to download file from Google Drive: ' + dlErr.message)
+    err.code = 'DRIVE_DOWNLOAD_FAILED'
+    err.status = 502
+    throw err
+  }
+
+  if (!buffer || buffer.length === 0) {
+    const err = new Error('Drive file is empty (0 bytes).')
+    err.code = 'DRIVE_EMPTY_FILE'
+    err.status = 422
+    throw err
+  }
+
+  if (buffer.length > MAX_BYTES) {
+    const err = new Error(`Exported file size exceeds maximum limit of 15MB.`)
+    err.code = 'DRIVE_FILE_TOO_LARGE'
+    err.status = 413
+    throw err
+  }
+
+  return {
+    buffer,
+    metadata: {
+      file_id: metadata.id,
+      name: metadata.name,
+      mime_type: metadata.mimeType,
+      size: buffer.length,
+      modified_time: metadata.modifiedTime || null,
+      web_view_link: metadata.webViewLink || null
+    }
+  }
+}
+
 module.exports = {
   ROOT_FOLDER_ID,
   TEMPLATES_FOLDER_ID,
   getDriveClient,
+  setDriveClientForTesting,
   listFolderChildren,
   findFolderByName,
   findFileByName,
@@ -1016,5 +1229,9 @@ module.exports = {
   getPhase2Submission,
   uploadOrReplacePhase2File,
   removePhase2File,
-  getAllPhase2Submissions
+  getAllPhase2Submissions,
+  // Phase 3 Shortlist exports
+  listPhase3ShortlistFiles,
+  downloadDriveFileToBuffer
 }
+

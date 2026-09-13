@@ -51,6 +51,8 @@ app.use('/api/phase2', require('./routes/phase2Routes'))
 app.use('/api/ideas', require('./routes/ideaRoutes'))
 app.use('/api/analytics', require('./routes/analyticsRoutes'))
 app.use('/api/admin/analytics', require('./routes/analyticsRoutes'))
+app.use('/api/admin/shortlist', require('./routes/shortlistRoutes'))
+app.use('/api/phase3', require('./routes/phase3Routes').router)
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

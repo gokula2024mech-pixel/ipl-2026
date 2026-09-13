@@ -629,8 +629,18 @@ export default function VotingModal({
             ? "YOU CAN'T VOTE FOR YOUR OWN TEAM"
             : json.error_code === 'DEPARTMENT_INELIGIBLE'
             ? 'VOTING NOT ALLOWED'
+            : json.error_code === 'PHASE3_NOT_SHORTLISTED'
+            ? 'NOT SHORTLISTED'
+            : json.error_code === 'SHORTLIST_UNAVAILABLE'
+            ? 'VOTING UNAVAILABLE'
             : 'VOTING RESTRICTION',
-          message: json.message || 'Failed to record vote.'
+          message: json.message || (
+            json.error_code === 'PHASE3_NOT_SHORTLISTED'
+              ? 'Voting is available only for shortlisted Phase 3 ideas.'
+              : json.error_code === 'SHORTLIST_UNAVAILABLE'
+              ? 'Phase 3 voting is temporarily unavailable. Please try again later.'
+              : 'Failed to record vote.'
+          )
         });
         setShowConfirm(false);
       } else {
