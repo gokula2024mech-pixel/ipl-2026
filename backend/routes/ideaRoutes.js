@@ -19,6 +19,7 @@ const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
 const { supabase } = require('../supabaseClient');
+const { getVotingControls } = require('./votingRoutes');
 const {
   ideaLookupLimiter,
   ideaLikeLimiter,
@@ -935,6 +936,25 @@ router.post('/:productId/like', ideaLikeLimiter, async (req, res) => {
         success: false,
         error_code: 'INVALID_PRODUCT_ID',
         message: 'Product ID must be a valid UUID.'
+      });
+    }
+
+    // Authoritative check: verify if Public Likes are currently enabled (fail-closed)
+    const controls = await getVotingControls();
+    if (!controls || typeof controls.is_likes_active !== 'boolean') {
+      console.warn('[Idea API] Likes control state unavailable or unconfirmed. Failing closed.');
+      return res.status(503).json({
+        success: false,
+        error_code: 'CONTROLS_UNAVAILABLE',
+        message: 'Likes service is temporarily unavailable. Please try again shortly.'
+      });
+    }
+
+    if (!controls.is_likes_active) {
+      return res.status(403).json({
+        success: false,
+        error_code: 'LIKES_CLOSED',
+        message: 'Likes are currently closed.'
       });
     }
 

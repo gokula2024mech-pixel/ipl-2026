@@ -636,6 +636,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
   const [votingControls, setVotingControls] = useState({
     isVotingActive: false,
     isQrGenerationActive: false,
+    isLikesActive: true,
     currentVotingRound: 1
   });
   const [votingMetrics, setVotingMetrics] = useState({
@@ -2069,6 +2070,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
       const payload = {
         is_voting_active: field === 'voting' ? value : votingControls.isVotingActive,
         is_qr_generation_active: field === 'qr' ? value : votingControls.isQrGenerationActive,
+        is_likes_active: field === 'likes' ? value : (votingControls.isLikesActive !== undefined ? votingControls.isLikesActive : true),
         current_voting_round: field === 'round' ? value : votingControls.currentVotingRound
       };
 
@@ -2087,6 +2089,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
         setVotingControls({
           isVotingActive: ctrl.is_voting_active !== undefined ? ctrl.is_voting_active : (field === 'voting' ? value : votingControls.isVotingActive),
           isQrGenerationActive: ctrl.is_qr_generation_active !== undefined ? ctrl.is_qr_generation_active : (field === 'qr' ? value : votingControls.isQrGenerationActive),
+          isLikesActive: ctrl.is_likes_active !== undefined ? ctrl.is_likes_active : (field === 'likes' ? value : votingControls.isLikesActive),
           currentVotingRound: ctrl.current_voting_round !== undefined ? ctrl.current_voting_round : (field === 'round' ? value : votingControls.currentVotingRound)
         });
         setVotingControlsSuccess(true);

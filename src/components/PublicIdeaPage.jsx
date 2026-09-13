@@ -50,6 +50,7 @@ export default function PublicIdeaPage({
   const [liking, setLiking] = useState(false)
   const [hasLiked, setHasLiked] = useState(false)
   const [isVotingActive, setIsVotingActive] = useState(false)
+  const [isLikesActive, setIsLikesActive] = useState(false)
   const [toast, setToast] = useState(null)
   const toastTimeoutRef = useRef(null)
   const visitTrackedRef = useRef(false)
@@ -57,18 +58,25 @@ export default function PublicIdeaPage({
   const rawApiUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000').trim().replace(/\/+$/, '')
   const API_BASE_URL = rawApiUrl.endsWith('/api') ? rawApiUrl.slice(0, -4) : rawApiUrl
 
-  // Authoritative Voting Controls Status
+  // Authoritative Voting & Likes Controls Status
   const fetchVotingStatus = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE_URL}/api/voting/status`)
       if (res.ok) {
         const data = await res.json()
-        if (data.success && typeof data.is_voting_active === 'boolean') {
-          setIsVotingActive(data.is_voting_active)
+        if (data.success) {
+          if (typeof data.is_voting_active === 'boolean') {
+            setIsVotingActive(data.is_voting_active)
+          }
+          if (typeof data.is_likes_active === 'boolean') {
+            setIsLikesActive(data.is_likes_active)
+          } else {
+            setIsLikesActive(false)
+          }
         }
       }
     } catch (e) {
-      console.warn('[PublicIdeaPage] Could not fetch voting status:', e.message)
+      console.warn('[PublicIdeaPage] Could not fetch voting/likes status:', e.message)
     }
   }, [API_BASE_URL])
 
@@ -220,13 +228,17 @@ export default function PublicIdeaPage({
       .channel(`rt-controls-${productId}`)
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'voting_controls' },
+        { event: '*', schema: 'public', table: 'voting_controls', filter: 'id=eq.1' },
         (payload) => {
-          if (payload.new && typeof payload.new.is_voting_active === 'boolean') {
-            setIsVotingActive(payload.new.is_voting_active)
-          } else {
-            fetchVotingStatus()
+          if (payload.new) {
+            if (typeof payload.new.is_voting_active === 'boolean') {
+              setIsVotingActive(payload.new.is_voting_active)
+            }
+            if (typeof payload.new.is_likes_active === 'boolean') {
+              setIsLikesActive(payload.new.is_likes_active)
+            }
           }
+          fetchVotingStatus()
         }
       )
       .subscribe()
@@ -241,6 +253,14 @@ export default function PublicIdeaPage({
 
   // 4. Like Submission (Public Action: +1 mark)
   const handleLike = async () => {
+    if (!isLikesActive) {
+      showToast({
+        type: 'warning',
+        title: 'LIKES CLOSED',
+        message: 'Likes are currently closed.'
+      })
+      return
+    }
     if (liking || hasLiked) return
     setLiking(true)
 
@@ -262,7 +282,14 @@ export default function PublicIdeaPage({
       const data = await res.json()
 
       if (!res.ok) {
-        if (res.status === 429) {
+        if (data?.error_code === 'LIKES_CLOSED' || res.status === 403) {
+          setIsLikesActive(false)
+          showToast({
+            type: 'warning',
+            title: 'LIKES CLOSED',
+            message: data?.message || 'Likes are currently closed.'
+          })
+        } else if (res.status === 429) {
           showToast({
             type: 'warning',
             title: 'TOO MANY REQUESTS',
@@ -272,7 +299,7 @@ export default function PublicIdeaPage({
           showToast({
             type: 'error',
             title: 'LIKE FAILED',
-            message: data.message || 'Unable to record your like at this time.'
+            message: data?.message || 'Unable to record your like at this time.'
           })
         }
         return
@@ -690,27 +717,45 @@ export default function PublicIdeaPage({
               <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto justify-end">
                 {/* LIKE BUTTON (Public - Free to All Visitors) */}
                 <motion.button
-                  whileHover={{ scale: hasLiked ? 1 : 1.02 }}
-                  whileTap={{ scale: hasLiked ? 1 : 0.96 }}
+                  whileHover={{ scale: hasLiked || !isLikesActive ? 1 : 1.02 }}
+                  whileTap={{ scale: hasLiked || !isLikesActive ? 1 : 0.96 }}
                   type="button"
                   onClick={handleLike}
-                  disabled={liking || hasLiked}
-                  aria-label={hasLiked ? 'Idea already liked (+1 point)' : liking ? 'Recording like...' : 'Like this idea (+1 point)'}
+                  disabled={!isLikesActive || liking || hasLiked}
+                  aria-label={
+                    !isLikesActive
+                      ? 'Likes are currently closed'
+                      : hasLiked
+                      ? 'Idea already liked (+1 point)'
+                      : liking
+                      ? 'Recording like...'
+                      : 'Like this idea (+1 point)'
+                  }
                   className={`w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-full px-5 py-3 text-xs font-bold shadow-md transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400 focus-visible:ring-offset-2 ${
                     hasLiked
                       ? 'bg-rose-50 text-rose-600 border border-rose-200/80 cursor-default shadow-xs'
+                      : !isLikesActive
+                      ? 'bg-slate-200 text-slate-500 border border-slate-300 hover:bg-slate-300 cursor-not-allowed'
                       : 'bg-white text-slate-700 border border-slate-300 hover:border-rose-400 hover:text-rose-600 hover:bg-rose-50/50'
                   }`}
                 >
                   <Heart
                     size={16}
                     className={`transition-colors ${
-                      hasLiked ? 'fill-rose-500 text-rose-500' : liking ? 'animate-pulse text-rose-400' : 'text-slate-400'
+                      hasLiked
+                        ? 'fill-rose-500 text-rose-500'
+                        : !isLikesActive
+                        ? 'text-slate-400'
+                        : liking
+                        ? 'animate-pulse text-rose-400'
+                        : 'text-slate-400'
                     }`}
                   />
                   <span>
                     {hasLiked
                       ? '❤️ Liked (+1)'
+                      : !isLikesActive
+                      ? '❤️ Likes Closed'
                       : liking
                       ? 'Recording...'
                       : '❤️ Like (+1)'}

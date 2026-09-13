@@ -266,7 +266,8 @@ export default function AdminVotingManagement({
     totalProducts: initialProductsCount,
     lastVoteAt: null,
     isVotingActive: false,
-    isQrGenerationActive: false
+    isQrGenerationActive: false,
+    isLikesActive: true
   });
 
   // Sync props if parent provides initial/updated counts
@@ -362,7 +363,10 @@ export default function AdminVotingManagement({
           totalProducts: typeof data.metrics.totalProducts === 'number' ? data.metrics.totalProducts : prev.totalProducts,
           lastVoteAt: data.metrics.lastVoteAt || null,
           isVotingActive: ctrlData ? Boolean(ctrlData.is_voting_active) : Boolean(data.metrics.isVotingActive),
-          isQrGenerationActive: ctrlData ? Boolean(ctrlData.is_qr_generation_active) : Boolean(data.metrics.isQrGenerationActive)
+          isQrGenerationActive: ctrlData ? Boolean(ctrlData.is_qr_generation_active) : Boolean(data.metrics.isQrGenerationActive),
+          isLikesActive: ctrlData && typeof ctrlData.is_likes_active === 'boolean'
+            ? ctrlData.is_likes_active
+            : (typeof data.metrics?.isLikesActive === 'boolean' ? data.metrics.isLikesActive : prev.isLikesActive)
         }));
       }
     } catch (err) {
@@ -382,12 +386,14 @@ export default function AdminVotingManagement({
     return () => clearInterval(timer);
   }, [fetchMetrics]);
 
-  // 2. Toggle Community Voting or QR Generation
+  // 2. Toggle Community Voting, Public Likes, or QR Generation
   const handleToggleControl = async (type, nextVal) => {
     setUpdatingControls(true);
     try {
       const payload = type === 'voting'
         ? { is_voting_active: nextVal }
+        : type === 'likes'
+        ? { is_likes_active: nextVal }
         : { is_qr_generation_active: nextVal };
 
       const result = await safeFetchJson(`${API_BASE_URL}/api/voting/admin/controls`, {
@@ -399,10 +405,13 @@ export default function AdminVotingManagement({
         setMetrics(prev => ({
           ...prev,
           isVotingActive: type === 'voting' ? nextVal : prev.isVotingActive,
+          isLikesActive: type === 'likes' ? nextVal : prev.isLikesActive,
           isQrGenerationActive: type === 'qr' ? nextVal : prev.isQrGenerationActive
         }));
         notify('success', 'Controls Saved', type === 'voting'
           ? `Community Voting is now ${nextVal ? 'OPEN' : 'CLOSED'}.`
+          : type === 'likes'
+          ? `Public Likes are now ${nextVal ? 'ON' : 'OFF'}.`
           : `Team QR Generation is now ${nextVal ? 'ON' : 'OFF'}.`
         );
       } else {
@@ -783,7 +792,7 @@ export default function AdminVotingManagement({
           </div>
 
           {/* Operational Controls Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {/* Control A: Community Voting */}
             <article className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200 flex flex-col justify-between space-y-4">
               <div>
@@ -821,7 +830,44 @@ export default function AdminVotingManagement({
               </div>
             </article>
 
-            {/* Control B: Team QR Generation */}
+            {/* Control B: Public Likes */}
+            <article className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200 flex flex-col justify-between space-y-4">
+              <div>
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-3">
+                  <h4 className="font-bold text-slate-900 flex items-center gap-2 text-sm sm:text-base">
+                    <Heart size={18} className="text-pink-600 fill-pink-500" /> Public Likes
+                  </h4>
+                  <span className={`px-2.5 py-0.5 rounded-full text-xs font-extrabold ${
+                    metrics.isLikesActive
+                      ? 'bg-pink-50 text-pink-700 ring-1 ring-pink-600/20'
+                      : 'bg-slate-100 text-slate-600'
+                  }`}>
+                    {metrics.isLikesActive ? 'ON' : 'OFF'}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  When <strong>ON</strong>, visitors and students can like ideas on the public showcase. When <strong>OFF</strong>, liking is disabled while existing like counts are safely preserved.
+                </p>
+              </div>
+
+              <div className="pt-2">
+                <button
+                  type="button"
+                  disabled={updatingControls}
+                  onClick={() => handleToggleControl('likes', !metrics.isLikesActive)}
+                  className={`w-full py-2.5 px-4 rounded-xl text-xs font-extrabold transition cursor-pointer flex items-center justify-center gap-2 shadow-sm ${
+                    metrics.isLikesActive
+                      ? 'bg-rose-600 hover:bg-rose-700 text-white'
+                      : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                  } disabled:opacity-50`}
+                >
+                  <Heart size={15} className={metrics.isLikesActive ? 'fill-white' : ''} />
+                  <span>{metrics.isLikesActive ? 'Turn Off Likes' : 'Turn On Likes'}</span>
+                </button>
+              </div>
+            </article>
+
+            {/* Control C: Team QR Generation */}
             <article className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200 flex flex-col justify-between space-y-4">
               <div>
                 <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-3">

@@ -1,10 +1,11 @@
 {
   "id": 1,
+  "qr_generation_enabled": true,
   "community_voting_enabled": true,
   "is_voting_active": true,
-  "qr_generation_enabled": false,
-  "is_qr_generation_active": false,
+  "is_qr_generation_active": true,
   "current_voting_round": 1,
-  "updated_at": "2026-09-12T17:57:12.567798+00:00",
-  "updated_by": "65162364-84e0-4e69-8bf0-932cea2e381a"
+  "updated_at": "2026-09-13T07:21:32.752745+00:00",
+  "updated_by": "65162364-84e0-4e69-8bf0-932cea2e381a",
+  "is_likes_active": false
 }
