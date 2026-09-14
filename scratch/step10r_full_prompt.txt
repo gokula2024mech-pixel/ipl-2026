@@ -1,0 +1,549 @@
+<USER_REQUEST>
+STEP 10R — FIX ADMIN TEAMS LEADER/MEMBER DATA USING BATCHED MEMBERS + REGISTRATION FALLBACK
+
+The STEP 10Q audit is approved.
+
+Implement the minimal safe fix.
+
+==================================================
+ROOT CAUSE CONFIRMED
+==================================================
+
+public.product_members contains 1,027+ rows.
+
+AdminDashboard.jsx currently fetches:
+
+supabase.from("product_members").select("*")
+
+without range batching.
+
+Supabase/PostgREST returns only the first 1,000 rows.
+
+The missing final 27 rows belong to:
+
+IPL26-0494 — SKYCREEPERS
+IPL26-0495 — Future Techies
+IPL26-0496 — NOVACORE 2.0
+IPL26-0497 — Robosync
+IPL26-0498 — THE GOLDEN RATIOS
+IPL26-0499 — Auranet
+IPL26-0500 — Saplok
+IPL26-0501 — Techventures
+IPL26-0502 — Electro nova
+
+The database itself is intact.
+
+registrations already contains complete leader/member information for all 342 teams.
+
+==================================================
+1. BATCH product_members
+==================================================
+
+In:
+
+src/components/AdminDashboard.jsx
+
+find the product_members query inside fetchDashboardData().
+
+Replace the single unbounded query:
+
+supabase.from("product_members").select("*")
+
+with safe range batching.
+
+Use the same proven batching pattern already used in:
+
+backend/routes/votingRoutes.js
+
+Fetch:
+
+0–999
+1000–1999
+etc.
+
+Continue until the returned batch contains fewer than 1,000 rows.
+
+Do NOT assume there will only be 1,027 rows.
+
+The implementation must continue working if the table grows to:
+
+2,000
+3,000
+5,000+
+
+records.
+
+Preserve all existing columns.
+
+==================================================
+2. BATCH profiles
+==================================================
+
+The audit also found profiles currently contains approximately 1,900 rows.
+
+If AdminDashboard.jsx fetches profiles using an unbatched:
+
+supabase.from("profiles").select("*")
+
+query, change that query to the same safe range-batched approach.
+
+Again:
+
+Do not hardcode 1,900.
+
+Fetch all available records.
+
+Do not change profile data.
+
+==================================================
+3. REGISTRATION FALLBACK
+==================================================
+
+In the normalizedRecords mapping in:
+
+src/components/AdminDashboard.jsx
+
+preserve the existing product_members-based mapping.
+
+Add registrations fallback.
+
+Conceptually:
+
+leader_name:
+leader?.member_name || origReg?.leader_name || ""
+
+leader_email:
+leader?.member_email || origReg?.leader_email || ""
+
+leader_mobile:
+leader?.member_mobile || origReg?.leader_mobile || ""
+
+leader_department:
+resolved leader department
+OR origReg?.leader_department
+OR ""
+
+member2_name:
+m2?.member_name || origReg?.member2_name || ""
+
+member2_email:
+m2?.member_email || origReg?.member2_email || ""
+
+member2_mobile:
+m2?.member_mobile || origReg?.member2_mobile || ""
+
+member2_department:
+resolved member2 department
+OR origReg?.member2_department
+OR ""
+
+member3_name:
+m3?.member_name || origReg?.member3_name || ""
+
+member3_email:
+m3?.member_email || origReg?.member3_email || ""
+
+member3_mobile:
+m3?.member_mobile || origReg?.member3_mobile || ""
+
+member3_department:
+resolved member3 department
+OR origReg?.member3_department
+OR ""
+
+IMPORTANT:
+
+Do NOT replace product_members.
+
+product_members remains the primary member source.
+
+registrations is the fallback.
+
+==================================================
+4. DEPARTMENT RESOLUTION
+==================================================
+
+Preserve the current department resolution behavior.
+
+If product_members department information is available, keep using it.
+
+If unavailable, use:
+
+origReg.leader_department
+origReg.member2_department
+origReg.member3_department
+
+Do not change department names or canonical department mappings.
+
+==================================================
+5. DO NOT CREATE TEAM-SPECIFIC PATCHES
+==================================================
+
+Do NOT hardcode:
+
+IPL26-0494
+IPL26-0495
+etc.
+
+The solution must work generically for every team.
+
+==================================================
+6. DO NOT CHANGE THE DATA MODEL
+==================================================
+
+NO SQL.
+
+NO migrations.
+
+NO database modifications.
+
+NO updates/inserts/deletes.
+
+NO RLS changes.
+
+NO RPC changes.
+
+The database is already correct.
+
+==================================================
+7. PRESERVE ADMIN TEAMS FEATURES
+==================================================
+
+Do NOT break:
+
+- Search
+- Department filter
+- Innovation Domain filter
+- TRL filter
+- Sort By
+- ASC/DESC
+- 10-item pagination
+- Export Teams
+- field-selection export modal
+- Team count
+- Team rows
+- Project title
+- Domain
+- TRL
+- Mentor/Faculty
+- existing styling
+
+The existing pipeline must remain:
+
+Full registrations
+→ enrich team/member data
+→ search
+→ filters
+→ sort
+→ pagination
+
+==================================================
+8. EXCEL EXPORT
+==================================================
+
+Because Admin Teams Excel export uses normalized records, verify that the repaired leader/member fields also reach the export.
+
+Do NOT create a separate special Excel data source.
+
+The same corrected normalized records should feed:
+
+UI
+and
+Excel export.
+
+==================================================
+9. VERIFY THE 9 AFFECTED TEAMS
+==================================================
+
+After implementation, verify these teams:
+
+IPL26-0494 — SKYCREEPERS
+Leader: Vidhuran C
+Member 2: VasanthaKumar A
+Member 3: Vaithilingam S
+
+IPL26-0495 — Future Techies
+Leader: Shruti Kumari Jaiswal
+Member 2: Shiv Kumar Gupta
+Member 3: Anjali kumari Rauniyar
+
+IPL26-0496 — NOVACORE 2.0
+Leader: Jayanarayan Menon Nettath
+Member 2: Jeyandan A
+Member 3: Jeevanandh B
+
+IPL26-0497 — Robosync
+Leader: Shiv Kumar Gupta
+Member 2: Shruti Kumari Jaiswal
+Member 3: Om Prakash sah teli
+
+IPL26-0498 — THE GOLDEN RATIOS
+Leader: MOHAMMED AARIF H
+Member 2: AJENDRA A S
+Member 3: DEETHYA S L
+
+IPL26-0499 — Auranet
+Leader: NIRMAL S
+Member 2: Vengadesh P
+Member 3: Dhivithkumar R
+
+IPL26-0500 — Saplok
+Leader: Prasanna Murthy N
+Member 2: Anirudh U
+Member 3: SMRITHI L
+
+IPL26-0501 — Techventures
+Leader: Mithraja M
+Member 2: Ashmika
+Member 3: Sanjay
+
+IPL26-0502 — Electro nova
+Leader: DARSHAN P.M
+Member 2: Naveen kumar ns
+Member 3: Priyanka M
+
+These are verification values from the diagnostic only.
+
+Do not hardcode them.
+
+==================================================
+10. VERIFY WORKING TEAM
+==================================================
+
+Also verify:
+
+IPL26-0493 — Vision Vault
+
+continues to show:
+
+Leader:
+Nikitha shree.S
+
+Member 2:
+Manoranjitham S
+
+There must be no regression to already-working teams.
+
+==================================================
+11. VERIFY ALL 342 TEAMS
+==================================================
+
+Run a normalization-level verification:
+
+342 registrations
+
+For every team:
+
+- leader information should resolve where present
+- member 2 should resolve where present
+- member 3 should resolve where present
+
+Report:
+
+Teams with missing leader:
+X
+
+Teams with missing member 2:
+X
+
+Teams with missing member 3:
+X
+
+Expected:
+
+0 unexpected missing records.
+
+A genuinely empty member slot is acceptable only when the registration itself has no member in that slot.
+
+==================================================
+12. VERIFY PRODUCT MEMBERS COUNT
+==================================================
+
+Confirm the batched query retrieves:
+
+ALL product_members records.
+
+Do not hardcode 1,027 as the expected final count.
+
+Report actual count.
+
+==================================================
+13. VERIFY PROFILES COUNT
+==================================================
+
+Confirm the batched profiles query retrieves:
+
+ALL profiles.
+
+Report actual count.
+
+==================================================
+14. VERIFY ADMIN TEAMS UI
+==================================================
+
+Run the app and inspect:
+
+Admin → Teams
+
+Confirm the previously broken rows now display:
+
+Team Leader
+Members
+
+instead of:
+
+—
+
+or blank.
+
+==================================================
+15. VERIFY FILTER/SORT/PAGINATION
+==================================================
+
+Test:
+
+Search
+Department
+Innovation Domain
+TRL
+
+Sorting:
+
+Team Name
+Registration ID
+Innovation Domain
+Department
+TRL
+Date
+
+Both ASC/DESC where applicable.
+
+Pagination remains 10/page.
+
+Member/leader data must remain attached after:
+
+filtering
+sorting
+page changes.
+
+==================================================
+16. VERIFY EXPORT
+==================================================
+
+Open:
+
+Admin → Teams
+
+Select a team containing previously missing member data.
+
+Use:
+
+Export Teams
+
+Download XLSX.
+
+Verify leader/member columns contain the correct data.
+
+Do not export only the current page.
+
+Existing filtered/unpaginated export behavior must remain unchanged.
+
+==================================================
+17. AUTOMATED TEST
+==================================================
+
+Create:
+
+scratch/test-step10r-admin-team-members.cjs
+
+Test:
+
+1. product_members batching retrieves all records.
+2. profiles batching retrieves all records.
+3. IPL26-0493 resolves correctly.
+4. IPL26-0494 resolves correctly.
+5. IPL26-0495 resolves correctly.
+6. IPL26-0496 resolves correctly.
+7. IPL26-0497 resolves correctly.
+8. IPL26-0498 resolves correctly.
+9. IPL26-0499 resolves correctly.
+10. IPL26-0500 resolves correctly.
+11. IPL26-0501 resolves correctly.
+12. IPL26-0502 resolves correctly.
+13. No unexpected missing leader across 342 teams.
+14. No unexpected missing member 2 across 342 teams.
+15. No unexpected missing member 3 across 342 teams.
+16. Existing team filters still work.
+17. Existing sorting still works.
+18. Existing pagination still works.
+19. Export uses corrected normalized data.
+20. No database mutation occurs.
+
+==================================================
+18. BUILD
+==================================================
+
+Run:
+
+npm run build
+
+Must pass with:
+
+0 errors.
+
+==================================================
+19. SAFETY
+==================================================
+
+NO SQL.
+
+NO DATABASE CHANGES.
+
+NO DATA MODIFICATION.
+
+NO GOOGLE SHEET CHANGES.
+
+NO GOOGLE DRIVE CHANGES.
+
+NO PUBLIC PAGE CHANGES.
+
+NO VOTING LOGIC CHANGES.
+
+NO PHASE 3 CHANGES.
+
+NO LINKEDIN CHANGES.
+
+NO COMMIT.
+
+NO PUSH.
+
+NO DEPLOYMENT.
+
+==================================================
+FINAL REPORT
+==================================================
+
+Report:
+
+1. Exact files modified
+2. product_members batching result
+3. profiles batching result
+4. registration fallback result
+5. 9 affected teams verification
+6. All-342-team missing-data verification
+7. Admin Teams UI verification
+8. Export verification
+9. Filter/sort/pagination regression
+10. Tests passed/failed
+11. Build result
+12. Database changes: MUST SAY NONE
+13. Deployment: MUST SAY NONE
+14. Commit/push: MUST SAY NONE
+
+Final status:
+
+STEP 10R COMPLETE — ADMIN TEAM LEADER/MEMBER DATA FIXED — ALL TEAMS VERIFIED — NO DATABASE CHANGES — NO DEPLOYMENT — NO COMMIT/PUSH
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-09-14T19:06:54+05:30.
+</ADDITIONAL_METADATA>

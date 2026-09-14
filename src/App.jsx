@@ -870,6 +870,8 @@ export default function App() {
     return (
       <AdminDashboard
         user={session.user}
+        session={session}
+        token={session?.access_token}
         profile={profile}
         onViewPublicPortal={() => setViewMode("public")}
       />

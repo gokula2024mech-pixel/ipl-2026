@@ -1,0 +1,175 @@
+<USER_REQUEST>
+STEP 10R — FIX ADMIN TEAMS LEADER/MEMBER DATA USING BATCHED MEMBERS + REGISTRATION FALLBACK
+
+The STEP 10Q audit is approved.
+
+Implement the minimal safe fix.
+
+==================================================
+ROOT CAUSE CONFIRMED
+==================================================
+
+public.product_members contains 1,027+ rows.
+
+AdminDashboard.jsx currently fetches:
+
+supabase.from("product_members").select("*")
+
+without range batching.
+
+Supabase/PostgREST returns only the first 1,000 rows.
+
+The missing final 27 rows belong to:
+
+IPL26-0494 — SKYCREEPERS
+IPL26-0495 — Future Techies
+IPL26-0496 — NOVACORE 2.0
+IPL26-0497 — Robosync
+IPL26-0498 — THE GOLDEN RATIOS
+IPL26-0499 — Auranet
+IPL26-0500 — Saplok
+IPL26-0501 — Techventures
+IPL26-0502 — Electro nova
+
+The database itself is intact.
+
+registrations already contains complete leader/member information for all 342 teams.
+
+==================================================
+1. BATCH product_members
+==================================================
+
+In:
+
+src/components/AdminDashboard.jsx
+
+find the product_members query inside fetchDashboardData().
+
+Replace the single unbounded query:
+
+supabase.from("product_members").select("*")
+
+with safe range batching.
+
+Use the same proven batching pattern already used in:
+
+backend/routes/votingRoutes.js
+
+Fetch:
+
+0–999
+1000–1999
+etc.
+
+Continue until the returned batch contains fewer than 1,000 rows.
+
+Do NOT assume there will only be 1,027 rows.
+
+The implementation must continue working if the table grows to:
+
+2,000
+3,000
+5,000+
+
+records.
+
+Preserve all existing columns.
+
+==================================================
+2. BATCH profiles
+==================================================
+
+The audit also found profiles currently contains approximately 1,900 rows.
+
+If AdminDashboard.jsx fetches profiles using an unbatched:
+
+supabase.from("profiles").select("*")
+
+query, change that query to the same safe range-batched
+<truncated 7545 bytes>
+ves correctly.
+5. IPL26-0495 resolves correctly.
+6. IPL26-0496 resolves correctly.
+7. IPL26-0497 resolves correctly.
+8. IPL26-0498 resolves correctly.
+9. IPL26-0499 resolves correctly.
+10. IPL26-0500 resolves correctly.
+11. IPL26-0501 resolves correctly.
+12. IPL26-0502 resolves correctly.
+13. No unexpected missing leader across 342 teams.
+14. No unexpected missing member 2 across 342 teams.
+15. No unexpected missing member 3 across 342 teams.
+16. Existing team filters still work.
+17. Existing sorting still works.
+18. Existing pagination still works.
+19. Export uses corrected normalized data.
+20. No database mutation occurs.
+
+==================================================
+18. BUILD
+==================================================
+
+Run:
+
+npm run build
+
+Must pass with:
+
+0 errors.
+
+==================================================
+19. SAFETY
+==================================================
+
+NO SQL.
+
+NO DATABASE CHANGES.
+
+NO DATA MODIFICATION.
+
+NO GOOGLE SHEET CHANGES.
+
+NO GOOGLE DRIVE CHANGES.
+
+NO PUBLIC PAGE CHANGES.
+
+NO VOTING LOGIC CHANGES.
+
+NO PHASE 3 CHANGES.
+
+NO LINKEDIN CHANGES.
+
+NO COMMIT.
+
+NO PUSH.
+
+NO DEPLOYMENT.
+
+==================================================
+FINAL REPORT
+==================================================
+
+Report:
+
+1. Exact files modified
+2. product_members batching result
+3. profiles batching result
+4. registration fallback result
+5. 9 affected teams verification
+6. All-342-team missing-data verification
+7. Admin Teams UI verification
+8. Export verification
+9. Filter/sort/pagination regression
+10. Tests passed/failed
+11. Build result
+12. Database changes: MUST SAY NONE
+13. Deployment: MUST SAY NONE
+14. Commit/push: MUST SAY NONE
+
+Final status:
+
+STEP 10R COMPLETE — ADMIN TEAM LEADER/MEMBER DATA FIXED — ALL TEAMS VERIFIED — NO DATABASE CHANGES — NO DEPLOYMENT — NO COMMIT/PUSH
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-09-14T19:06:54+05:30.
+</ADDITIONAL_METADATA>

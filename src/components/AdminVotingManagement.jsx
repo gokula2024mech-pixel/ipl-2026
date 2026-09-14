@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo,useRef } from 'react';
+import { supabase } from '../supabaseClient';
 import * as XLSX from 'xlsx';
 import {
   Vote,
@@ -18,6 +19,10 @@ import {
   RefreshCw,
   ExternalLink,
   ChevronRight,
+  ChevronLeft,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
   Layers,
   FileSpreadsheet,
   HelpCircle,
@@ -27,7 +32,8 @@ import {
   BarChart3,
   Activity,
   TrendingUp,
-  Upload
+  Upload,
+  X
 } from 'lucide-react';
 
 const DEPARTMENTS = [
@@ -48,8 +54,7 @@ const TABS = [
   { id: 'overview', label: 'Overview', mobileLabel: 'Overview', icon: Layers },
   { id: 'analytics', label: 'Engagement Analytics', mobileLabel: 'Analytics', icon: BarChart3 },
   { id: 'voter_reports', label: 'Voter Reports', mobileLabel: 'Voter Reports', icon: Users },
-  { id: 'team_reports', label: 'Product / Team Reports', mobileLabel: 'Team Reports', icon: Building2 },
-  { id: 'export_drive', label: 'Export & Drive', mobileLabel: 'Export & Drive', icon: FileSpreadsheet }
+  { id: 'team_reports', label: 'Product / Team Reports', mobileLabel: 'Team Reports', icon: Building2 }
 ];
 
 /**
@@ -213,6 +218,283 @@ async function safeFetchJson(url, options = {}) {
   }
 }
 
+/**
+ * Intelligent pagination window generator matching AdminSubmissionsReviewCenter design
+ */
+function getVisiblePages(current, total) {
+  if (total <= 7) {
+    return Array.from({ length: total }, (_, i) => i + 1);
+  }
+  const pages = [];
+  if (current <= 4) {
+    for (let i = 1; i <= 5; i++) pages.push(i);
+    pages.push('...');
+    pages.push(total);
+  } else if (current >= total - 3) {
+    pages.push(1);
+    pages.push('...');
+    for (let i = total - 4; i <= total; i++) pages.push(i);
+  } else {
+    pages.push(1);
+    pages.push('...');
+    pages.push(current - 1);
+    pages.push(current);
+    pages.push(current + 1);
+    pages.push('...');
+    pages.push(total);
+  }
+  return pages;
+}
+
+// ==============================================================
+// FIELD-SELECTIVE ADMIN EXCEL EXPORT CATALOGS & REAL XLSX GENERATOR
+// ==============================================================
+
+export const VOTER_EXPORT_FIELDS = [
+  {
+    group: 'VOTER PROFILE',
+    fields: [
+      { key: 'voterName', label: 'Voter Name', defaultChecked: true, width: 24 },
+      { key: 'voterEmail', label: 'Voter Email', defaultChecked: true, width: 30 },
+      { key: 'voterDepartment', label: 'Voter Department', defaultChecked: true, width: 34 },
+      { key: 'voterUserId', label: 'Voter User ID', defaultChecked: false, width: 38 },
+      { key: 'totalVotes', label: 'Total Votes Cast', defaultChecked: true, width: 16 }
+    ]
+  },
+  {
+    group: 'VOTE DETAILS',
+    fields: [
+      { key: 'voteId', label: 'Vote ID', defaultChecked: false, width: 38 },
+      { key: 'teamId', label: 'Team Registration ID', defaultChecked: true, width: 22 },
+      { key: 'teamName', label: 'Team Name', defaultChecked: true, width: 28 },
+      { key: 'teamDepartment', label: 'Team Department', defaultChecked: true, width: 34 },
+      { key: 'productTitle', label: 'Product / Idea Title', defaultChecked: true, width: 34 },
+      { key: 'productId', label: 'Product ID', defaultChecked: false, width: 38 },
+      { key: 'votedAt', label: 'Vote Timestamp (IST)', defaultChecked: true, width: 24 }
+    ]
+  }
+];
+
+export const TEAM_EXPORT_FIELDS = [
+  {
+    group: 'TEAM IDENTIFICATION',
+    fields: [
+      { key: 'registrationId', label: 'Registration ID', defaultChecked: true, width: 20 },
+      { key: 'teamName', label: 'Team Name', defaultChecked: true, width: 28 },
+      { key: 'department', label: 'Department', defaultChecked: true, width: 34 },
+      { key: 'teamId', label: 'Team UUID', defaultChecked: false, width: 38 }
+    ]
+  },
+  {
+    group: 'PRODUCT & INNOVATION',
+    fields: [
+      { key: 'productTitle', label: 'Product Title', defaultChecked: true, width: 34 },
+      { key: 'innovationDomain', label: 'Innovation Domain', defaultChecked: true, width: 26 },
+      { key: 'productId', label: 'Product UUID', defaultChecked: false, width: 38 },
+      { key: 'productVotes', label: 'Product Votes', defaultChecked: true, width: 16 },
+      { key: 'productScore', label: 'Product Score', defaultChecked: true, width: 16 }
+    ]
+  },
+  {
+    group: 'VOTING TOTALS & SHORTLIST',
+    fields: [
+      { key: 'totalVotes', label: 'Total Team Votes', defaultChecked: true, width: 18 },
+      { key: 'score', label: 'Total Team Score', defaultChecked: true, width: 18 },
+      { key: 'isShortlisted', label: 'Shortlist Status', defaultChecked: true, width: 18 },
+      { key: 'shortlistCategory', label: 'Shortlist Category', defaultChecked: true, width: 22 }
+    ]
+  }
+];
+
+/**
+ * Genuine OOXML Excel generator (.xlsx) using bundled SheetJS
+ */
+function exportToRealXlsx({ filename, sheetName = 'Report', headers, rows, colWidths = [] }) {
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+
+  if (colWidths.length > 0) {
+    ws['!cols'] = colWidths.map(w => ({ wch: w || 20 }));
+  }
+
+  ws['!views'] = [{ state: 'frozen', ySplit: 1 }];
+
+  if (rows.length > 0) {
+    const lastColIndex = headers.length - 1;
+    const lastColLetter = XLSX.utils.encode_col(lastColIndex);
+    ws['!autofilter'] = { ref: `A1:${lastColLetter}${rows.length + 1}` };
+  }
+
+  XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+  const blob = new Blob([wbout], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * Reusable Field-Selection Export Modal
+ */
+function FieldSelectionExportModal({
+  isOpen,
+  onClose,
+  title,
+  subtitle,
+  fieldGroups,
+  selectedFields,
+  onToggleField,
+  onSelectAll,
+  onClearAll,
+  onDownload,
+  totalRecordsCount,
+  recordTypeName = 'records'
+}) {
+  if (!isOpen) return null;
+
+  const totalFieldsCount = fieldGroups.reduce((acc, g) => acc + g.fields.length, 0);
+  const selectedCount = selectedFields.size;
+  const isAllSelected = selectedCount === totalFieldsCount;
+  const isNoneSelected = selectedCount === 0;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in"
+      role="dialog"
+      aria-modal="true"
+    >
+      <div
+        className="absolute inset-0"
+        onClick={onClose}
+      />
+
+      <div className="relative w-full max-w-xl sm:max-w-2xl rounded-2xl bg-white shadow-2xl ring-1 ring-slate-200 flex flex-col max-h-[90vh] overflow-hidden">
+        {/* Header */}
+        <div className="p-5 sm:p-6 border-b border-slate-100 flex items-start justify-between bg-white shrink-0">
+          <div>
+            <h3 className="font-heading text-lg font-black text-[#0B1B3A] tracking-tight">
+              {title}
+            </h3>
+            <p className="text-xs text-slate-500 mt-1">
+              {subtitle}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition cursor-pointer"
+            aria-label="Close modal"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Toolbar: Select All / Clear All & Counter */}
+        <div className="px-5 sm:px-6 py-3 bg-slate-50/80 border-b border-slate-100 flex items-center justify-between gap-3 shrink-0">
+          <div className="flex items-center gap-3 text-xs font-bold">
+            <button
+              type="button"
+              onClick={onSelectAll}
+              className={`text-primary hover:underline cursor-pointer ${isAllSelected ? 'opacity-50 pointer-events-none' : ''}`}
+            >
+              Select All
+            </button>
+            <span className="text-slate-300">|</span>
+            <button
+              type="button"
+              onClick={onClearAll}
+              className={`text-slate-500 hover:underline cursor-pointer ${isNoneSelected ? 'opacity-50 pointer-events-none' : ''}`}
+            >
+              Clear All
+            </button>
+          </div>
+
+          <span className="text-xs font-semibold text-slate-600 bg-white px-2.5 py-1 rounded-full border border-slate-200">
+            Selected: <span className="font-bold text-slate-900">{selectedCount}</span> / {totalFieldsCount} fields
+          </span>
+        </div>
+
+        {/* Body (Scrollable field groups) */}
+        <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-6">
+          {fieldGroups.map(group => (
+            <div key={group.group} className="space-y-3">
+              <h4 className="text-[11px] font-black text-slate-400 tracking-wider uppercase border-b border-slate-100 pb-1.5">
+                {group.group}
+              </h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {group.fields.map(f => {
+                  const checked = selectedFields.has(f.key);
+                  return (
+                    <label
+                      key={f.key}
+                      className={`flex items-start gap-2.5 p-2.5 rounded-xl border transition cursor-pointer select-none ${
+                        checked
+                          ? 'bg-blue-50/40 border-primary/30 text-slate-900'
+                          : 'bg-white border-slate-200/80 text-slate-600 hover:border-slate-300'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => onToggleField(f.key)}
+                        className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary cursor-pointer mt-0.5"
+                      />
+                      <span className="text-xs font-semibold leading-snug">
+                        {f.label}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+
+          {totalRecordsCount === 0 && (
+            <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800 flex items-center gap-2">
+              <AlertCircle size={16} className="text-amber-600 shrink-0" />
+              <span>No matching records to export based on current search & filter criteria.</span>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="p-4 sm:p-5 border-t border-slate-100 bg-slate-50/80 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
+          <div className="text-center sm:text-left text-xs font-semibold text-slate-500">
+            <span className="font-bold text-slate-900">{selectedCount}</span> fields selected •{' '}
+            <span className="font-bold text-slate-900">{totalRecordsCount}</span> {recordTypeName} to export
+          </div>
+
+          <div className="flex items-center gap-2.5 w-full sm:w-auto">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 sm:flex-none px-4 py-2 rounded-xl border border-slate-300 bg-white text-xs font-bold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={isNoneSelected || totalRecordsCount === 0}
+              onClick={onDownload}
+              className="flex-1 sm:flex-none px-5 py-2 rounded-xl text-xs font-bold text-white bg-primary hover:bg-blue-900 transition cursor-pointer shadow-sm disabled:bg-slate-300 disabled:cursor-not-allowed disabled:shadow-none flex items-center justify-center gap-1.5"
+            >
+              <Download size={13} />
+              <span>Download Excel (.xlsx)</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function AdminVotingManagement({
   token,
   user,
@@ -231,7 +513,7 @@ export default function AdminVotingManagement({
   const [subTab, setSubTab] = useState(() => {
     try {
       const cached = sessionStorage.getItem('admin_voting_subtab');
-      if (cached && ['overview', 'analytics', 'voter_reports', 'team_reports', 'export_drive'].includes(cached)) {
+      if (cached && ['overview', 'analytics', 'voter_reports', 'team_reports'].includes(cached)) {
         return cached;
       }
       return 'overview';
@@ -247,12 +529,29 @@ export default function AdminVotingManagement({
     } catch {}
   };
 
+  // Auth Token Resolution & Fallback
+  const [activeAuthToken, setActiveAuthToken] = useState(token || '');
+
+  useEffect(() => {
+    if (token) {
+      setActiveAuthToken(token);
+    } else {
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        if (session?.access_token) {
+          setActiveAuthToken(session.access_token);
+        }
+      });
+    }
+  }, [token]);
+
+  const effectiveToken = token || activeAuthToken;
+
   // Auth Header Helper
   const authHeaders = useMemo(() => {
     const headers = { 'Content-Type': 'application/json' };
-    if (token) headers['Authorization'] = `Bearer ${token}`;
+    if (effectiveToken) headers['Authorization'] = `Bearer ${effectiveToken}`;
     return headers;
-  }, [token]);
+  }, [effectiveToken]);
 
   // Overview Metrics State
   const [metrics, setMetrics] = useState({
@@ -295,25 +594,32 @@ export default function AdminVotingManagement({
   const [exportingAnalytics, setExportingAnalytics] = useState(false);
   const [exportingAnalyticsXlsx, setExportingAnalyticsXlsx] = useState(false);
 
-  // Voter Reports State
+  // Voter Reports State (Admin Only Filter/Sort/Pagination)
   const [voterSearchQuery, setVoterSearchQuery] = useState('');
+  const [voterDeptFilter, setVoterDeptFilter] = useState('All Departments');
+  const [voterActivityFilter, setVoterActivityFilter] = useState('all'); // 'all' | 'multiple' | 'single'
+  const [voterSortBy, setVoterSortBy] = useState('votes'); // 'votes' | 'name' | 'email' | 'date'
+  const [voterSortOrder, setVoterSortOrder] = useState('desc'); // 'desc' | 'asc'
+  const [voterCurrentPage, setVoterCurrentPage] = useState(1);
   const [votersList, setVotersList] = useState([]);
   const [loadingVoters, setLoadingVoters] = useState(false);
   const [selectedVoter, setSelectedVoter] = useState(null);
   const [loadingVoterDetail, setLoadingVoterDetail] = useState(false);
 
-  // Team Reports State
+  // Team Reports State (Admin Only Filter/Sort/Pagination)
   const [teamSearchQuery, setTeamSearchQuery] = useState('');
   const [teamDeptFilter, setTeamDeptFilter] = useState('All Departments');
+  const [teamShortlistFilter, setTeamShortlistFilter] = useState('all'); // 'all' | 'shortlisted' | 'non_shortlisted'
+  const [teamVotingStatusFilter, setTeamVotingStatusFilter] = useState('all'); // 'all' | 'with_votes' | 'zero_votes'
+  const [teamSortBy, setTeamSortBy] = useState('votes'); // 'votes' | 'score' | 'team_name' | 'product_title' | 'registration_id'
+  const [teamSortOrder, setTeamSortOrder] = useState('desc'); // 'desc' | 'asc'
+  const [teamCurrentPage, setTeamCurrentPage] = useState(1);
   const [teamsList, setTeamsList] = useState([]);
   const [loadingTeams, setLoadingTeams] = useState(false);
   const [selectedTeam, setSelectedTeam] = useState(null);
+  const [loadingTeamDetail, setLoadingTeamDetail] = useState(false);
+  const [selectedTeamVoterPage, setSelectedTeamVoterPage] = useState(1);
 
-  // Export & Drive State
-  const [exportingType, setExportingType] = useState(null);
-  const [uploadingDriveType, setUploadingDriveType] = useState(null);
-  const [reportHistory, setReportHistory] = useState([]);
-  const [loadingHistory, setLoadingHistory] = useState(false);
 
   // Phase 3 Shortlist Management State (STEP 10E)
   const [shortlistStatus, setShortlistStatus] = useState(null);
@@ -641,6 +947,8 @@ This will replace the active shortlist with ${shortlistPreview.valid_registratio
 
   const handleSelectTeam = async (team) => {
     setSelectedTeam(team);
+    setSelectedTeamVoterPage(1);
+    setLoadingTeamDetail(true);
     try {
       const result = await safeFetchJson(`${API_BASE_URL}/api/voting/admin/team-reports?team_id=${encodeURIComponent(team.id)}`, { headers: authHeaders });
       if (result.ok && result.data?.success && result.data?.team) {
@@ -651,26 +959,11 @@ This will replace the active shortlist with ${shortlistPreview.valid_registratio
     } catch (err) {
       console.warn('[AdminVotingManagement] Failed to fetch team detail:', err);
       notify('error', 'Team Detail Error', err.message);
+    } finally {
+      setLoadingTeamDetail(false);
     }
   };
 
-  // 5. Fetch Report History
-  const fetchReportHistory = useCallback(async () => {
-    setLoadingHistory(true);
-    try {
-      const result = await safeFetchJson(`${API_BASE_URL}/api/voting/admin/report-history`, { headers: authHeaders });
-      if (result.ok && result.data?.success) {
-        setReportHistory(result.data.reports || []);
-      } else if (!result.ok) {
-        notify('error', 'Report History Error', result.message);
-      }
-    } catch (err) {
-      console.warn('[AdminVotingManagement] Failed to fetch report history:', err);
-      notify('error', 'Report History Error', err.message);
-    } finally {
-      setLoadingHistory(false);
-    }
-  }, [API_BASE_URL, authHeaders, notify]);
 
   // 5b. Fetch Engagement Analytics
   const fetchAnalytics = useCallback(async (overrideRange) => {
@@ -753,74 +1046,451 @@ This will replace the active shortlist with ${shortlistPreview.valid_registratio
     );
   }, [analyticsIdeas, analyticsSearchQuery]);
 
+  // ==============================================================
+  // VOTER REPORTS: FILTER, SORT & PAGINATION (ADMIN ONLY)
+  // ==============================================================
+  const VOTERS_PER_PAGE = 20;
+
+  // Reset voter pagination when search, filter, or sort changes
+  useEffect(() => {
+    setVoterCurrentPage(1);
+  }, [voterSearchQuery, voterDeptFilter, voterActivityFilter, voterSortBy, voterSortOrder]);
+
+  const filteredAndSortedVoters = useMemo(() => {
+    let list = [...votersList];
+
+    // 1. Search filter
+    if (voterSearchQuery && voterSearchQuery.trim()) {
+      const q = voterSearchQuery.trim().toLowerCase();
+      list = list.filter(v =>
+        (v.name || '').toLowerCase().includes(q) ||
+        (v.email || '').toLowerCase().includes(q) ||
+        (v.department || '').toLowerCase().includes(q) ||
+        (v.userId || '').toLowerCase().includes(q)
+      );
+    }
+
+    // 2. Department filter
+    if (voterDeptFilter && voterDeptFilter !== 'All Departments') {
+      const dNorm = voterDeptFilter.trim().toLowerCase();
+      list = list.filter(v => (v.department || '').toLowerCase().includes(dNorm));
+    }
+
+    // 3. Vote activity filter
+    if (voterActivityFilter === 'multiple') {
+      list = list.filter(v => (v.totalVotes || 0) > 1);
+    } else if (voterActivityFilter === 'single') {
+      list = list.filter(v => (v.totalVotes || 0) === 1);
+    }
+
+    // 4. Sorting (authoritative numeric / alphabetical comparison)
+    list.sort((a, b) => {
+      let diff = 0;
+      if (voterSortBy === 'votes') {
+        diff = (b.totalVotes || 0) - (a.totalVotes || 0);
+      } else if (voterSortBy === 'name') {
+        diff = (a.name || '').localeCompare(b.name || '');
+      } else if (voterSortBy === 'email') {
+        diff = (a.email || '').localeCompare(b.email || '');
+      } else if (voterSortBy === 'date') {
+        const dateA = a.latestVoteAt || a.history?.[0]?.votedAt || 0;
+        const dateB = b.latestVoteAt || b.history?.[0]?.votedAt || 0;
+        diff = new Date(dateB).getTime() - new Date(dateA).getTime();
+      }
+      return voterSortOrder === 'asc' ? -diff : diff;
+    });
+
+    return list;
+  }, [votersList, voterSearchQuery, voterDeptFilter, voterActivityFilter, voterSortBy, voterSortOrder]);
+
+  const totalVotersCount = filteredAndSortedVoters.length;
+  const totalVoterPages = Math.max(1, Math.ceil(totalVotersCount / VOTERS_PER_PAGE));
+  const safeVoterCurrentPage = Math.min(Math.max(1, voterCurrentPage), totalVoterPages);
+
+  const paginatedVoters = useMemo(() => {
+    const start = (safeVoterCurrentPage - 1) * VOTERS_PER_PAGE;
+    return filteredAndSortedVoters.slice(start, start + VOTERS_PER_PAGE);
+  }, [filteredAndSortedVoters, safeVoterCurrentPage]);
+
+  const voterStartIndexDisplay = totalVotersCount === 0 ? 0 : (safeVoterCurrentPage - 1) * VOTERS_PER_PAGE + 1;
+  const voterEndIndexDisplay = Math.min(safeVoterCurrentPage * VOTERS_PER_PAGE, totalVotersCount);
+
+  // ==============================================================
+  // PRODUCT / TEAM REPORTS: FILTER, SORT & PAGINATION (ADMIN ONLY)
+  // ==============================================================
+  const TEAMS_PER_PAGE = 20;
+
+  // Reset team and voter pagination when search, filter, or sort changes
+  useEffect(() => {
+    setTeamCurrentPage(1);
+    setSelectedTeamVoterPage(1);
+  }, [teamSearchQuery, teamDeptFilter, teamShortlistFilter, teamVotingStatusFilter, teamSortBy, teamSortOrder]);
+
+  const filteredAndSortedTeams = useMemo(() => {
+    let list = [...teamsList];
+
+    // 1. Search
+    if (teamSearchQuery && teamSearchQuery.trim()) {
+      const q = teamSearchQuery.trim().toLowerCase();
+      list = list.filter(t =>
+        (t.teamName || '').toLowerCase().includes(q) ||
+        (t.registrationId || '').toLowerCase().includes(q) ||
+        (t.id || '').toLowerCase().includes(q) ||
+        (t.department || '').toLowerCase().includes(q) ||
+        (t.products || []).some(p =>
+          (p.productTitle || '').toLowerCase().includes(q) ||
+          (p.productId || '').toLowerCase().includes(q)
+        )
+      );
+    }
+
+    // 2. Department filter
+    if (teamDeptFilter && teamDeptFilter !== 'All Departments') {
+      const dNorm = teamDeptFilter.trim().toLowerCase();
+      list = list.filter(t => (t.department || '').toLowerCase().includes(dNorm));
+    }
+
+    // 3. Shortlist filter
+    if (teamShortlistFilter === 'shortlisted') {
+      list = list.filter(t => t.isShortlisted);
+    } else if (teamShortlistFilter === 'non_shortlisted') {
+      list = list.filter(t => !t.isShortlisted);
+    }
+
+    // 4. Voting status filter
+    if (teamVotingStatusFilter === 'with_votes') {
+      list = list.filter(t => (t.totalVotes || 0) > 0);
+    } else if (teamVotingStatusFilter === 'zero_votes') {
+      list = list.filter(t => (t.totalVotes || 0) === 0);
+    }
+
+    // 5. Sorting (numeric for votes/score, alphabetical for names/titles)
+    list.sort((a, b) => {
+      let diff = 0;
+      if (teamSortBy === 'votes') {
+        diff = (b.totalVotes || 0) - (a.totalVotes || 0);
+      } else if (teamSortBy === 'score') {
+        diff = (b.score ?? (b.totalVotes || 0) * 2) - (a.score ?? (a.totalVotes || 0) * 2);
+      } else if (teamSortBy === 'team_name') {
+        diff = (a.teamName || '').localeCompare(b.teamName || '');
+      } else if (teamSortBy === 'product_title') {
+        const prodA = a.products?.[0]?.productTitle || '';
+        const prodB = b.products?.[0]?.productTitle || '';
+        diff = prodA.localeCompare(prodB);
+      } else if (teamSortBy === 'registration_id') {
+        diff = (a.registrationId || '').localeCompare(b.registrationId || '', undefined, { numeric: true });
+      }
+      return teamSortOrder === 'asc' ? -diff : diff;
+    });
+
+    return list;
+  }, [teamsList, teamSearchQuery, teamDeptFilter, teamShortlistFilter, teamVotingStatusFilter, teamSortBy, teamSortOrder]);
+
+  const totalTeamsCount = filteredAndSortedTeams.length;
+  const totalTeamPages = Math.max(1, Math.ceil(totalTeamsCount / TEAMS_PER_PAGE));
+  const safeTeamCurrentPage = Math.min(Math.max(1, teamCurrentPage), totalTeamPages);
+
+  const paginatedTeams = useMemo(() => {
+    const start = (safeTeamCurrentPage - 1) * TEAMS_PER_PAGE;
+    return filteredAndSortedTeams.slice(start, start + TEAMS_PER_PAGE);
+  }, [filteredAndSortedTeams, safeTeamCurrentPage]);
+
+  const teamStartIndexDisplay = totalTeamsCount === 0 ? 0 : (safeTeamCurrentPage - 1) * TEAMS_PER_PAGE + 1;
+  const teamEndIndexDisplay = Math.min(safeTeamCurrentPage * TEAMS_PER_PAGE, totalTeamsCount);
+
+  // ==============================================================
+  // SELECTED TEAM: VOTER PAGINATION (ADMIN ONLY)
+  // ==============================================================
+  const TEAM_VOTERS_PER_PAGE = 20;
+
+  const selectedTeamVoters = useMemo(() => {
+    return selectedTeam?.voters || [];
+  }, [selectedTeam]);
+
+  const selectedTeamTotalVoters = selectedTeamVoters.length;
+  const totalTeamVoterPages = Math.max(1, Math.ceil(selectedTeamTotalVoters / TEAM_VOTERS_PER_PAGE));
+  const safeTeamVoterPage = Math.min(Math.max(1, selectedTeamVoterPage), totalTeamVoterPages);
+
+  const paginatedTeamVoters = useMemo(() => {
+    const start = (safeTeamVoterPage - 1) * TEAM_VOTERS_PER_PAGE;
+    return selectedTeamVoters.slice(start, start + TEAM_VOTERS_PER_PAGE);
+  }, [selectedTeamVoters, safeTeamVoterPage]);
+
+  const teamVoterStartIndexDisplay = selectedTeamTotalVoters === 0 ? 0 : (safeTeamVoterPage - 1) * TEAM_VOTERS_PER_PAGE + 1;
+  const teamVoterEndIndexDisplay = Math.min(safeTeamVoterPage * TEAM_VOTERS_PER_PAGE, selectedTeamTotalVoters);
+
+  // Sync selectedTeam with filtered list; deselect if no longer present
+  useEffect(() => {
+    if (selectedTeam) {
+      const match = filteredAndSortedTeams.find(t => t.id === selectedTeam.id);
+      if (!match) {
+        setSelectedTeam(null);
+        setSelectedTeamVoterPage(1);
+      }
+    }
+  }, [filteredAndSortedTeams, selectedTeam]);
+
+  // ==============================================================
+  // FIELD-SELECTIVE EXPORT STATE & HANDLERS (ADMIN ONLY)
+  // ==============================================================
+  const [isVoterExportModalOpen, setIsVoterExportModalOpen] = useState(false);
+  const [selectedVoterExportFields, setSelectedVoterExportFields] = useState(() => {
+    const s = new Set();
+    VOTER_EXPORT_FIELDS.forEach(g => {
+      g.fields.forEach(f => {
+        if (f.defaultChecked) s.add(f.key);
+      });
+    });
+    return s;
+  });
+
+  const [isTeamExportModalOpen, setIsTeamExportModalOpen] = useState(false);
+  const [selectedTeamExportFields, setSelectedTeamExportFields] = useState(() => {
+    const s = new Set();
+    TEAM_EXPORT_FIELDS.forEach(g => {
+      g.fields.forEach(f => {
+        if (f.defaultChecked) s.add(f.key);
+      });
+    });
+    return s;
+  });
+
+  // Calculate projected exported rows for Voter Reports
+  const hasVoterDetailsSelected = useMemo(() => {
+    const voteDetailKeys = new Set(VOTER_EXPORT_FIELDS[1].fields.map(f => f.key));
+    return Array.from(selectedVoterExportFields).some(k => voteDetailKeys.has(k));
+  }, [selectedVoterExportFields]);
+
+  const totalVoterExportRowsCount = useMemo(() => {
+    if (filteredAndSortedVoters.length === 0) return 0;
+    if (!hasVoterDetailsSelected) return filteredAndSortedVoters.length;
+    return filteredAndSortedVoters.reduce((sum, v) => {
+      const histCount = v.history && v.history.length > 0 ? v.history.length : 1;
+      return sum + histCount;
+    }, 0);
+  }, [filteredAndSortedVoters, hasVoterDetailsSelected]);
+
+  // Calculate projected exported rows for Product/Team Reports
+  const totalTeamExportRowsCount = useMemo(() => {
+    if (filteredAndSortedTeams.length === 0) return 0;
+    return filteredAndSortedTeams.reduce((sum, t) => {
+      const prodCount = t.products && t.products.length > 0 ? t.products.length : 1;
+      return sum + prodCount;
+    }, 0);
+  }, [filteredAndSortedTeams]);
+
+  // Voter Export Handlers
+  const handleOpenVoterExportModal = () => {
+    setIsVoterExportModalOpen(true);
+  };
+
+  const handleToggleVoterField = (key) => {
+    setSelectedVoterExportFields(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const handleSelectAllVoterFields = () => {
+    const all = new Set();
+    VOTER_EXPORT_FIELDS.forEach(g => g.fields.forEach(f => all.add(f.key)));
+    setSelectedVoterExportFields(all);
+  };
+
+  const handleClearAllVoterFields = () => {
+    setSelectedVoterExportFields(new Set());
+  };
+
+  const handleDownloadVoterExcel = () => {
+    if (selectedVoterExportFields.size === 0 || filteredAndSortedVoters.length === 0) return;
+
+    // Determine canonical selected fields in catalog order
+    const orderedCols = [];
+    VOTER_EXPORT_FIELDS.forEach(g => {
+      g.fields.forEach(f => {
+        if (selectedVoterExportFields.has(f.key)) orderedCols.push(f);
+      });
+    });
+    if (orderedCols.length === 0) return;
+
+    const headers = orderedCols.map(c => c.label);
+    const colWidths = orderedCols.map(c => c.width || 20);
+
+    const voteDetailKeys = new Set(VOTER_EXPORT_FIELDS[1].fields.map(f => f.key));
+    const hasVoteDetails = orderedCols.some(c => voteDetailKeys.has(c.key));
+
+    const rows = [];
+    filteredAndSortedVoters.forEach(v => {
+      if (hasVoteDetails) {
+        if (v.history && v.history.length > 0) {
+          v.history.forEach(h => {
+            const row = orderedCols.map(col => {
+              switch (col.key) {
+                case 'voterName': return v.name || 'N/A';
+                case 'voterEmail': return v.email || 'N/A';
+                case 'voterDepartment': return v.department || 'N/A';
+                case 'voterUserId': return v.userId || 'N/A';
+                case 'totalVotes': return Number(v.totalVotes || 0);
+                case 'voteId': return h.voteId || 'N/A';
+                case 'teamId': return h.teamId || 'N/A';
+                case 'teamName': return h.teamName || 'Unknown Team';
+                case 'teamDepartment': return h.teamDepartment || 'N/A';
+                case 'productTitle': return h.productTitle || 'Project Showcase';
+                case 'productId': return h.productId || 'N/A';
+                case 'votedAt': return h.votedAt ? new Date(h.votedAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) : 'N/A';
+                default: return '';
+              }
+            });
+            rows.push(row);
+          });
+        } else {
+          const row = orderedCols.map(col => {
+            switch (col.key) {
+              case 'voterName': return v.name || 'N/A';
+              case 'voterEmail': return v.email || 'N/A';
+              case 'voterDepartment': return v.department || 'N/A';
+              case 'voterUserId': return v.userId || 'N/A';
+              case 'totalVotes': return Number(v.totalVotes || 0);
+              case 'voteId': return 'N/A';
+              case 'teamId': return 'N/A';
+              case 'teamName': return 'N/A';
+              case 'teamDepartment': return 'N/A';
+              case 'productTitle': return 'N/A';
+              case 'productId': return 'N/A';
+              case 'votedAt': return 'N/A';
+              default: return '';
+            }
+          });
+          rows.push(row);
+        }
+      } else {
+        const row = orderedCols.map(col => {
+          switch (col.key) {
+            case 'voterName': return v.name || 'N/A';
+            case 'voterEmail': return v.email || 'N/A';
+            case 'voterDepartment': return v.department || 'N/A';
+            case 'voterUserId': return v.userId || 'N/A';
+            case 'totalVotes': return Number(v.totalVotes || 0);
+            default: return '';
+          }
+        });
+        rows.push(row);
+      }
+    });
+
+    const isFiltered = !!(voterSearchQuery.trim() || (voterDeptFilter && voterDeptFilter !== 'All Departments') || voterActivityFilter !== 'all');
+    const filename = isFiltered ? 'IPL_2026_Voter_Report_Filtered.xlsx' : 'IPL_2026_Voter_Report.xlsx';
+
+    exportToRealXlsx({
+      filename,
+      sheetName: 'Voter Report',
+      headers,
+      rows,
+      colWidths
+    });
+
+    setIsVoterExportModalOpen(false);
+    notify('success', 'Excel Export Ready', `Downloaded ${filename} (${rows.length} rows, ${filteredAndSortedVoters.length} voters).`);
+  };
+
+  // Team Export Handlers
+  const handleOpenTeamExportModal = () => {
+    setIsTeamExportModalOpen(true);
+  };
+
+  const handleToggleTeamField = (key) => {
+    setSelectedTeamExportFields(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const handleSelectAllTeamFields = () => {
+    const all = new Set();
+    TEAM_EXPORT_FIELDS.forEach(g => g.fields.forEach(f => all.add(f.key)));
+    setSelectedTeamExportFields(all);
+  };
+
+  const handleClearAllTeamFields = () => {
+    setSelectedTeamExportFields(new Set());
+  };
+
+  const handleDownloadTeamExcel = () => {
+    if (selectedTeamExportFields.size === 0 || filteredAndSortedTeams.length === 0) return;
+
+    const orderedCols = [];
+    TEAM_EXPORT_FIELDS.forEach(g => {
+      g.fields.forEach(f => {
+        if (selectedTeamExportFields.has(f.key)) orderedCols.push(f);
+      });
+    });
+    if (orderedCols.length === 0) return;
+
+    const headers = orderedCols.map(c => c.label);
+    const colWidths = orderedCols.map(c => c.width || 20);
+
+    const rows = [];
+    filteredAndSortedTeams.forEach(t => {
+      const prods = (t.products && t.products.length > 0) ? t.products : [{
+        productId: null,
+        productTitle: 'Project Showcase',
+        innovationDomain: 'Open Innovation',
+        productVotes: t.totalVotes || 0,
+        score: (t.totalVotes || 0) * 2
+      }];
+
+      prods.forEach(p => {
+        const row = orderedCols.map(col => {
+          switch (col.key) {
+            case 'registrationId': return t.registrationId || 'N/A';
+            case 'teamName': return t.teamName || 'N/A';
+            case 'department': return t.department || 'N/A';
+            case 'teamId': return t.id || 'N/A';
+            case 'productTitle': return p.productTitle || 'Project Showcase';
+            case 'innovationDomain': return p.innovationDomain || 'Open Innovation';
+            case 'productId': return p.productId || 'N/A';
+            case 'productVotes': return Number(p.productVotes || 0);
+            case 'productScore': return Number(p.score ?? ((p.productVotes || 0) * 2));
+            case 'totalVotes': return Number(t.totalVotes || 0);
+            case 'score': return Number(t.score ?? ((t.totalVotes || 0) * 2));
+            case 'isShortlisted': return t.isShortlisted ? 'Shortlisted' : 'Not Shortlisted';
+            case 'shortlistCategory': return t.shortlistCategory || (t.isShortlisted ? 'Finalist' : 'N/A');
+            default: return '';
+          }
+        });
+        rows.push(row);
+      });
+    });
+
+    const isFiltered = !!(teamSearchQuery.trim() || (teamDeptFilter && teamDeptFilter !== 'All Departments') || teamShortlistFilter !== 'all' || teamVotingStatusFilter !== 'all');
+    const filename = isFiltered ? 'IPL_2026_Product_Team_Report_Filtered.xlsx' : 'IPL_2026_Product_Team_Report.xlsx';
+
+    exportToRealXlsx({
+      filename,
+      sheetName: 'Product Team Report',
+      headers,
+      rows,
+      colWidths
+    });
+
+    setIsTeamExportModalOpen(false);
+    notify('success', 'Excel Export Ready', `Downloaded ${filename} (${rows.length} product rows, ${filteredAndSortedTeams.length} teams).`);
+  };
+
   // Load sub-page data on tab change
   useEffect(() => {
     if (subTab === 'analytics') {
       fetchAnalytics();
     } else if (subTab === 'voter_reports') {
-      fetchVoters(voterSearchQuery);
+      fetchVoters();
     } else if (subTab === 'team_reports') {
-      fetchTeams(teamSearchQuery, teamDeptFilter);
-    } else if (subTab === 'export_drive') {
-      fetchReportHistory();
+      fetchTeams();
     }
-  }, [subTab, fetchAnalytics, fetchVoters, fetchTeams, fetchReportHistory, voterSearchQuery, teamSearchQuery, teamDeptFilter]);
-
-  // 6. Handle Download Excel
-  const handleDownloadExcel = async (type) => {
-    setExportingType(type);
-    try {
-      const result = await safeFetchJson(`${API_BASE_URL}/api/voting/admin/export-data?type=${type}`, { headers: authHeaders });
-      if (result.ok && result.data?.success && result.data?.sheets) {
-        downloadRealExcelWorkbook(result.data.sheets, result.data.filename);
-        notify('success', 'Export Ready', `Downloaded genuine Excel workbook: ${result.data.filename}`);
-      } else if (result.ok && result.data?.success && result.data?.headers && result.data?.rows) {
-        const data = result.data;
-        const wb = XLSX.utils.book_new();
-        const ws = XLSX.utils.aoa_to_sheet([data.headers, ...data.rows]);
-        XLSX.utils.book_append_sheet(wb, ws, 'Voting Report');
-        const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-        const blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = data.filename || `IPL_2026_Export_${Date.now()}.xlsx`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        notify('success', 'Export Ready', `Downloaded ${data.filename} (${data.totalRows} records).`);
-      } else {
-        notify('error', 'Export Failed', result.message || 'Could not export records.');
-      }
-    } catch (err) {
-      notify('error', 'Export Error', err.message);
-    } finally {
-      setExportingType(null);
-    }
-  };
-
-  // 7. Handle Save to Google Drive
-  const handleSaveToDrive = async (type) => {
-    setUploadingDriveType(type);
-    try {
-      const result = await safeFetchJson(`${API_BASE_URL}/api/voting/admin/export-upload-drive`, {
-        method: 'POST',
-        headers: authHeaders,
-        body: JSON.stringify({ type })
-      });
-      if (result.ok && result.data?.success) {
-        notify('success', 'Saved to Google Drive', `${result.data.fileName} archived in 'IPL 2026 Voting Reports'.`);
-        fetchReportHistory();
-      } else {
-        notify('error', 'Drive Upload Failed', result.message || 'Could not save to Google Drive.');
-      }
-    } catch (err) {
-      notify('error', 'Drive Error', err.message);
-    } finally {
-      setUploadingDriveType(null);
-    }
-  };
+  }, [subTab, fetchAnalytics, fetchVoters, fetchTeams]);
 
   return (
     <div className="space-y-6 animate-fade-in w-full max-w-7xl mx-auto">
@@ -1787,27 +2457,89 @@ This will replace the active shortlist with ${shortlistPreview.valid_registratio
       {/* ============================================================== */}
       {subTab === 'voter_reports' && (
         <div className="space-y-6">
-          {/* Search Controls */}
-          <div className="flex flex-col sm:flex-row gap-3">
-            <div className="relative flex-1">
-              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+          {/* Voter Reports Compact Toolbar */}
+          <div className="flex flex-col lg:flex-row gap-2.5 items-stretch lg:items-center bg-white p-3 rounded-2xl border border-slate-200 shadow-xs">
+            {/* Search input */}
+            <div className="relative flex-1 min-w-[200px]">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={15} />
               <input
                 type="text"
                 value={voterSearchQuery}
-                onChange={(e) => {
-                  setVoterSearchQuery(e.target.value);
-                  fetchVoters(e.target.value);
-                }}
-                placeholder="Search by student name, email, or user ID..."
-                className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 text-xs sm:text-sm text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                onChange={(e) => setVoterSearchQuery(e.target.value)}
+                placeholder="Search by student name, email, user ID, or dept..."
+                className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-200 text-xs sm:text-sm text-slate-900 bg-slate-50/60 focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition"
               />
             </div>
+
+            {/* Department Filter */}
+            <div className="w-full sm:w-44">
+              <select
+                value={voterDeptFilter}
+                onChange={(e) => setVoterDeptFilter(e.target.value)}
+                className="w-full px-2.5 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer"
+              >
+                {DEPARTMENTS.map(d => (
+                  <option key={d} value={d}>{d}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Vote Activity Filter */}
+            <div className="w-full sm:w-36">
+              <select
+                value={voterActivityFilter}
+                onChange={(e) => setVoterActivityFilter(e.target.value)}
+                className="w-full px-2.5 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer"
+              >
+                <option value="all">All Voters</option>
+                <option value="multiple">Multiple Votes (&gt;1)</option>
+                <option value="single">Single Vote (1)</option>
+              </select>
+            </div>
+
+            {/* Sort By */}
+            <div className="w-full sm:w-36">
+              <select
+                value={voterSortBy}
+                onChange={(e) => setVoterSortBy(e.target.value)}
+                className="w-full px-2.5 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer"
+              >
+                <option value="votes">Sort: Total Votes</option>
+                <option value="name">Sort: Voter Name</option>
+                <option value="email">Sort: Email</option>
+                <option value="date">Sort: Latest Vote</option>
+              </select>
+            </div>
+
+            {/* Sort Direction Toggle */}
             <button
               type="button"
-              onClick={() => fetchVoters(voterSearchQuery)}
-              className="px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition cursor-pointer flex items-center justify-center gap-2"
+              onClick={() => setVoterSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')}
+              title={`Sort direction: ${voterSortOrder === 'asc' ? 'Ascending' : 'Descending'} (click to toggle)`}
+              className="p-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 transition cursor-pointer flex items-center justify-center shrink-0 shadow-2xs"
             >
-              <Search size={14} /> Search
+              {voterSortOrder === 'asc' ? <ArrowUp size={16} className="text-primary" /> : <ArrowDown size={16} className="text-primary" />}
+            </button>
+
+            {/* Refresh Button */}
+            <button
+              type="button"
+              onClick={() => fetchVoters()}
+              disabled={loadingVoters}
+              className="px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1.5 shrink-0 shadow-2xs disabled:opacity-50"
+            >
+              <RefreshCw size={13} className={loadingVoters ? 'animate-spin' : ''} />
+              <span>Refresh</span>
+            </button>
+
+            {/* Download Excel (.xlsx) Button */}
+            <button
+              type="button"
+              onClick={handleOpenVoterExportModal}
+              className="px-3 py-2 rounded-xl bg-primary hover:bg-blue-900 text-white text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1.5 shrink-0 shadow-2xs"
+            >
+              <Download size={13} />
+              <span>Download Excel (.xlsx)</span>
             </button>
           </div>
 
@@ -1816,18 +2548,18 @@ This will replace the active shortlist with ${shortlistPreview.valid_registratio
             <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 space-y-3">
               <div className="flex items-center justify-between pb-2 border-b border-slate-100">
                 <h4 className="text-xs font-bold uppercase text-slate-500 tracking-wider">
-                  Active Voters ({votersList.length})
+                  Active Voters ({totalVotersCount})
                 </h4>
                 {loadingVoters && <RefreshCw size={12} className="animate-spin text-primary" />}
               </div>
 
               <div className="space-y-2 max-h-[520px] overflow-y-auto pr-1">
-                {votersList.length === 0 ? (
+                {totalVotersCount === 0 ? (
                   <div className="py-12 text-center text-slate-400 text-xs">
-                    {loadingVoters ? 'Loading voter records...' : 'No voters found matching search.'}
+                    {loadingVoters ? 'Loading voter records...' : 'No voters found matching search/filter.'}
                   </div>
                 ) : (
-                  votersList.map(v => (
+                  paginatedVoters.map(v => (
                     <button
                       key={v.userId}
                       type="button"
@@ -1850,6 +2582,65 @@ This will replace the active shortlist with ${shortlistPreview.valid_registratio
                   ))
                 )}
               </div>
+
+              {/* Voter Pagination Controls */}
+              {totalVotersCount > 0 && (
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-2 pt-3 border-t border-slate-100">
+                  <div className="text-[11px] font-semibold text-slate-500">
+                    Showing <span className="font-mono text-slate-900 font-bold">{voterStartIndexDisplay}</span>–<span className="font-mono text-slate-900 font-bold">{voterEndIndexDisplay}</span> of <span className="font-mono text-slate-900 font-bold">{totalVotersCount}</span>
+                  </div>
+
+                  <div className="flex items-center gap-1 flex-wrap justify-center">
+                    <button
+                      type="button"
+                      disabled={safeVoterCurrentPage <= 1}
+                      onClick={() => setVoterCurrentPage(p => Math.max(1, p - 1))}
+                      className="inline-flex items-center justify-center gap-1 px-2 py-1 min-h-[28px] rounded-lg text-xs font-bold border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 disabled:opacity-40 disabled:pointer-events-none transition shadow-2xs cursor-pointer"
+                    >
+                      <ChevronLeft size={12} />
+                      <span>Prev</span>
+                    </button>
+
+                    {getVisiblePages(safeVoterCurrentPage, totalVoterPages).map((p, pIdx) => {
+                      if (p === '...') {
+                        return (
+                          <span
+                            key={`voter-dots-${pIdx}`}
+                            className="inline-flex items-center justify-center min-w-[24px] min-h-[28px] px-0.5 text-xs font-bold text-slate-400 select-none"
+                          >
+                            ...
+                          </span>
+                        );
+                      }
+                      const isCurrent = p === safeVoterCurrentPage;
+                      return (
+                        <button
+                          key={p}
+                          type="button"
+                          onClick={() => setVoterCurrentPage(p)}
+                          className={`inline-flex items-center justify-center min-w-[28px] min-h-[28px] px-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                            isCurrent
+                              ? 'bg-slate-900 text-white shadow-xs'
+                              : 'border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 shadow-2xs'
+                          }`}
+                        >
+                          {p}
+                        </button>
+                      );
+                    })}
+
+                    <button
+                      type="button"
+                      disabled={safeVoterCurrentPage >= totalVoterPages}
+                      onClick={() => setVoterCurrentPage(p => Math.min(totalVoterPages, p + 1))}
+                      className="inline-flex items-center justify-center gap-1 px-2 py-1 min-h-[28px] rounded-lg text-xs font-bold border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 disabled:opacity-40 disabled:pointer-events-none transition shadow-2xs cursor-pointer"
+                    >
+                      <span>Next</span>
+                      <ChevronRight size={12} />
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Voter Detail / Voting History Column */}
@@ -1940,55 +2731,128 @@ This will replace the active shortlist with ${shortlistPreview.valid_registratio
       {/* ============================================================== */}
       {subTab === 'team_reports' && (
         <div className="space-y-6">
-          {/* Search and Filters */}
-          <div className="flex flex-col sm:flex-row gap-3">
-            <div className="relative flex-1">
-              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+          {/* Product / Team Reports Compact Toolbar */}
+          <div className="flex flex-col lg:flex-row gap-2.5 items-stretch lg:items-center bg-white p-3 rounded-2xl border border-slate-200 shadow-xs">
+            {/* Search input */}
+            <div className="relative flex-1 min-w-[200px]">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={15} />
               <input
                 type="text"
                 value={teamSearchQuery}
-                onChange={(e) => {
-                  setTeamSearchQuery(e.target.value);
-                  fetchTeams(e.target.value, teamDeptFilter);
-                }}
-                placeholder="Filter by team name, team ID, or product title..."
-                className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 text-xs sm:text-sm text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                onChange={(e) => setTeamSearchQuery(e.target.value)}
+                placeholder="Search by team, reg ID, product title, or team ID..."
+                className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-200 text-xs sm:text-sm text-slate-900 bg-slate-50/60 focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition"
               />
             </div>
 
-            <div className="w-full sm:w-64">
-              <select
-                value={teamDeptFilter}
-                onChange={(e) => {
-                  setTeamDeptFilter(e.target.value);
-                  fetchTeams(teamSearchQuery, e.target.value);
-                }}
-                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs sm:text-sm text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer"
+            {/* Filters and Sort */}
+            <div className="flex flex-wrap sm:flex-nowrap gap-2 items-center">
+              {/* Department Filter */}
+              <div className="w-full sm:w-40">
+                <select
+                  value={teamDeptFilter}
+                  onChange={(e) => setTeamDeptFilter(e.target.value)}
+                  className="w-full px-2.5 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer"
+                >
+                  {DEPARTMENTS.map(d => (
+                    <option key={d} value={d}>{d}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Shortlist Filter */}
+              <div className="w-full sm:w-36">
+                <select
+                  value={teamShortlistFilter}
+                  onChange={(e) => setTeamShortlistFilter(e.target.value)}
+                  className="w-full px-2.5 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer"
+                >
+                  <option value="all">All Teams</option>
+                  <option value="shortlisted">Finalists Only</option>
+                  <option value="non_shortlisted">Non-Finalists</option>
+                </select>
+              </div>
+
+              {/* Voting Status Filter */}
+              <div className="w-full sm:w-32">
+                <select
+                  value={teamVotingStatusFilter}
+                  onChange={(e) => setTeamVotingStatusFilter(e.target.value)}
+                  className="w-full px-2.5 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer"
+                >
+                  <option value="all">Voting: All</option>
+                  <option value="with_votes">With Votes (&gt;0)</option>
+                  <option value="zero_votes">Zero Votes (0)</option>
+                </select>
+              </div>
+
+              {/* Sort By */}
+              <div className="w-full sm:w-36">
+                <select
+                  value={teamSortBy}
+                  onChange={(e) => setTeamSortBy(e.target.value)}
+                  className="w-full px-2.5 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer"
+                >
+                  <option value="votes">Sort: Total Votes</option>
+                  <option value="score">Sort: Score</option>
+                  <option value="team_name">Sort: Team Name</option>
+                  <option value="product_title">Sort: Product Title</option>
+                  <option value="registration_id">Sort: Reg ID</option>
+                </select>
+              </div>
+
+              {/* Sort Direction Toggle */}
+              <button
+                type="button"
+                onClick={() => setTeamSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')}
+                title={`Sort direction: ${teamSortOrder === 'asc' ? 'Ascending' : 'Descending'} (click to toggle)`}
+                className="p-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 transition cursor-pointer flex items-center justify-center shrink-0 shadow-2xs"
               >
-                {DEPARTMENTS.map(d => (
-                  <option key={d} value={d}>{d}</option>
-                ))}
-              </select>
+                {teamSortOrder === 'asc' ? <ArrowUp size={16} className="text-primary" /> : <ArrowDown size={16} className="text-primary" />}
+              </button>
+
+              {/* Refresh Button */}
+              <button
+                type="button"
+                onClick={() => fetchTeams()}
+                disabled={loadingTeams}
+                className="px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1.5 shrink-0 shadow-2xs disabled:opacity-50"
+              >
+                <RefreshCw size={13} className={loadingTeams ? 'animate-spin' : ''} />
+                <span>Refresh</span>
+              </button>
+
+              {/* Download Excel (.xlsx) Button */}
+              <button
+                type="button"
+                onClick={handleOpenTeamExportModal}
+                className="px-3 py-2 rounded-xl bg-primary hover:bg-blue-900 text-white text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1.5 shrink-0 shadow-2xs"
+              >
+                <Download size={13} />
+                <span>Download Excel (.xlsx)</span>
+              </button>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Teams List */}
-            <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 space-y-3">
-              <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch lg:h-[780px] xl:h-[820px]">
+            {/* LEFT PANEL: PARTICIPATING TEAMS */}
+            <div className="lg:col-span-4 flex flex-col h-full rounded-2xl bg-white shadow-sm ring-1 ring-slate-200 overflow-hidden">
+              {/* Card Header (shrink-0) */}
+              <div className="flex items-center justify-between p-4 border-b border-slate-100 shrink-0 bg-white">
                 <h4 className="text-xs font-bold uppercase text-slate-500 tracking-wider">
-                  Participating Teams ({teamsList.length})
+                  Participating Teams ({totalTeamsCount})
                 </h4>
                 {loadingTeams && <RefreshCw size={12} className="animate-spin text-primary" />}
               </div>
 
-              <div className="space-y-2 max-h-[520px] overflow-y-auto pr-1">
-                {teamsList.length === 0 ? (
+              {/* Team list content (flex: 1, min-height: 0, scrollable) */}
+              <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-2">
+                {totalTeamsCount === 0 ? (
                   <div className="py-12 text-center text-slate-400 text-xs">
                     {loadingTeams ? 'Loading teams...' : 'No teams found matching search/filter.'}
                   </div>
                 ) : (
-                  teamsList.map(t => (
+                  paginatedTeams.map(t => (
                     <button
                       key={t.id}
                       type="button"
@@ -2000,59 +2864,156 @@ This will replace the active shortlist with ${shortlistPreview.valid_registratio
                       }`}
                     >
                       <div className="min-w-0 pr-2">
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="font-mono text-[10px] font-bold text-slate-400">{t.registrationId}</span>
                           <p className="text-xs font-extrabold truncate">{t.teamName}</p>
+                          {t.isShortlisted && (
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-amber-50 text-amber-700 border border-amber-200/80 shrink-0">
+                              Finalist
+                            </span>
+                          )}
                         </div>
-                        <p className="text-[11px] text-slate-500 truncate">{t.department}</p>
+                        <p className="text-[11px] text-slate-500 truncate mt-0.5">{t.department}</p>
+                        {t.products?.[0]?.productTitle && (
+                          <p className="text-[10px] text-slate-400 truncate italic">
+                            {t.products[0].productTitle}
+                          </p>
+                        )}
                       </div>
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-black shrink-0 ${
-                        t.totalVotes > 0 ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-600/20' : 'bg-slate-100 text-slate-500'
-                      }`}>
-                        {t.totalVotes} {t.totalVotes === 1 ? 'vote' : 'votes'}
-                      </span>
+                      <div className="flex flex-col items-end shrink-0 pl-1">
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                          t.totalVotes > 0 ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-600/20' : 'bg-slate-100 text-slate-500'
+                        }`}>
+                          {t.totalVotes} {t.totalVotes === 1 ? 'vote' : 'votes'}
+                        </span>
+                        <span className="text-[10px] font-bold text-slate-500 mt-0.5">
+                          Score: {t.score ?? (t.totalVotes * 2)}
+                        </span>
+                      </div>
                     </button>
                   ))
                 )}
               </div>
+
+              {/* Team Pagination Controls (shrink-0, pinned to bottom) */}
+              <div className="p-3.5 border-t border-slate-100 shrink-0 bg-slate-50/50 min-h-[56px] flex items-center">
+                {totalTeamsCount > 0 ? (
+                  <div className="w-full flex flex-col sm:flex-row items-center justify-between gap-2">
+                    <div className="text-[11px] font-semibold text-slate-500 whitespace-nowrap">
+                      Showing <span className="font-mono text-slate-900 font-bold">{teamStartIndexDisplay}</span>–<span className="font-mono text-slate-900 font-bold">{teamEndIndexDisplay}</span> of <span className="font-mono text-slate-900 font-bold">{totalTeamsCount}</span> teams
+                    </div>
+
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        disabled={safeTeamCurrentPage <= 1}
+                        onClick={() => setTeamCurrentPage(p => Math.max(1, p - 1))}
+                        className="inline-flex items-center justify-center gap-1 px-2.5 h-7 rounded-lg text-xs font-bold border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 disabled:opacity-40 disabled:pointer-events-none transition shadow-2xs cursor-pointer"
+                      >
+                        <ChevronLeft size={12} />
+                        <span>Prev</span>
+                      </button>
+
+                      {getVisiblePages(safeTeamCurrentPage, totalTeamPages).map((p, pIdx) => {
+                        if (p === '...') {
+                          return (
+                            <span
+                              key={`team-dots-${pIdx}`}
+                              className="inline-flex items-center justify-center min-w-[20px] h-7 text-xs font-bold text-slate-400 select-none"
+                            >
+                              ...
+                            </span>
+                          );
+                        }
+                        const isCurrent = p === safeTeamCurrentPage;
+                        return (
+                          <button
+                            key={p}
+                            type="button"
+                            onClick={() => setTeamCurrentPage(p)}
+                            className={`inline-flex items-center justify-center min-w-[28px] h-7 px-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                              isCurrent
+                                ? 'bg-slate-900 text-white shadow-xs'
+                                : 'border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 shadow-2xs'
+                            }`}
+                          >
+                            {p}
+                          </button>
+                        );
+                      })}
+
+                      <button
+                        type="button"
+                        disabled={safeTeamCurrentPage >= totalTeamPages}
+                        onClick={() => setTeamCurrentPage(p => Math.min(totalTeamPages, p + 1))}
+                        className="inline-flex items-center justify-center gap-1 px-2.5 h-7 rounded-lg text-xs font-bold border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 disabled:opacity-40 disabled:pointer-events-none transition shadow-2xs cursor-pointer"
+                      >
+                        <span>Next</span>
+                        <ChevronRight size={12} />
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-[11px] text-slate-400 italic">No teams to paginate</div>
+                )}
+              </div>
             </div>
 
-            {/* Team Detail & Voters List */}
-            <div className="lg:col-span-2 space-y-4">
+            {/* RIGHT PANEL: SELECTED TEAM & VOTERS FOR THIS TEAM */}
+            <div className="lg:col-span-8 flex flex-col h-full rounded-2xl bg-white shadow-sm ring-1 ring-slate-200 overflow-hidden">
               {selectedTeam ? (
-                <div className="space-y-4">
-                  {/* Team Profile Banner */}
-                  <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
-                      <div>
-                        <div className="flex items-center gap-2">
+                <>
+                  {/* Selected Team Profile Header (shrink-0) */}
+                  <div className="p-4 border-b border-slate-100 shrink-0 bg-white space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-700">
                             {selectedTeam.registrationId}
                           </span>
-                          <h3 className="text-lg font-bold text-slate-900">{selectedTeam.teamName}</h3>
+                          <h3 className="text-base sm:text-lg font-bold text-slate-900 truncate">
+                            {selectedTeam.teamName}
+                          </h3>
+                          {selectedTeam.isShortlisted && (
+                            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-800 border border-amber-300 shrink-0">
+                              ★ Shortlisted Finalist {selectedTeam.shortlistCategory ? `(${selectedTeam.shortlistCategory})` : ''}
+                            </span>
+                          )}
                         </div>
-                        <p className="text-xs text-slate-500 mt-1">{selectedTeam.department}</p>
+                        <p className="text-xs text-slate-500 mt-0.5 truncate">{selectedTeam.department}</p>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <span className="px-3 py-1 rounded-full text-xs font-black bg-emerald-50 text-emerald-700 ring-1 ring-emerald-600/20">
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="px-2.5 py-1 rounded-full text-xs font-black bg-emerald-50 text-emerald-700 ring-1 ring-emerald-600/20">
                           {selectedTeam.totalVotes} Total Votes
+                        </span>
+                        <span className="px-2.5 py-1 rounded-full text-xs font-black bg-blue-50 text-blue-700 ring-1 ring-blue-600/20">
+                          Score: {selectedTeam.score ?? (selectedTeam.totalVotes * 2)} pts
                         </span>
                       </div>
                     </div>
 
-                    {/* Products list under this team */}
+                    {/* Products list under this team (compact) */}
                     {selectedTeam.products && selectedTeam.products.length > 0 && (
-                      <div className="pt-3 space-y-2">
-                        <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                      <div className="pt-2 border-t border-slate-100/70">
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
                           Products / Ideas ({selectedTeam.products.length})
-                        </span>
+                        </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                           {selectedTeam.products.map((p, idx) => (
-                            <div key={idx} className="p-2.5 rounded-xl bg-slate-50 border border-slate-100 text-xs space-y-1">
-                              <p className="font-bold text-slate-900">{p.productTitle}</p>
-                              <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-white text-slate-600 border border-slate-200">
-                                {p.innovationDomain}
-                              </span>
+                            <div key={idx} className="p-2.5 rounded-xl bg-slate-50/80 border border-slate-100 text-xs flex items-center justify-between gap-2">
+                              <div className="min-w-0">
+                                <p className="font-bold text-slate-900 truncate text-xs">{p.productTitle}</p>
+                                <span className="text-[10px] text-slate-500">{p.innovationDomain}</span>
+                              </div>
+                              <div className="text-right shrink-0">
+                                <span className="px-1.5 py-0.5 rounded text-[10px] font-black bg-emerald-100 text-emerald-800 block">
+                                  {p.productVotes || 0} votes
+                                </span>
+                                <span className="text-[10px] font-bold text-slate-600">
+                                  Score: {p.score ?? (p.productVotes || 0) * 2}
+                                </span>
+                              </div>
                             </div>
                           ))}
                         </div>
@@ -2060,40 +3021,49 @@ This will replace the active shortlist with ${shortlistPreview.valid_registratio
                     )}
                   </div>
 
-                  {/* Voters for this Team Table */}
-                  <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200 space-y-3">
-                    <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                      <Users size={16} className="text-primary" /> Voters For This Team ({selectedTeam.voters?.length || 0})
+                  {/* Voters Sub-header (shrink-0) */}
+                  <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-100 bg-slate-50/40 shrink-0">
+                    <h4 className="text-xs font-bold uppercase text-slate-600 tracking-wider flex items-center gap-1.5">
+                      <Users size={14} className="text-primary" />
+                      <span>Voters For This Team ({selectedTeamTotalVoters})</span>
                     </h4>
+                    {loadingTeamDetail && <RefreshCw size={12} className="animate-spin text-primary" />}
+                  </div>
 
-                    {(!selectedTeam.voters || selectedTeam.voters.length === 0) ? (
-                      <div className="py-8 text-center text-slate-400 text-xs">
+                  {/* Voter Table Content (flex: 1, min-height: 0, scrollable) */}
+                  <div className="flex-1 min-h-0 overflow-y-auto p-4">
+                    {selectedTeamTotalVoters === 0 ? (
+                      <div className="py-12 text-center text-slate-400 text-xs">
                         No votes have been recorded for this team yet.
                       </div>
                     ) : (
                       <div className="overflow-x-auto">
                         <table className="w-full text-left text-xs">
                           <thead>
-                            <tr className="border-b border-slate-100 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                            <tr className="border-b border-slate-100 text-[11px] font-bold text-slate-400 uppercase tracking-wider sticky top-0 bg-white">
                               <th className="pb-2.5 w-12">S.No</th>
                               <th className="pb-2.5">Voter Name</th>
                               <th className="pb-2.5">Voter Email</th>
+                              <th className="pb-2.5">Product Voted For</th>
                               <th className="pb-2.5">Voter Department</th>
-                              <th className="pb-2.5">Vote Timestamp</th>
+                              <th className="pb-2.5 whitespace-nowrap">Vote Timestamp</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100 text-slate-700">
-                            {selectedTeam.voters.map((v, i) => (
+                            {paginatedTeamVoters.map((v, i) => (
                               <tr key={v.voteId || i} className="hover:bg-slate-50/80 transition-colors">
-                                <td className="py-3 font-mono font-bold text-slate-400">{i + 1}</td>
-                                <td className="py-3 font-semibold text-slate-900">{v.voterName}</td>
-                                <td className="py-3 text-slate-600">{v.voterEmail}</td>
-                                <td className="py-3">
-                                  <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-700">
+                                <td className="py-2.5 font-mono font-bold text-slate-400">
+                                  {(safeTeamVoterPage - 1) * TEAM_VOTERS_PER_PAGE + i + 1}
+                                </td>
+                                <td className="py-2.5 font-semibold text-slate-900 whitespace-nowrap">{v.voterName}</td>
+                                <td className="py-2.5 text-slate-600">{v.voterEmail}</td>
+                                <td className="py-2.5 text-slate-700 max-w-[180px] truncate">{v.productTitle || 'Product Showcase'}</td>
+                                <td className="py-2.5">
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-700 whitespace-nowrap">
                                     {v.voterDepartment}
                                   </span>
                                 </td>
-                                <td className="py-3 text-slate-500 whitespace-nowrap">
+                                <td className="py-2.5 text-slate-500 whitespace-nowrap">
                                   {new Date(v.votedAt).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
                                 </td>
                               </tr>
@@ -2103,207 +3073,123 @@ This will replace the active shortlist with ${shortlistPreview.valid_registratio
                       </div>
                     )}
                   </div>
-                </div>
+
+                  {/* Voter Pagination Controls (shrink-0, pinned to bottom, matches left baseline) */}
+                  <div className="p-3.5 border-t border-slate-100 shrink-0 bg-slate-50/50 min-h-[56px] flex items-center">
+                    {selectedTeamTotalVoters > 0 ? (
+                      <div className="w-full flex flex-col sm:flex-row items-center justify-between gap-2">
+                        <div className="text-[11px] font-semibold text-slate-500 whitespace-nowrap">
+                          Showing <span className="font-mono text-slate-900 font-bold">{teamVoterStartIndexDisplay}</span>–<span className="font-mono text-slate-900 font-bold">{teamVoterEndIndexDisplay}</span> of <span className="font-mono text-slate-900 font-bold">{selectedTeamTotalVoters}</span> voters
+                        </div>
+
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            disabled={safeTeamVoterPage <= 1}
+                            onClick={() => setSelectedTeamVoterPage(p => Math.max(1, p - 1))}
+                            className="inline-flex items-center justify-center gap-1 px-2.5 h-7 rounded-lg text-xs font-bold border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 disabled:opacity-40 disabled:pointer-events-none transition shadow-2xs cursor-pointer"
+                          >
+                            <ChevronLeft size={12} />
+                            <span>Prev</span>
+                          </button>
+
+                          {getVisiblePages(safeTeamVoterPage, totalTeamVoterPages).map((p, pIdx) => {
+                            if (p === '...') {
+                              return (
+                                <span
+                                  key={`voter-dots-${pIdx}`}
+                                  className="inline-flex items-center justify-center min-w-[20px] h-7 text-xs font-bold text-slate-400 select-none"
+                                >
+                                  ...
+                                </span>
+                              );
+                            }
+                            const isCurrent = p === safeTeamVoterPage;
+                            return (
+                              <button
+                                key={p}
+                                type="button"
+                                onClick={() => setSelectedTeamVoterPage(p)}
+                                className={`inline-flex items-center justify-center min-w-[28px] h-7 px-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                                  isCurrent
+                                    ? 'bg-slate-900 text-white shadow-xs'
+                                    : 'border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 shadow-2xs'
+                                }`}
+                              >
+                                {p}
+                              </button>
+                            );
+                          })}
+
+                          <button
+                            type="button"
+                            disabled={safeTeamVoterPage >= totalTeamVoterPages}
+                            onClick={() => setSelectedTeamVoterPage(p => Math.min(totalTeamVoterPages, p + 1))}
+                            className="inline-flex items-center justify-center gap-1 px-2.5 h-7 rounded-lg text-xs font-bold border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 disabled:opacity-40 disabled:pointer-events-none transition shadow-2xs cursor-pointer"
+                          >
+                            <span>Next</span>
+                            <ChevronRight size={12} />
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-[11px] text-slate-400 italic">No voters to paginate</div>
+                    )}
+                  </div>
+                </>
               ) : (
-                <div className="rounded-2xl bg-white p-12 shadow-sm ring-1 ring-slate-200 text-center space-y-3">
-                  <Building2 size={32} className="mx-auto text-slate-300" />
-                  <h4 className="text-sm font-bold text-slate-700">No Team Selected</h4>
-                  <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                    Select a team from the list to see total votes received, associated products, and the complete audit list of student voters.
-                  </p>
-                </div>
+                <>
+                  {/* Empty state when no team selected */}
+                  <div className="flex-1 flex flex-col items-center justify-center p-12 text-center space-y-3">
+                    <Building2 size={36} className="mx-auto text-slate-300" />
+                    <h4 className="text-sm font-bold text-slate-700">No Team Selected</h4>
+                    <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                      Select a team from the participating teams list on the left to see total votes received, associated products, and the complete audit list of student voters.
+                    </p>
+                  </div>
+                  <div className="p-3.5 border-t border-slate-100 shrink-0 bg-slate-50/50 min-h-[56px] flex items-center">
+                    <div className="text-[11px] text-slate-400 italic">Select a team to view voters and pagination</div>
+                  </div>
+                </>
               )}
             </div>
           </div>
         </div>
       )}
 
-      {/* ============================================================== */}
-      {/* SUB-PAGE 4: EXPORT & DRIVE                                     */}
-      {/* ============================================================== */}
-      {subTab === 'export_drive' && (
-        <div className="space-y-6">
-          {/* Export Action Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {/* Card 1: Complete Voting Records */}
-            <article className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200 flex flex-col justify-between space-y-4">
-              <div className="space-y-2">
-                <div className="p-3 w-fit rounded-xl bg-blue-50 text-primary mb-1">
-                  <FileSpreadsheet size={24} />
-                </div>
-                <h3 className="text-base font-bold text-slate-900">Complete Voting Records</h3>
-                <p className="text-xs text-slate-500 leading-relaxed">
-                  Full audit log of every individual vote recorded, including Voter ID, Name, Email, Department, Team ID, Team Name, Product Title, and Timestamp.
-                </p>
-              </div>
 
-              <div className="space-y-2 pt-3 border-t border-slate-100">
-                <button
-                  type="button"
-                  disabled={exportingType === 'complete'}
-                  onClick={() => handleDownloadExcel('complete')}
-                  className="w-full py-2.5 px-3.5 rounded-xl text-xs font-bold text-slate-800 bg-slate-100 hover:bg-slate-200 transition cursor-pointer flex items-center justify-center gap-2"
-                >
-                  <Download size={14} />
-                  <span>{exportingType === 'complete' ? 'Generating...' : 'Download Excel (.xlsx)'}</span>
-                </button>
-                <button
-                  type="button"
-                  disabled={uploadingDriveType === 'complete'}
-                  onClick={() => handleSaveToDrive('complete')}
-                  className="w-full py-2.5 px-3.5 rounded-xl text-xs font-bold text-white bg-primary hover:bg-primary/90 transition cursor-pointer flex items-center justify-center gap-2"
-                >
-                  <HardDrive size={14} />
-                  <span>{uploadingDriveType === 'complete' ? 'Uploading...' : 'Save to Google Drive'}</span>
-                </button>
-              </div>
-            </article>
 
-            {/* Card 2: Team / Product Voters */}
-            <article className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200 flex flex-col justify-between space-y-4">
-              <div className="space-y-2">
-                <div className="p-3 w-fit rounded-xl bg-emerald-50 text-emerald-600 mb-1">
-                  <Building2 size={24} />
-                </div>
-                <h3 className="text-base font-bold text-slate-900">Team / Product Voters</h3>
-                <p className="text-xs text-slate-500 leading-relaxed">
-                  Team-centric report listing every team, department, and product along with the individual student voters who supported them.
-                </p>
-              </div>
+      {/* Field-Selective Export Modal for Voter Reports */}
+      <FieldSelectionExportModal
+        isOpen={isVoterExportModalOpen}
+        onClose={() => setIsVoterExportModalOpen(false)}
+        title="Export Voter Report (.xlsx)"
+        subtitle="Select the fields to include in the exported Excel spreadsheet."
+        fieldGroups={VOTER_EXPORT_FIELDS}
+        selectedFields={selectedVoterExportFields}
+        onToggleField={handleToggleVoterField}
+        onSelectAll={handleSelectAllVoterFields}
+        onClearAll={handleClearAllVoterFields}
+        onDownload={handleDownloadVoterExcel}
+        totalRecordsCount={totalVoterExportRowsCount}
+        recordTypeName="records"
+      />
 
-              <div className="space-y-2 pt-3 border-t border-slate-100">
-                <button
-                  type="button"
-                  disabled={exportingType === 'team_voters'}
-                  onClick={() => handleDownloadExcel('team_voters')}
-                  className="w-full py-2.5 px-3.5 rounded-xl text-xs font-bold text-slate-800 bg-slate-100 hover:bg-slate-200 transition cursor-pointer flex items-center justify-center gap-2"
-                >
-                  <Download size={14} />
-                  <span>{exportingType === 'team_voters' ? 'Generating...' : 'Download Excel (.xlsx)'}</span>
-                </button>
-                <button
-                  type="button"
-                  disabled={uploadingDriveType === 'team_voters'}
-                  onClick={() => handleSaveToDrive('team_voters')}
-                  className="w-full py-2.5 px-3.5 rounded-xl text-xs font-bold text-white bg-primary hover:bg-primary/90 transition cursor-pointer flex items-center justify-center gap-2"
-                >
-                  <HardDrive size={14} />
-                  <span>{uploadingDriveType === 'team_voters' ? 'Uploading...' : 'Save to Google Drive'}</span>
-                </button>
-              </div>
-            </article>
-
-            {/* Card 3: Voter Summary */}
-            <article className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200 flex flex-col justify-between space-y-4">
-              <div className="space-y-2">
-                <div className="p-3 w-fit rounded-xl bg-indigo-50 text-indigo-600 mb-1">
-                  <Users size={24} />
-                </div>
-                <h3 className="text-base font-bold text-slate-900">Voter Summary</h3>
-                <p className="text-xs text-slate-500 leading-relaxed">
-                  Student-centric summary aggregating each distinct student voter, their department, total votes submitted, and list of teams voted for.
-                </p>
-              </div>
-
-              <div className="space-y-2 pt-3 border-t border-slate-100">
-                <button
-                  type="button"
-                  disabled={exportingType === 'voter_summary'}
-                  onClick={() => handleDownloadExcel('voter_summary')}
-                  className="w-full py-2.5 px-3.5 rounded-xl text-xs font-bold text-slate-800 bg-slate-100 hover:bg-slate-200 transition cursor-pointer flex items-center justify-center gap-2"
-                >
-                  <Download size={14} />
-                  <span>{exportingType === 'voter_summary' ? 'Generating...' : 'Download Excel (.xlsx)'}</span>
-                </button>
-                <button
-                  type="button"
-                  disabled={uploadingDriveType === 'voter_summary'}
-                  onClick={() => handleSaveToDrive('voter_summary')}
-                  className="w-full py-2.5 px-3.5 rounded-xl text-xs font-bold text-white bg-primary hover:bg-primary/90 transition cursor-pointer flex items-center justify-center gap-2"
-                >
-                  <HardDrive size={14} />
-                  <span>{uploadingDriveType === 'voter_summary' ? 'Uploading...' : 'Save to Google Drive'}</span>
-                </button>
-              </div>
-            </article>
-          </div>
-
-          {/* Drive Archiving Notice */}
-          <div className="rounded-xl bg-blue-50 p-4 border border-blue-100 text-xs text-blue-800 flex items-start gap-3">
-            <HardDrive className="text-primary shrink-0 mt-0.5" size={18} />
-            <div>
-              <p className="font-bold">Google Drive Storage Location</p>
-              <p className="text-blue-700 mt-0.5">
-                All exported reports are saved into the dedicated <code className="font-semibold bg-white/70 px-1 py-0.5 rounded">IPL 2026 Voting Reports</code> folder on Google Drive. Student submission documents in Phase 1, 2, and 3 folders remain untouched.
-              </p>
-            </div>
-          </div>
-
-          {/* Report History */}
-          <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200 space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                <Clock size={16} className="text-primary" /> Report History ({reportHistory.length})
-              </h4>
-              <button
-                type="button"
-                onClick={() => fetchReportHistory()}
-                disabled={loadingHistory}
-                className="text-xs text-primary font-bold hover:underline cursor-pointer flex items-center gap-1"
-              >
-                <RefreshCw size={12} className={loadingHistory ? 'animate-spin' : ''} /> Refresh History
-              </button>
-            </div>
-
-            {loadingHistory ? (
-              <div className="py-8 text-center text-slate-400 text-xs">Loading report history...</div>
-            ) : reportHistory.length === 0 ? (
-              <div className="py-8 text-center text-slate-400 text-xs">
-                No reports generated yet. Use the action cards above to generate and archive reports.
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead>
-                    <tr className="border-b border-slate-100 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-                      <th className="pb-2.5">File Name</th>
-                      <th className="pb-2.5">Generated At</th>
-                      <th className="pb-2.5">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 text-slate-700">
-                    {reportHistory.map(r => (
-                      <tr key={r.id} className="hover:bg-slate-50/80 transition-colors">
-                        <td className="py-3 font-semibold text-slate-900 flex items-center gap-2">
-                          <FileSpreadsheet size={14} className="text-emerald-600" />
-                          <span>{r.name}</span>
-                        </td>
-                        <td className="py-3 text-slate-500 whitespace-nowrap">
-                          {r.modifiedTime ? new Date(r.modifiedTime).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }) : 'Recently'}
-                        </td>
-                        <td className="py-3 whitespace-nowrap">
-                          {r.webViewLink ? (
-                            <a
-                              href={r.webViewLink}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold text-primary bg-blue-50 hover:bg-blue-100 transition"
-                            >
-                              <ExternalLink size={12} /> View on Drive
-                            </a>
-                          ) : (
-                            <span className="text-slate-400 text-[11px]">Archived</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      {/* Field-Selective Export Modal for Product / Team Reports */}
+      <FieldSelectionExportModal
+        isOpen={isTeamExportModalOpen}
+        onClose={() => setIsTeamExportModalOpen(false)}
+        title="Export Product / Team Report (.xlsx)"
+        subtitle="Select the fields to include in the exported Excel spreadsheet."
+        fieldGroups={TEAM_EXPORT_FIELDS}
+        selectedFields={selectedTeamExportFields}
+        onToggleField={handleToggleTeamField}
+        onSelectAll={handleSelectAllTeamFields}
+        onClearAll={handleClearAllTeamFields}
+        onDownload={handleDownloadTeamExcel}
+        totalRecordsCount={totalTeamExportRowsCount}
+        recordTypeName="records"
+      />
     </div>
   );
 }

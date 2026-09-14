@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { supabase } from "../supabaseClient";
+import * as XLSX from "xlsx";
 import MechanicalLoader from "./MechanicalLoader";
 import AdminSubmissionsReviewCenter from "./AdminSubmissionsReviewCenter";
 import AdminVotingManagement from "./AdminVotingManagement";
@@ -28,7 +29,9 @@ import {
   ShieldCheck,
   ShieldAlert,
   AlertCircle,
-  Sparkles
+  Sparkles,
+  ArrowUp,
+  ArrowDown
 } from "lucide-react";
 
 const rawApiUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000').trim().replace(/\/+$/, '')
@@ -558,7 +561,7 @@ export function clearAdminCache(userId) {
   }
 }
 
-export default function AdminDashboard({ user, profile, onViewPublicPortal, timeLeft }) {
+export default function AdminDashboard({ user, profile, onViewPublicPortal, timeLeft, token }) {
   const adminId = user?.id;
   const hasAdminCache = Boolean(adminId && profile?.role === "admin" && cachedAdminDataByAdmin[adminId]);
   const adminCached = hasAdminCache ? cachedAdminDataByAdmin[adminId] : null;
@@ -597,7 +600,20 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
   const [selectedColumns, setSelectedColumns] = useState(new Set());
 
   // Phase 1 Submissions & Templates States
-  const [authToken, setAuthToken] = useState("");
+  const [authToken, setAuthToken] = useState(token || "");
+
+  useEffect(() => {
+    if (token) {
+      setAuthToken(token);
+    } else {
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        if (session?.access_token) {
+          setAuthToken(session.access_token);
+        }
+      });
+    }
+  }, [token]);
+
   const [phase1Submissions, setPhase1Submissions] = useState([]);
   const [rejectionModalSubId, setRejectionModalSubId] = useState(null);
   const [rejectionReasonInput, setRejectionReasonInput] = useState("");
@@ -688,6 +704,29 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
       return '';
     }
   });
+
+  // Teams Sort States
+  const [teamsSortBy, setTeamsSortBy] = useState(() => {
+    try {
+      return sessionStorage.getItem('admin_teams_sort_by') || 'date';
+    } catch (e) {
+      return 'date';
+    }
+  });
+  const [teamsSortOrder, setTeamsSortOrder] = useState(() => {
+    try {
+      return sessionStorage.getItem('admin_teams_sort_order') || 'desc';
+    } catch (e) {
+      return 'desc';
+    }
+  });
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('admin_teams_sort_by', teamsSortBy);
+      sessionStorage.setItem('admin_teams_sort_order', teamsSortOrder);
+    } catch (e) {}
+  }, [teamsSortBy, teamsSortOrder]);
 
   // Persist State Changes
   useEffect(() => {
@@ -841,11 +880,21 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
         console.warn("[Admin Dashboard] Error reading voting admin metrics:", vErr.message);
       }
 
-      // 2. Fetch profiles
-      const { data: profilesData, error: profilesError } = await supabase
-        .from("profiles")
-        .select("*");
-      if (profilesError) throw profilesError;
+      // 2. Fetch profiles (batched range fetching to overcome PostgREST 1,000-row limit)
+      let profilesData = [];
+      let profFrom = 0;
+      const profPageSize = 1000;
+      while (true) {
+        const { data: batch, error: batchErr } = await supabase
+          .from("profiles")
+          .select("*")
+          .range(profFrom, profFrom + profPageSize - 1);
+        if (batchErr) throw batchErr;
+        if (!batch || batch.length === 0) break;
+        profilesData = profilesData.concat(batch);
+        if (batch.length < profPageSize) break;
+        profFrom += profPageSize;
+      }
 
       const students = profilesData?.filter(p => p.role === "student") || [];
       const evals = profilesData?.filter(p => p.role === "evaluator") || [];
@@ -875,10 +924,21 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
         .select("*");
       if (productsError) throw productsError;
 
-      const { data: membersData, error: membersError } = await supabase
-        .from("product_members")
-        .select("*");
-      if (membersError) throw membersError;
+      // Fetch product_members (batched range fetching to overcome PostgREST 1,000-row limit)
+      let membersData = [];
+      let pmFrom = 0;
+      const pmPageSize = 1000;
+      while (true) {
+        const { data: batch, error: batchErr } = await supabase
+          .from("product_members")
+          .select("*")
+          .range(pmFrom, pmFrom + pmPageSize - 1);
+        if (batchErr) throw batchErr;
+        if (!batch || batch.length === 0) break;
+        membersData = membersData.concat(batch);
+        if (batch.length < pmPageSize) break;
+        pmFrom += pmPageSize;
+      }
 
       const { data: departmentsData, error: departmentsError } = await supabase
         .from("departments")
@@ -946,13 +1006,14 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
           }
         }
 
+        let origReg = null;
         if (displayRegId && regsMap[displayRegId]) {
-          const origReg = regsMap[displayRegId];
+          origReg = regsMap[displayRegId];
           mentorName = origReg.mentor_name || '';
           mentorDept = origReg.mentor_department || '';
           regDate = origReg.created_at || regDate;
         } else {
-          const origReg = (registrationsData || []).find(r => r.team_name && r.team_name.trim().toLowerCase() === (team.team_name || '').trim().toLowerCase());
+          origReg = (registrationsData || []).find(r => r.team_name && r.team_name.trim().toLowerCase() === (team.team_name || '').trim().toLowerCase());
           if (origReg) {
             if (!displayRegId) displayRegId = origReg.registration_id;
             mentorName = origReg.mentor_name || '';
@@ -961,9 +1022,9 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
           }
         }
 
-        const leaderDeptName = deptsMap[leader.department_id] || leader.department_id || '';
-        const m2DeptName = deptsMap[m2.department_id] || m2.department_id || '';
-        const m3DeptName = deptsMap[m3.department_id] || m3.department_id || '';
+        const leaderDeptName = deptsMap[leader.department_id] || leader.department_id || deptsMap[origReg?.leader_department] || origReg?.leader_department || '';
+        const m2DeptName = deptsMap[m2.department_id] || m2.department_id || deptsMap[origReg?.member2_department] || origReg?.member2_department || '';
+        const m3DeptName = deptsMap[m3.department_id] || m3.department_id || deptsMap[origReg?.member3_department] || origReg?.member3_department || '';
         const m4DeptName = deptsMap[m4.department_id] || m4.department_id || '';
 
         const prodEvals = (evaluationsData || []).filter(ev => ev.registration_id === displayRegId);
@@ -1003,19 +1064,19 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
           product_number: teamProducts.length > 1 ? teamProducts.map(p => p.product_number || 1).join(', ') : (primaryProd.product_number || 1),
           status: primaryProd.status || 'active',
 
-          leader_name: leader.member_name || '',
-          leader_email: leader.member_email || '',
-          leader_mobile: leader.member_mobile || '',
+          leader_name: leader.member_name || origReg?.leader_name || '',
+          leader_email: leader.member_email || origReg?.leader_email || '',
+          leader_mobile: leader.member_mobile || origReg?.leader_mobile || '',
           leader_department: leaderDeptName,
 
-          member2_name: m2.member_name || '',
-          member2_email: m2.member_email || '',
-          member2_mobile: m2.member_mobile || '',
+          member2_name: m2.member_name || origReg?.member2_name || '',
+          member2_email: m2.member_email || origReg?.member2_email || '',
+          member2_mobile: m2.member_mobile || origReg?.member2_mobile || '',
           member2_department: m2DeptName,
 
-          member3_name: m3.member_name || '',
-          member3_email: m3.member_email || '',
-          member3_mobile: m3.member_mobile || '',
+          member3_name: m3.member_name || origReg?.member3_name || '',
+          member3_email: m3.member_email || origReg?.member3_email || '',
+          member3_mobile: m3.member_mobile || origReg?.member3_mobile || '',
           member3_department: m3DeptName,
 
           member4_name: m4.member_name || '',
@@ -2208,103 +2269,35 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
     }
   };
 
-  // Styled Excel Export Utility
+  // Genuine OOXML Binary Excel Export Utility
   const downloadExcel = (headers, rows, filename, selectedCols) => {
-    // 1. Column configuration: width mapping based on header name
-    const colTags = headers.map((header, idx) => {
-      let width = 140; // default
-      if (selectedCols && selectedCols[idx]) {
-        width = selectedCols[idx].width;
-      } else {
-        if (["Registration ID", "TRL Level", "Product Number", "Score", "Phase Number"].includes(header)) width = 90;
-        else if (["Team Name", "Leader Name", "Member 2 Name", "Member 3 Name", "Mentor Name", "Evaluator Name", "Department", "Leader Department", "Member 2 Department", "Member 3 Department", "Mentor Department", "Phase Name"].includes(header)) width = 180;
-        else if (["Project Title", "Innovation Domain", "SDG Goals", "Leader Email", "Member 2 Email", "Member 3 Email", "Evaluator Email", "Registration Date", "Submitted Date", "Comments"].includes(header)) width = 280;
-      }
-      return `<col width="${width}" />`;
-    }).join('\n');
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
 
-    // 2. Header cells
-    const headerCells = headers.map(h =>
-      `<th style="background-color: #0b1e36; color: #ffffff; font-family: Calibri, sans-serif; font-size: 11pt; font-weight: bold; border: 1px solid #cbd5e1; height: 35px; text-align: center; vertical-align: middle; white-space: normal;">${h}</th>`
-    ).join('');
+    // Apply column widths based on selectedCols configuration or default
+    if (selectedCols && selectedCols.length > 0) {
+      ws['!cols'] = selectedCols.map(col => ({
+        wch: col.width ? Math.max(12, Math.round(col.width / 7)) : 20
+      }));
+    } else {
+      ws['!cols'] = headers.map(() => ({ wch: 20 }));
+    }
 
-    // 3. Row mapping
-    const rowLines = rows.map((row, rIdx) => {
-      // Alternating row background shading
-      const bg = rIdx % 2 === 0 ? '#ffffff' : '#f8fafc';
-      const cells = row.map((val, cIdx) => {
-        let isCenter = false;
-        let wrapText = true;
-        let alignTop = false;
+    // Freeze header row
+    ws['!views'] = [{ state: 'frozen', ySplit: 1 }];
 
-        const header = headers[cIdx];
+    // Auto-filter for data rows
+    if (rows.length > 0) {
+      const lastColIndex = headers.length - 1;
+      const lastColLetter = XLSX.utils.encode_col(lastColIndex);
+      ws['!autofilter'] = { ref: `A1:${lastColLetter}${rows.length + 1}` };
+    }
 
-        if (selectedCols && selectedCols[cIdx]) {
-          isCenter = selectedCols[cIdx].isCenter;
-          wrapText = selectedCols[cIdx].wrap !== false;
-          alignTop = selectedCols[cIdx].alignTop === true;
-        } else {
-          isCenter = ["Registration ID", "TRL Level", "Product Number", "Score", "Phase Number", "Registration Date", "Submitted Date", "Leader Mobile", "Member 2 Mobile", "Member 3 Mobile"].includes(header);
-        }
-
-        const alignment = isCenter ? 'center' : 'left';
-        const valign = alignTop ? 'top' : 'middle';
-        const whiteSpace = wrapText ? 'normal' : 'nowrap';
-
-        // Escape HTML special characters
-        const escapedVal = String(val === null || val === undefined ? '' : val)
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;')
-          .replace(/"/g, '&quot;')
-          .replace(/'/g, '&#039;');
-
-        return `<td style="background-color: ${bg}; color: #334155; font-family: Calibri, sans-serif; font-size: 10pt; border: 1px solid #e2e8f0; padding: 8px; text-align: ${alignment}; vertical-align: ${valign}; white-space: ${whiteSpace};">${escapedVal}</td>`;
-      }).join('');
-      return `<tr style="height: 26px;">${cells}</tr>`;
-    }).join('\n');
-
-    const xmlContent = `
-<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
-<head>
-  <meta http-equiv="content-type" content="text/html; charset=utf-8" />
-  <!--[if gte mso 9]>
-  <xml>
-    <x:ExcelWorkbook>
-      <x:ExcelWorksheets>
-        <x:ExcelWorksheet>
-          <x:Name>Sheet 1</x:Name>
-          <x:WorksheetOptions>
-            <x:Selected/>
-            <x:FreezePanes/>
-            <x:FrozenNoSplit/>
-            <x:SplitHorizontal>1</x:SplitHorizontal>
-            <x:TopRowBottomPane>1</x:TopRowBottomPane>
-            <x:ActivePane>2</x:ActivePane>
-          </x:WorksheetOptions>
-        </x:ExcelWorksheet>
-      </x:ExcelWorksheets>
-    </x:ExcelWorkbook>
-  </xml>
-  <![endif]-->
-</head>
-<body>
-  <table border="1" style="border-collapse: collapse; border: 1px solid #cbd5e1;">
-    ${colTags}
-    <thead>
-      <tr style="height: 35px;">
-        ${headerCells}
-      </tr>
-    </thead>
-    <tbody>
-      ${rowLines}
-    </tbody>
-  </table>
-</body>
-</html>
-    `.trim();
-
-    const blob = new Blob([xmlContent], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+    XLSX.utils.book_append_sheet(wb, ws, 'Teams');
+    const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([wbout], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
@@ -2313,6 +2306,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const allColumnKeys = EXPORT_COLUMN_GROUPS.flatMap(group => group.columns.map(col => col.key));
@@ -2573,6 +2567,27 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
     }
 
     return true;
+  });
+
+  // Sort filtered registrations based on selected sort field and direction
+  filteredRegistrations.sort((a, b) => {
+    let diff = 0;
+    if (teamsSortBy === 'name') {
+      diff = (a.team_name || '').localeCompare(b.team_name || '', undefined, { sensitivity: 'base' });
+    } else if (teamsSortBy === 'reg_id') {
+      diff = (a.registration_id || '').localeCompare(b.registration_id || '', undefined, { numeric: true, sensitivity: 'base' });
+    } else if (teamsSortBy === 'domain') {
+      diff = (a.innovation_domain || '').localeCompare(b.innovation_domain || '', undefined, { sensitivity: 'base' });
+    } else if (teamsSortBy === 'department') {
+      diff = (a.leader_department || '').localeCompare(b.leader_department || '', undefined, { sensitivity: 'base' });
+    } else if (teamsSortBy === 'trl') {
+      const trlA = Number(a.trl_level || (a.products && a.products[0]?.trl_level) || 0);
+      const trlB = Number(b.trl_level || (b.products && b.products[0]?.trl_level) || 0);
+      diff = trlA - trlB;
+    } else if (teamsSortBy === 'date') {
+      diff = new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime();
+    }
+    return teamsSortOrder === 'asc' ? diff : -diff;
   });
 
   // Pagination calculation
@@ -3584,7 +3599,40 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
                         </select>
                       </div>
 
-                      {(filterDepartment || filterDomain || filterTrl || teamsSearch) && (
+                      {/* Sort By & Direction */}
+                      <div className="flex flex-col grow min-w-[170px] w-full sm:w-auto">
+                        <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Sort By</label>
+                        <div className="flex items-center gap-1.5">
+                          <select
+                            value={teamsSortBy}
+                            onChange={(e) => {
+                              setTeamsSortBy(e.target.value);
+                              setCurrentPage(1);
+                            }}
+                            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 sm:px-2 sm:py-1.5 text-sm sm:text-xs outline-none focus:border-primary text-slate-700 font-semibold sm:font-medium cursor-pointer"
+                          >
+                            <option value="date">Date Registered</option>
+                            <option value="name">Team Name</option>
+                            <option value="reg_id">Registration ID</option>
+                            <option value="domain">Innovation Domain</option>
+                            <option value="department">Department</option>
+                            <option value="trl">TRL Level</option>
+                          </select>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setTeamsSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
+                              setCurrentPage(1);
+                            }}
+                            title={`Sort Order: ${teamsSortOrder === 'asc' ? 'Ascending' : 'Descending'} (click to toggle)`}
+                            className="p-2 sm:p-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 transition cursor-pointer flex items-center justify-center shrink-0"
+                          >
+                            {teamsSortOrder === 'asc' ? <ArrowUp size={14} className="text-primary" /> : <ArrowDown size={14} className="text-primary" />}
+                          </button>
+                        </div>
+                      </div>
+
+                      {(filterDepartment || filterDomain || filterTrl || teamsSearch || teamsSortBy !== 'date' || teamsSortOrder !== 'desc') && (
                         <div className="flex items-end w-full sm:w-auto mt-2 sm:mt-0">
                           <button
                             type="button"
@@ -3593,6 +3641,8 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
                               setFilterDomain("");
                               setFilterTrl("");
                               setTeamsSearch("");
+                              setTeamsSortBy("date");
+                              setTeamsSortOrder("desc");
                               setCurrentPage(1);
                             }}
                             className="w-full text-xs text-red-500 hover:text-red-700 font-bold sm:font-semibold px-3 py-2 sm:px-3 sm:py-1.5 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 transition cursor-pointer"

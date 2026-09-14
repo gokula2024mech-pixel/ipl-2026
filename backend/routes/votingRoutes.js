@@ -2858,44 +2858,98 @@ function buildVotingWorkbook({
 }
 
 /**
+ * Safe Range Batch Fetcher
+ * Circumvents PostgREST 1,000-row default ceiling by paging in batches of 1,000
+ */
+async function fetchAllBatchedRows(tableName, selectColumns, orderCol = null, ascending = false) {
+  const allRows = [];
+  const pageSize = 1000;
+  let from = 0;
+  while (true) {
+    let query = supabase.from(tableName).select(selectColumns).range(from, from + pageSize - 1);
+    if (orderCol) {
+      query = query.order(orderCol, { ascending });
+    }
+    const { data, error } = await query;
+    if (error) {
+      console.warn(`[fetchAllBatchedRows] Error fetching from ${tableName} (range ${from}-${from + pageSize - 1}):`, error.message);
+      break;
+    }
+    if (!data || data.length === 0) break;
+    allRows.push(...data);
+    if (data.length < pageSize) break;
+    from += pageSize;
+  }
+  return allRows;
+}
+
+/**
  * Authoritative voting records aggregator with graceful database fallbacks
  */
 async function getAllVotingRecords() {
   let votesList = [];
   try {
-    const { data: dbVotes, error: dbErr } = await supabase
-      .from('votes')
-      .select('id, voter_user_id, voter_department, team_id, product_id, created_at')
-      .order('created_at', { ascending: false });
-    if (!dbErr && Array.isArray(dbVotes)) {
+    // 1. Authoritative: Fetch all votes from product_votes using range batching
+    const dbVotes = await fetchAllBatchedRows(
+      'product_votes',
+      'id, product_id, voter_user_id, team_id, voter_department, voting_round, created_at',
+      'created_at',
+      false
+    );
+    if (Array.isArray(dbVotes) && dbVotes.length > 0) {
       votesList = dbVotes;
     } else {
-      votesList = [...fallbackVotes].reverse();
+      // Fallback check on votes table if product_votes is empty
+      const { data: legacyVotes } = await supabase
+        .from('votes')
+        .select('id, voter_user_id, voter_department, team_id, product_id, created_at')
+        .order('created_at', { ascending: false });
+      if (Array.isArray(legacyVotes) && legacyVotes.length > 0) {
+        votesList = legacyVotes;
+      } else {
+        votesList = [...fallbackVotes].reverse();
+      }
     }
   } catch (e) {
+    console.warn('[getAllVotingRecords] Error querying votes:', e.message);
     votesList = [...fallbackVotes].reverse();
   }
 
-  // Fetch teams, registrations, products, profiles in parallel
+  // 2. Fetch profiles using range batching (1,800+ records exceeds 1,000 limit)
+  let profsData = [];
+  try {
+    profsData = await fetchAllBatchedRows(
+      'profiles',
+      'user_id, name, email, department'
+    );
+  } catch (e) {
+    console.warn('[getAllVotingRecords] Error querying profiles:', e.message);
+  }
+
+  // 3. Fetch teams, registrations, products, and phase3_shortlist in parallel
   const [
     { data: teamsData },
     { data: regsData },
     { data: prodsData },
-    { data: profsData }
+    { data: slData }
   ] = await Promise.all([
     supabase.from('teams').select('id, team_name'),
-    supabase.from('registrations').select('id, registration_id, team_name, leader_name, leader_email, leader_department, project_title'),
-    supabase.from('products').select('id, team_id, product_title, innovation_domain, status'),
-    supabase.from('profiles').select('user_id, name, email, department')
+    supabase.from('registrations').select('id, registration_id, team_name, leader_name, leader_email, leader_department, project_title, innovation_domain'),
+    supabase.from('products').select('id, team_id, product_title, innovation_domain, status, legacy_registration_id'),
+    supabase.from('phase3_shortlist').select('registration_id, product_id, team_id, category')
   ]);
 
   const teamMap = new Map();
   (teamsData || []).forEach(t => teamMap.set(t.id, t));
 
   const regByTeamName = new Map();
+  const regById = new Map();
   (regsData || []).forEach(r => {
     if (r.team_name) {
       regByTeamName.set(r.team_name.trim().toLowerCase(), r);
+    }
+    if (r.registration_id) {
+      regById.set(r.registration_id.trim().toUpperCase(), r);
     }
   });
 
@@ -2914,16 +2968,30 @@ async function getAllVotingRecords() {
     if (p.user_id) profileMap.set(p.user_id, p);
   });
 
+  const shortlistByProdId = new Map();
+  const shortlistByTeamId = new Map();
+  const shortlistByRegId = new Map();
+  (slData || []).forEach(sl => {
+    if (sl.product_id) shortlistByProdId.set(sl.product_id, sl);
+    if (sl.team_id) shortlistByTeamId.set(sl.team_id, sl);
+    if (sl.registration_id) shortlistByRegId.set(sl.registration_id.trim().toUpperCase(), sl);
+  });
+
   return {
     votes: votesList,
     teamMap,
     regByTeamName,
+    regById,
     prodByTeamId,
     prodById,
     profileMap,
+    shortlistByProdId,
+    shortlistByTeamId,
+    shortlistByRegId,
     teams: teamsData || [],
     registrations: regsData || [],
-    products: prodsData || []
+    products: prodsData || [],
+    shortlist: slData || []
   };
 }
 
@@ -2933,7 +3001,7 @@ async function getAllVotingRecords() {
 // -------------------------------------------------------------
 router.get('/admin/voter-reports', authenticateUser, checkAdmin, async (req, res) => {
   try {
-    const { search = '', voter_id = '' } = req.query;
+    const { search = '', voter_id = '', department = '' } = req.query;
     const { votes, teamMap, regByTeamName, prodByTeamId, prodById, profileMap } = await getAllVotingRecords();
 
     // Group votes by voter_user_id
@@ -2943,18 +3011,22 @@ router.get('/admin/voter-reports', authenticateUser, checkAdmin, async (req, res
         const prof = profileMap.get(v.voter_user_id);
         const name = prof?.name || (prof?.email ? prof.email.split('@')[0] : 'Student Voter');
         const email = prof?.email || 'N/A';
-        const dept = v.voter_department || prof?.department || 'Mechanical Engineering';
+        const dept = normalizeDepartment(v.voter_department || prof?.department);
         voterMap.set(v.voter_user_id, {
           userId: v.voter_user_id,
           name,
           email,
           department: dept,
           totalVotes: 0,
+          latestVoteAt: null,
           history: []
         });
       }
       const entry = voterMap.get(v.voter_user_id);
       entry.totalVotes += 1;
+      if (!entry.latestVoteAt || new Date(v.created_at) > new Date(entry.latestVoteAt)) {
+        entry.latestVoteAt = v.created_at;
+      }
 
       const team = teamMap.get(v.team_id);
       const reg = team ? regByTeamName.get((team.team_name || '').trim().toLowerCase()) : null;
@@ -2972,6 +3044,11 @@ router.get('/admin/voter-reports', authenticateUser, checkAdmin, async (req, res
       });
     });
 
+    // Ensure voter history is sorted newest first
+    voterMap.forEach(entry => {
+      entry.history.sort((a, b) => new Date(b.votedAt) - new Date(a.votedAt));
+    });
+
     let allVoters = Array.from(voterMap.values());
 
     // Single voter deep-dive
@@ -2983,7 +3060,13 @@ router.get('/admin/voter-reports', authenticateUser, checkAdmin, async (req, res
       return res.status(200).json({ success: true, voter: match });
     }
 
-    // Server-side search filter
+    // Optional server-side department filter
+    if (department && department.trim() && department !== 'all' && department !== 'All Departments') {
+      const dNorm = department.trim().toLowerCase();
+      allVoters = allVoters.filter(v => v.department.toLowerCase().includes(dNorm));
+    }
+
+    // Optional server-side search filter
     if (search && search.trim()) {
       const q = search.trim().toLowerCase();
       allVoters = allVoters.filter(v =>
@@ -3015,39 +3098,99 @@ router.get('/admin/voter-reports', authenticateUser, checkAdmin, async (req, res
 router.get('/admin/team-reports', authenticateUser, checkAdmin, async (req, res) => {
   try {
     const { search = '', department = '', team_id = '' } = req.query;
-    const { votes, teamMap, regByTeamName, prodByTeamId, profileMap, teams } = await getAllVotingRecords();
+    const {
+      votes,
+      teamMap,
+      regByTeamName,
+      regById,
+      prodByTeamId,
+      prodById,
+      profileMap,
+      shortlistByProdId,
+      shortlistByTeamId,
+      shortlistByRegId,
+      teams
+    } = await getAllVotingRecords();
 
-    // Group votes by team_id
+    // 1. Tally votes per product and group voters by team_id
+    const productVoteCountsMap = new Map();
     const teamVotesMap = new Map();
     votes.forEach(v => {
-      if (!teamVotesMap.has(v.team_id)) {
-        teamVotesMap.set(v.team_id, []);
+      if (v.product_id) {
+        productVoteCountsMap.set(v.product_id, (productVoteCountsMap.get(v.product_id) || 0) + 1);
       }
-      const prof = profileMap.get(v.voter_user_id);
-      teamVotesMap.get(v.team_id).push({
-        voteId: v.id,
-        voterUserId: v.voter_user_id,
-        voterName: prof?.name || (prof?.email ? prof.email.split('@')[0] : 'Student Voter'),
-        voterEmail: prof?.email || 'N/A',
-        voterDepartment: v.voter_department || prof?.department || 'Mechanical Engineering',
-        votedAt: v.created_at
-      });
+      if (v.team_id) {
+        if (!teamVotesMap.has(v.team_id)) {
+          teamVotesMap.set(v.team_id, []);
+        }
+        const prof = profileMap.get(v.voter_user_id);
+        const prod = prodById.get(v.product_id);
+        teamVotesMap.get(v.team_id).push({
+          voteId: v.id,
+          productId: v.product_id || null,
+          productTitle: prod?.product_title || 'Project Showcase',
+          voterUserId: v.voter_user_id,
+          voterName: prof?.name || (prof?.email ? prof.email.split('@')[0] : 'Student Voter'),
+          voterEmail: prof?.email || 'N/A',
+          voterDepartment: normalizeDepartment(v.voter_department || prof?.department),
+          votedAt: v.created_at
+        });
+      }
     });
 
-    // Build comprehensive list of teams
+    // 2. Build comprehensive list of teams with product-level vote details
     const allTeams = teams.map(t => {
       const reg = regByTeamName.get((t.team_name || '').trim().toLowerCase());
       const dept = normalizeDepartment(reg?.leader_department);
       const prods = prodByTeamId.get(t.id) || [];
-      const prodList = prods.length > 0 ? prods.map(p => ({
-        productTitle: p.product_title,
-        innovationDomain: p.innovation_domain || 'Open Innovation'
-      })) : [{
+
+      // Check shortlist status from phase3_shortlist
+      const isShortlisted = shortlistByTeamId.has(t.id) ||
+        (reg && shortlistByRegId.has(reg.registration_id?.trim().toUpperCase())) ||
+        prods.some(p => shortlistByProdId.has(p.id));
+
+      const slEntry = shortlistByTeamId.get(t.id) ||
+        (reg && shortlistByRegId.get(reg.registration_id?.trim().toUpperCase())) ||
+        prods.map(p => shortlistByProdId.get(p.id)).find(Boolean);
+
+      const shortlistCategory = slEntry?.category || null;
+
+      // Map product list with exact product-level votes
+      const prodList = prods.length > 0 ? prods.map(p => {
+        const pVotes = productVoteCountsMap.get(p.id) || 0;
+        const isProdShortlisted = shortlistByProdId.has(p.id);
+        const pSl = shortlistByProdId.get(p.id);
+        return {
+          productId: p.id,
+          productTitle: p.product_title || 'Project Showcase',
+          innovationDomain: p.innovation_domain || 'Open Innovation',
+          productVotes: pVotes,
+          score: pVotes * 2,
+          isShortlisted: isProdShortlisted,
+          shortlistCategory: pSl?.category || null
+        };
+      }) : [{
+        productId: null,
         productTitle: reg?.project_title || 'Project Showcase',
-        innovationDomain: reg?.innovation_domain || 'Open Innovation'
+        innovationDomain: reg?.innovation_domain || 'Open Innovation',
+        productVotes: 0,
+        score: 0,
+        isShortlisted: false,
+        shortlistCategory: null
       }];
 
+      // Team total votes = sum of votes received by all products belonging to that team
+      // Prevents double-counting and correctly sums for multi-product teams
+      const teamTotalVotes = prods.length > 0
+        ? prods.reduce((sum, p) => sum + (productVoteCountsMap.get(p.id) || 0), 0)
+        : (teamVotesMap.get(t.id) || []).length;
+
+      // Authoritative formula: Score = Votes * 2
+      const teamScore = teamTotalVotes * 2;
+
       const votersForTeam = teamVotesMap.get(t.id) || [];
+      // Sort voters newest first
+      votersForTeam.sort((a, b) => new Date(b.votedAt) - new Date(a.votedAt));
 
       return {
         id: t.id,
@@ -3055,7 +3198,10 @@ router.get('/admin/team-reports', authenticateUser, checkAdmin, async (req, res)
         teamName: t.team_name,
         department: dept,
         products: prodList,
-        totalVotes: votersForTeam.length,
+        totalVotes: teamTotalVotes,
+        score: teamScore,
+        isShortlisted: !!isShortlisted,
+        shortlistCategory,
         voters: votersForTeam
       };
     });
@@ -3070,7 +3216,7 @@ router.get('/admin/team-reports', authenticateUser, checkAdmin, async (req, res)
     }
 
     let filtered = allTeams;
-    if (department && department.trim() && department !== 'all') {
+    if (department && department.trim() && department !== 'all' && department !== 'All Departments') {
       const dNorm = department.trim().toLowerCase();
       filtered = filtered.filter(t => t.department.toLowerCase().includes(dNorm));
     }
@@ -3111,7 +3257,7 @@ router.get(['/admin/export-data', '/admin/export-binary'], authenticateUser, che
     if (req.path.includes('export-binary')) {
       format = 'xlsx';
     }
-    const { votes, teamMap, regByTeamName, prodByTeamId, profileMap, teams, registrations, products } = await getAllVotingRecords();
+    const { votes, teamMap, regByTeamName, prodByTeamId, prodById, profileMap, teams, registrations, products } = await getAllVotingRecords();
     const controls = readLocalVotingControls();
 
     const { workbook, sheetData } = buildVotingWorkbook({
@@ -3130,6 +3276,7 @@ router.get(['/admin/export-data', '/admin/export-binary'], authenticateUser, che
       teamMap,
       regByTeamName,
       prodByTeamId,
+      prodById,
       profileMap,
       teams,
       registrations
@@ -3177,7 +3324,7 @@ router.get(['/admin/export-data', '/admin/export-binary'], authenticateUser, che
 router.post('/admin/export-upload-drive', authenticateUser, checkAdmin, async (req, res) => {
   try {
     const { type = 'complete' } = req.body;
-    const { votes, teamMap, regByTeamName, prodByTeamId, profileMap, teams, registrations, products } = await getAllVotingRecords();
+    const { votes, teamMap, regByTeamName, prodByTeamId, prodById, profileMap, teams, registrations, products } = await getAllVotingRecords();
     const controls = readLocalVotingControls();
 
     const { workbook } = buildVotingWorkbook({
@@ -3196,6 +3343,7 @@ router.post('/admin/export-upload-drive', authenticateUser, checkAdmin, async (r
       teamMap,
       regByTeamName,
       prodByTeamId,
+      prodById,
       profileMap,
       teams,
       registrations
