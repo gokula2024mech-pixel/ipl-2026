@@ -269,7 +269,17 @@ export default function MySubmissionsPage({
   const [submissions, setSubmissions] = useState(() => userCachedData?.submissions || []);
   const [loading, setLoading] = useState(() => !userCachedData);
   const [authExpired, setAuthExpired] = useState(false);
-  const [userEmail, setUserEmail] = useState("");
+  const [userEmail, setUserEmail] = useState(
+    () => initialUser?.email || initialSession?.user?.email || ""
+  );
+
+  useEffect(() => {
+    const email = initialUser?.email || initialSession?.user?.email;
+    if (email && email !== userEmail) {
+      setUserEmail(email);
+    }
+  }, [initialUser?.email, initialSession?.user?.email]);
+
   const [phasesList, setPhasesList] = useState([]);
 
   const [phase1Active, setPhase1Active] = useState(false);
@@ -4196,7 +4206,12 @@ export default function MySubmissionsPage({
                 (s) => Boolean(s?.post_url)
               ).length;
 
-              const currentUserEmail = (user?.email || "").toLowerCase().trim();
+              const currentUserEmail = (
+                userEmail ||
+                initialUser?.email ||
+                initialSession?.user?.email ||
+                ""
+              ).toLowerCase().trim();
               const leaderEmail = (phase3Data?.members?.leader?.email || currentTeam?.members?.leader?.email || "").toLowerCase().trim();
               const member1Email = (phase3Data?.members?.member1?.email || currentTeam?.members?.member2?.email || "").toLowerCase().trim();
               const member2Email = (phase3Data?.members?.member2?.email || currentTeam?.members?.member3?.email || "").toLowerCase().trim();
