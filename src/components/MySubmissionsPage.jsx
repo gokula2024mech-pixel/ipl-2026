@@ -1929,6 +1929,64 @@ export default function MySubmissionsPage({
     };
   }, [selectedPhase, fetchPhase3Data]);
 
+  const isValidLinkedInPostUrl = (val) => {
+    if (!val || typeof val !== "string") return false;
+    const trimmed = val.trim();
+    if (!trimmed || trimmed.length > 1000) return false;
+
+    let urlObj;
+    try {
+      urlObj = new URL(trimmed);
+    } catch {
+      return false;
+    }
+
+    if (urlObj.protocol !== "https:") return false;
+
+    const hostname = urlObj.hostname.toLowerCase();
+    const pathname = urlObj.pathname;
+
+    // 1. LinkedIn short post URL: https://lnkd.in/p/<short-code>
+    const isLnkdInDomain = hostname === "lnkd.in" || hostname.endsWith(".lnkd.in");
+    if (isLnkdInDomain) {
+      if (!pathname.startsWith("/p/")) return false;
+      const code = pathname.slice(3).replace(/\/+$/, "").trim();
+      return code.length > 0;
+    }
+
+    // 2-7. Standard post, feed update, pulse
+    const isLinkedInDomain = hostname === "linkedin.com" || hostname.endsWith(".linkedin.com");
+    if (isLinkedInDomain) {
+      if (
+        pathname.startsWith("/in/") ||
+        pathname === "/in" ||
+        pathname.startsWith("/company/") ||
+        pathname === "/company"
+      ) {
+        return false;
+      }
+
+      if (pathname.startsWith("/posts/")) {
+        const slug = pathname.slice(7).replace(/\/+$/, "").trim();
+        return slug.length > 0;
+      }
+
+      if (pathname.startsWith("/feed/update/")) {
+        const slug = pathname.slice(13).replace(/\/+$/, "").trim();
+        return slug.length > 0;
+      }
+
+      if (pathname.startsWith("/pulse/")) {
+        const slug = pathname.slice(7).replace(/\/+$/, "").trim();
+        return slug.length > 0;
+      }
+
+      return false;
+    }
+
+    return false;
+  };
+
   const handleSaveLinkedInSubmission = async (role) => {
     const rawUrl = (phase3Urls[role] || "").trim();
     if (!rawUrl) {
@@ -1937,6 +1995,17 @@ export default function MySubmissionsPage({
         type: "warning",
         title: "Required",
         message: "Please enter a LinkedIn post link before saving."
+      });
+      return;
+    }
+
+    if (!isValidLinkedInPostUrl(rawUrl)) {
+      const err = "Invalid LinkedIn post link. Accepted: https://www.linkedin.com/posts/..., https://linkedin.com/feed/update/..., https://linkedin.com/pulse/..., or https://lnkd.in/p/<code-here>. Profile and company links are rejected.";
+      setPhase3UrlErrors((prev) => ({ ...prev, [role]: err }));
+      showToast({
+        type: "error",
+        title: "Invalid URL",
+        message: "Invalid LinkedIn post URL. Short URLs must begin with https://lnkd.in/p/."
       });
       return;
     }
@@ -4127,7 +4196,14 @@ export default function MySubmissionsPage({
                 (s) => Boolean(s?.post_url)
               ).length;
 
-              const isLeader = currentTeam?.userRole === "Team Leader";
+              const currentUserEmail = (user?.email || "").toLowerCase().trim();
+              const leaderEmail = (phase3Data?.members?.leader?.email || currentTeam?.members?.leader?.email || "").toLowerCase().trim();
+              const member1Email = (phase3Data?.members?.member1?.email || currentTeam?.members?.member2?.email || "").toLowerCase().trim();
+              const member2Email = (phase3Data?.members?.member2?.email || currentTeam?.members?.member3?.email || "").toLowerCase().trim();
+
+              const isLeader = (currentUserEmail && currentUserEmail === leaderEmail) || currentTeam?.userRole === "Team Leader";
+              const isMember1 = Boolean(currentUserEmail && currentUserEmail === member1Email);
+              const isMember2 = Boolean(currentUserEmail && currentUserEmail === member2Email);
 
               const slots = [
                 {
@@ -4146,7 +4222,7 @@ export default function MySubmissionsPage({
                   canEdit:
                     phase3Data?.canEdit !== undefined
                       ? Boolean(phase3Data.canEdit.leader)
-                      : true,
+                      : isLeader,
                 },
                 {
                   role: "member1",
@@ -4164,7 +4240,7 @@ export default function MySubmissionsPage({
                   canEdit:
                     phase3Data?.canEdit !== undefined
                       ? Boolean(phase3Data.canEdit.member1)
-                      : true,
+                      : (isLeader || isMember1),
                 },
                 {
                   role: "member2",
@@ -4182,7 +4258,7 @@ export default function MySubmissionsPage({
                   canEdit:
                     phase3Data?.canEdit !== undefined
                       ? Boolean(phase3Data.canEdit.member2)
-                      : true,
+                      : (isLeader || isMember2),
                 },
               ];
 
@@ -4387,7 +4463,9 @@ export default function MySubmissionsPage({
                                   </div>
                                 ) : (
                                   <p className="text-[11px] text-slate-400 italic">
-                                    Any team member can upload or update this LinkedIn post.
+                                    {slot.role === "leader"
+                                      ? "Only the Team Leader can manage this LinkedIn post."
+                                      : `Only the Team Leader or ${slot.name} can manage this LinkedIn post.`}
                                   </p>
                                 )}
                               </div>
@@ -4492,7 +4570,9 @@ export default function MySubmissionsPage({
 
                                 {!slot.canEdit && (
                                   <p className="text-[11px] text-slate-400 italic mt-1.5">
-                                    Any team member can upload or update this LinkedIn post.
+                                    {slot.role === "leader"
+                                      ? "Only the Team Leader can manage this LinkedIn post."
+                                      : `Only the Team Leader or ${slot.name} can manage this LinkedIn post.`}
                                   </p>
                                 )}
                               </div>

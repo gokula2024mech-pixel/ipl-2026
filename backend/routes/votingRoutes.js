@@ -23,7 +23,6 @@ function readLocalVotingControls() {
           id: 1,
           is_voting_active: Boolean(parsed.is_voting_active),
           is_qr_generation_active: Boolean(parsed.is_qr_generation_active),
-          is_likes_active: typeof parsed.is_likes_active === 'boolean' ? parsed.is_likes_active : false,
           current_voting_round: parseInt(parsed.current_voting_round, 10) || 1,
           updated_at: parsed.updated_at || new Date().toISOString()
         };
@@ -36,7 +35,6 @@ function readLocalVotingControls() {
     id: 1,
     is_voting_active: false,
     is_qr_generation_active: false,
-    is_likes_active: false,
     current_voting_round: 1,
     updated_at: new Date().toISOString()
   };
@@ -192,17 +190,6 @@ async function getVotingControls() {
 
     if (!error && data) {
       // Supabase is authoritative
-      const isLikesActive = typeof data.is_likes_active === 'boolean'
-        ? data.is_likes_active
-        : (typeof data.likes_enabled === 'boolean' ? data.likes_enabled : null);
-
-      if (isLikesActive !== null) {
-        data.is_likes_active = isLikesActive;
-      } else {
-        const local = readLocalVotingControls();
-        data.is_likes_active = typeof local.is_likes_active === 'boolean' ? local.is_likes_active : false;
-      }
-
       Object.assign(fallbackControls, data);
       // Synchronize local file cache with authoritative state
       writeLocalVotingControls(data);
@@ -784,13 +771,9 @@ async function buildTeamShowcaseAndEligibility(teamId, voterUser, fromQr = false
 router.get(['/status', '/controls'], async (req, res) => {
   try {
     const controls = await getVotingControls();
-    const isLikesActive = controls && typeof controls.is_likes_active === 'boolean'
-      ? controls.is_likes_active
-      : false;
     const ctrlData = {
       is_voting_active: Boolean(controls?.is_voting_active || controls?.community_voting_enabled),
       is_qr_generation_active: Boolean(controls?.is_qr_generation_active || controls?.qr_generation_enabled),
-      is_likes_active: isLikesActive,
       community_voting_enabled: Boolean(controls?.community_voting_enabled || controls?.is_voting_active),
       qr_generation_enabled: Boolean(controls?.qr_generation_enabled || controls?.is_qr_generation_active),
       current_voting_round: controls?.current_voting_round || 1,
@@ -1231,6 +1214,21 @@ router.post('/vote', authenticateUser, voteLimiter, async (req, res) => {
         // Direct Fallback Execution
 
         const showcase = await buildTeamShowcaseAndEligibility(team_id, req.user);
+
+        // Check Phase 3 Shortlist Guard (Fail-Closed)
+        const selectedProduct = (showcase.products || []).find(p => p.id === product_id);
+        let isSl = selectedProduct?.is_shortlisted;
+        if (!isSl && req.testStore?.shortlist) {
+          isSl = req.testStore.shortlist.some(s => s.product_id === product_id);
+        }
+        if (selectedProduct && !isSl) {
+          inflightVoteLocks.delete(inflightLockKey);
+          return res.status(403).json({
+            success: false,
+            error_code: 'PHASE3_NOT_SHORTLISTED',
+            message: 'This idea is not shortlisted for Phase 3 voting.'
+          });
+        }
 
         // Check team-level own team eligibility
         if (showcase.eligibility?.is_own_team) {
@@ -2363,7 +2361,6 @@ router.get('/admin/metrics', authenticateUser, checkAdmin, async (req, res) => {
         lastVoteAt,
         isVotingActive: controls?.is_voting_active || false,
         isQrGenerationActive: controls?.is_qr_generation_active || false,
-        isLikesActive: controls && typeof controls.is_likes_active === 'boolean' ? controls.is_likes_active : false,
         currentVotingRound: controls?.current_voting_round || 1,
         serverTime: new Date().toISOString()
       }
@@ -2381,14 +2378,12 @@ router.get('/admin/metrics', authenticateUser, checkAdmin, async (req, res) => {
 router.get('/admin/controls', authenticateUser, checkAdmin, async (req, res) => {
   try {
     const controls = await getVotingControls();
-    const isLikesActive = controls && typeof controls.is_likes_active === 'boolean' ? controls.is_likes_active : false;
     return res.status(200).json({
       success: true,
       controls: {
         id: controls?.id || 1,
         is_voting_active: Boolean(controls?.is_voting_active),
         is_qr_generation_active: Boolean(controls?.is_qr_generation_active),
-        is_likes_active: isLikesActive,
         current_voting_round: controls?.current_voting_round || 1,
         updated_at: controls?.updated_at || new Date().toISOString()
       }
@@ -2405,7 +2400,7 @@ router.get('/admin/controls', authenticateUser, checkAdmin, async (req, res) => 
 // -------------------------------------------------------------
 router.post('/admin/controls', authenticateUser, checkAdmin, async (req, res) => {
   try {
-    const { is_voting_active, is_qr_generation_active, is_likes_active, current_voting_round } = req.body;
+    const { is_voting_active, is_qr_generation_active, current_voting_round } = req.body;
 
     const current = await getVotingControls();
 
@@ -2417,17 +2412,12 @@ router.post('/admin/controls', authenticateUser, checkAdmin, async (req, res) =>
       ? Boolean(is_qr_generation_active)
       : (req.body.qr_generation_enabled !== undefined ? Boolean(req.body.qr_generation_enabled) : Boolean(current.is_qr_generation_active || current.qr_generation_enabled));
 
-    const activeLikes = is_likes_active !== undefined
-      ? Boolean(is_likes_active)
-      : (current && typeof current.is_likes_active === 'boolean' ? current.is_likes_active : false);
-
     const payload = {
       id: 1,
       community_voting_enabled: activeVoting,
       is_voting_active: activeVoting,
       qr_generation_enabled: activeQr,
       is_qr_generation_active: activeQr,
-      is_likes_active: activeLikes,
       current_voting_round: current_voting_round !== undefined ? parseInt(current_voting_round, 10) : (current.current_voting_round || 1),
       updated_at: new Date().toISOString(),
       updated_by: req.user?.id || 'admin'
@@ -2448,10 +2438,6 @@ router.post('/admin/controls', authenticateUser, checkAdmin, async (req, res) =>
         }
       } else {
         console.warn('[Voting Admin] Supabase voting_controls upsert note:', upsertErr.message);
-        if (upsertErr.message && upsertErr.message.includes('is_likes_active')) {
-          const { is_likes_active: _, ...standardPayload } = payload;
-          await supabase.from('voting_controls').upsert(standardPayload, { onConflict: 'id' });
-        }
       }
     } catch (e) {
       console.warn('[Voting Admin] Supabase voting_controls offline/pending migration:', e.message);
@@ -2461,7 +2447,7 @@ router.post('/admin/controls', authenticateUser, checkAdmin, async (req, res) =>
     Object.assign(fallbackControls, payload);
     writeLocalVotingControls(payload);
 
-    console.log(`[Voting Admin] Updated controls (Supabase authoritative: ${supabasePersisted}): Voting=${payload.is_voting_active}, QR=${payload.is_qr_generation_active}, Likes=${payload.is_likes_active}, Round=${payload.current_voting_round}`);
+    console.log(`[Voting Admin] Updated controls (Supabase authoritative: ${supabasePersisted}): Voting=${payload.is_voting_active}, QR=${payload.is_qr_generation_active}, Round=${payload.current_voting_round}`);
 
     return res.status(200).json({
       success: true,
@@ -3287,7 +3273,6 @@ router._testingHooks = {
     inflightVoteLocks.clear();
     fallbackControls.is_voting_active = true;
     fallbackControls.is_qr_generation_active = true;
-    fallbackControls.is_likes_active = true;
     fallbackControls.current_voting_round = 1;
   }
 };

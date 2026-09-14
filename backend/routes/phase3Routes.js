@@ -19,8 +19,20 @@ const phase3LinkedInDriveService = require('../services/phase3LinkedInDriveServi
 const LOCAL_SUBMISSIONS_FILE = path.join(__dirname, '..', 'config', 'phase3_linkedin_submissions.json');
 
 /**
- * Non-empty text validator (no URL or domain restrictions).
- * Accepts any non-empty text string entered by the participant.
+ * Strict validator for Phase 3 LinkedIn Post URLs.
+ * Accepted formats (HTTPS only):
+ * 1. LinkedIn short post URL: https://lnkd.in/p/<short-code>
+ * 2. Standard LinkedIn post: https://www.linkedin.com/posts/... or https://linkedin.com/posts/...
+ * 3. LinkedIn feed update: https://www.linkedin.com/feed/update/... or https://linkedin.com/feed/update/...
+ * 4. LinkedIn Pulse: https://www.linkedin.com/pulse/... or https://linkedin.com/pulse/...
+ *
+ * Rejected:
+ * - Profile URLs (/in/...)
+ * - Company URLs (/company/...)
+ * - lnkd.in without /p/
+ * - Non-https protocols
+ * - Other domains (Facebook, Instagram, X, Google, YouTube, etc.)
+ * - Plain text / malformed URLs
  * 
  * @param {string} val 
  * @returns {boolean}
@@ -28,7 +40,64 @@ const LOCAL_SUBMISSIONS_FILE = path.join(__dirname, '..', 'config', 'phase3_link
 function isValidLinkedInPostUrl(val) {
   if (!val || typeof val !== 'string') return false;
   const trimmed = val.trim();
-  return trimmed.length > 0 && trimmed.length <= 1000;
+  if (!trimmed || trimmed.length > 1000) return false;
+
+  let urlObj;
+  try {
+    urlObj = new URL(trimmed);
+  } catch {
+    return false;
+  }
+
+  // Must be HTTPS only
+  if (urlObj.protocol !== 'https:') {
+    return false;
+  }
+
+  const hostname = urlObj.hostname.toLowerCase();
+  const pathname = urlObj.pathname;
+
+  // 1. LinkedIn Short URL: https://lnkd.in/p/<short-code>
+  const isLnkdInDomain = hostname === 'lnkd.in' || hostname.endsWith('.lnkd.in');
+  if (isLnkdInDomain) {
+    if (!pathname.startsWith('/p/')) {
+      return false;
+    }
+    const code = pathname.slice(3).replace(/\/+$/, '').trim();
+    return code.length > 0;
+  }
+
+  // 2-7. linkedin.com post, feed update, pulse
+  const isLinkedInDomain = hostname === 'linkedin.com' || hostname.endsWith('.linkedin.com');
+  if (isLinkedInDomain) {
+    // Explicitly reject profile and company paths
+    if (pathname.startsWith('/in/') || pathname === '/in' ||
+        pathname.startsWith('/company/') || pathname === '/company') {
+      return false;
+    }
+
+    // Standard LinkedIn post: /posts/...
+    if (pathname.startsWith('/posts/')) {
+      const slug = pathname.slice(7).replace(/\/+$/, '').trim();
+      return slug.length > 0;
+    }
+
+    // LinkedIn feed update: /feed/update/...
+    if (pathname.startsWith('/feed/update/')) {
+      const slug = pathname.slice(13).replace(/\/+$/, '').trim();
+      return slug.length > 0;
+    }
+
+    // LinkedIn Pulse: /pulse/...
+    if (pathname.startsWith('/pulse/')) {
+      const slug = pathname.slice(7).replace(/\/+$/, '').trim();
+      return slug.length > 0;
+    }
+
+    return false;
+  }
+
+  return false;
 }
 
 /**
@@ -252,23 +321,21 @@ router.get('/status', authenticateUser, async (req, res) => {
     // 5. Fetch score & votes for each product
     let scoresMap = new Map();
     if (testStore) {
-      // Mock score computation from mock store
+      // Mock score computation from mock store (Score = Votes * 2)
       products.forEach(p => {
         const pVotes = (testStore.votes || []).filter(v => v.product_id === p.id).length;
-        const pLikes = (testStore.likes || []).find(l => l.product_id === p.id)?.count || 0;
-        scoresMap.set(p.id, { votes: pVotes, score: pLikes + pVotes * 2 });
+        scoresMap.set(p.id, { votes: pVotes, score: pVotes * 2 });
       });
     } else if (products.length > 0) {
       const prodIds = products.map(p => p.id);
       const { data: scoresData } = await supabase
         .from('idea_scores')
-        .select('product_id, votes_count, likes_count, total_score')
+        .select('product_id, votes_count, total_score')
         .in('product_id', prodIds);
       (scoresData || []).forEach(s => {
         if (s.product_id) {
           const v = Math.max(0, parseInt(s.votes_count, 10) || 0);
-          const l = Math.max(0, parseInt(s.likes_count, 10) || 0);
-          const sc = s.total_score !== undefined && s.total_score !== null ? parseInt(s.total_score, 10) : (l + v * 2);
+          const sc = s.total_score !== undefined && s.total_score !== null ? parseInt(s.total_score, 10) : (v * 2);
           scoresMap.set(s.product_id, { votes: v, score: sc });
         }
       });
@@ -498,13 +565,23 @@ router.get('/status', authenticateUser, async (req, res) => {
 
     const hasAnyShortlistedProduct = productStatuses.some(p => p.is_shortlisted);
 
-    // Step 10M: Team-wide permission model. Any enrolled member can manage any slot.
-    const isEnrolledMember = teamEmails.includes(userEmail) || isAdmin;
+    // Step 10J-FINAL-FIX: Strict role-based permission model
+    // Team Leader: Can manage all 3 slots
+    // Member 1: Can manage only Member 1 slot
+    // Member 2: Can manage only Member 2 slot
+    // Other members: Cannot manage these slots
+    const leaderEmail = (registration?.leader_email || '').toLowerCase().trim();
+    const member1Email = (registration?.member2_email || '').toLowerCase().trim();
+    const member2Email = (registration?.member3_email || '').toLowerCase().trim();
+
+    const isLeader = (userEmail === leaderEmail) || isAdmin;
+    const isMember1 = (userEmail === member1Email);
+    const isMember2 = (userEmail === member2Email);
 
     const canEdit = {
-      leader: Boolean(isEnrolledMember),
-      member1: Boolean(isEnrolledMember),
-      member2: Boolean(isEnrolledMember)
+      leader: Boolean(isLeader),
+      member1: Boolean(isLeader || isMember1),
+      member2: Boolean(isLeader || isMember2)
     };
 
     return res.status(200).json({
@@ -600,6 +677,15 @@ router.post('/linkedin-submission', authenticateUser, async (req, res) => {
       });
     }
 
+    // Step 10J-FINAL-FIX: Strict LinkedIn post URL format validation
+    if (!isValidLinkedInPostUrl(trimmedUrl)) {
+      return res.status(400).json({
+        success: false,
+        error_code: 'INVALID_LINKEDIN_URL',
+        message: 'Invalid LinkedIn post URL. Please enter a valid post link (e.g. https://www.linkedin.com/posts/... or https://lnkd.in/p/...). Profile and company links are not accepted.'
+      });
+    }
+
     let testStore = req.testStore || null;
     let team = null;
     let registration = null;
@@ -633,7 +719,7 @@ router.post('/linkedin-submission', authenticateUser, async (req, res) => {
       });
     }
 
-    // Team membership & isolation verification (Step 10M: Team-wide model)
+    // Team membership & isolation verification
     const leaderEmail = (registration.leader_email || '').toLowerCase().trim();
     const member1Email = (registration.member2_email || '').toLowerCase().trim();
     const member2Email = (registration.member3_email || '').toLowerCase().trim();
@@ -651,8 +737,31 @@ router.post('/linkedin-submission', authenticateUser, async (req, res) => {
       });
     }
 
-    // Target slot identifies WHICH PERSON'S LinkedIn post is being submitted.
-    // Any authenticated enrolled member of the team can manage any of the 3 slots for their team.
+    // Step 10J-FINAL-FIX: Strict role-based slot permissions
+    // Team Leader: Can manage all 3 slots
+    // Member 1: Can manage only Member 1 slot
+    // Member 2: Can manage only Member 2 slot
+    // Other members: Cannot modify
+    const isLeader = (userEmail === leaderEmail) || isAdmin;
+    const isMember1 = (userEmail === member1Email);
+    const isMember2 = (userEmail === member2Email);
+
+    let isAuthorized = false;
+    if (isLeader) {
+      isAuthorized = true;
+    } else if (normRole === 'member1' && isMember1) {
+      isAuthorized = true;
+    } else if (normRole === 'member2' && isMember2) {
+      isAuthorized = true;
+    }
+
+    if (!isAuthorized) {
+      return res.status(403).json({
+        success: false,
+        error_code: 'ROLE_MISMATCH',
+        message: 'Access denied: You do not have permission to modify this LinkedIn submission slot.'
+      });
+    }
 
     // Determine member name and email for the slot
     let memberName = registration.leader_name;
@@ -833,7 +942,7 @@ async function handleRemoveLinkedInSubmission(req, res) {
       });
     }
 
-    // Team membership & isolation verification (Step 10M: Team-wide model)
+    // Team membership & isolation verification
     const leaderEmail = (registration.leader_email || '').toLowerCase().trim();
     const member1Email = (registration.member2_email || '').toLowerCase().trim();
     const member2Email = (registration.member3_email || '').toLowerCase().trim();
@@ -851,8 +960,31 @@ async function handleRemoveLinkedInSubmission(req, res) {
       });
     }
 
-    // Target slot identifies WHICH PERSON'S LinkedIn post is being removed.
-    // Any authenticated enrolled member of the team can remove any of the 3 slots for their team.
+    // Step 10J-FINAL-FIX: Strict role-based slot permissions
+    // Team Leader: Can manage all 3 slots
+    // Member 1: Can manage only Member 1 slot
+    // Member 2: Can manage only Member 2 slot
+    // Other members: Cannot modify
+    const isLeader = (userEmail === leaderEmail) || isAdmin;
+    const isMember1 = (userEmail === member1Email);
+    const isMember2 = (userEmail === member2Email);
+
+    let isAuthorized = false;
+    if (isLeader) {
+      isAuthorized = true;
+    } else if (normRole === 'member1' && isMember1) {
+      isAuthorized = true;
+    } else if (normRole === 'member2' && isMember2) {
+      isAuthorized = true;
+    }
+
+    if (!isAuthorized) {
+      return res.status(403).json({
+        success: false,
+        error_code: 'ROLE_MISMATCH',
+        message: 'Access denied: You do not have permission to remove this LinkedIn submission slot.'
+      });
+    }
 
     // Sync removal to authoritative Google Drive spreadsheet
     try {

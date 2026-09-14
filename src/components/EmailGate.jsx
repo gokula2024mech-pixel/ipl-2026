@@ -72,7 +72,6 @@ export default function EmailGate({ loginError, onBack }) {
                 </p>
                 <p>• Official voting requires Google sign-in and is restricted to eligible SECE users.</p>
                 <p>• Students cannot vote for their own team or teams in their own department.</p>
-                <p>• Public Likes (+1 point) do not require login and are open to all visitors.</p>
               </div>
             </div>
           ) : isPendingRegistration ? (

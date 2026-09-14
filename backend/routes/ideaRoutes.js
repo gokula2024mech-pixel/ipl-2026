@@ -6,12 +6,10 @@
 // - GET  /api/ideas                     : Public discovery list with search, domain, pagination, and sorting
 // - GET  /api/ideas/resolve/:identifier : Additive resolution for Product UUID, Team UUID (single/multi), or QR Token
 // - GET  /api/ideas/:productId          : Public Idea details with sanitized public-safe member info and stats
-// - POST /api/ideas/:productId/like     : Public like submission via record_idea_like RPC (anonymous or authenticated)
 // - POST /api/ideas/:productId/visit    : Public visit logging via record_idea_visit RPC (decoupled analytics)
 //
 // IMPORTANT SAFETY RULES:
-// - All like and visit writes are routed strictly through SECURITY DEFINER RPCs (record_idea_like / record_idea_visit).
-// - Direct table INSERT into public.idea_likes or public.idea_visits is strictly prohibited.
+// - All visit writes are routed strictly through SECURITY DEFINER RPC (record_idea_visit).
 // - All student contact details (emails, mobile numbers) and private tokens are stripped.
 // - Voting remains outside this public router.
 
@@ -23,7 +21,6 @@ const { getVotingControls } = require('./votingRoutes');
 const shortlistService = require('../services/phase3ShortlistService');
 const {
   ideaLookupLimiter,
-  ideaLikeLimiter,
   ideaVisitLimiter
 } = require('../middleware/rateLimiter');
 
@@ -141,7 +138,7 @@ router.get('/', ideaLookupLimiter, async (req, res) => {
     // Base query on public.idea_scores view
     let query = supabase
       .from('idea_scores')
-      .select('product_id, team_id, product_title, team_name, voting_round, likes_count, votes_count, total_score', { count: 'exact' });
+      .select('product_id, team_id, product_title, team_name, voting_round, votes_count, total_score', { count: 'exact' });
 
     // Search filter across product title and team name
     if (search) {
@@ -150,9 +147,6 @@ router.get('/', ideaLookupLimiter, async (req, res) => {
 
     // Sorting
     switch (sort) {
-      case 'likes':
-        query = query.order('likes_count', { ascending: false }).order('product_title', { ascending: true });
-        break;
       case 'votes':
         query = query.order('votes_count', { ascending: false }).order('product_title', { ascending: true });
         break;
@@ -161,7 +155,7 @@ router.get('/', ideaLookupLimiter, async (req, res) => {
         break;
       case 'score':
       default:
-        query = query.order('total_score', { ascending: false }).order('likes_count', { ascending: false }).order('product_title', { ascending: true });
+        query = query.order('total_score', { ascending: false }).order('votes_count', { ascending: false }).order('product_title', { ascending: true });
         break;
     }
 
@@ -211,7 +205,6 @@ router.get('/', ideaLookupLimiter, async (req, res) => {
         product_title: row.product_title,
         innovation_domain: pDetail?.innovation_domain || null,
         trl_level: pDetail?.trl_level || null,
-        likes_count: row.likes_count || 0,
         votes_count: row.votes_count || 0,
         total_score: row.total_score || 0
       });
@@ -290,7 +283,7 @@ router.get('/resolve/:identifier', ideaLookupLimiter, async (req, res) => {
         // Fetch current score stats from view
         const { data: scoreRow } = await supabase
           .from('idea_scores')
-          .select('likes_count, votes_count, total_score')
+          .select('votes_count, total_score')
           .eq('product_id', prod.id)
           .maybeSingle();
 
@@ -306,7 +299,6 @@ router.get('/resolve/:identifier', ideaLookupLimiter, async (req, res) => {
             product_title: prod.product_title,
             innovation_domain: prod.innovation_domain,
             trl_level: prod.trl_level,
-            likes_count: scoreRow?.likes_count || 0,
             votes_count: scoreRow?.votes_count || 0,
             total_score: scoreRow?.total_score || 0
           }
@@ -342,7 +334,7 @@ router.get('/resolve/:identifier', ideaLookupLimiter, async (req, res) => {
         const pids = teamProducts.map(p => p.id);
         const { data: scoreData } = await supabase
           .from('idea_scores')
-          .select('product_id, likes_count, votes_count, total_score')
+          .select('product_id, votes_count, total_score')
           .in('product_id', pids);
 
         const scoreMap = new Map((scoreData || []).map(s => [s.product_id, s]));
@@ -355,7 +347,6 @@ router.get('/resolve/:identifier', ideaLookupLimiter, async (req, res) => {
             product_title: p.product_title,
             innovation_domain: p.innovation_domain,
             trl_level: p.trl_level,
-            likes_count: s?.likes_count || 0,
             votes_count: s?.votes_count || 0,
             total_score: s?.total_score || 0
           };
@@ -425,7 +416,7 @@ router.get('/resolve/:identifier', ideaLookupLimiter, async (req, res) => {
         if (pData) {
           const { data: scoreRow } = await supabase
             .from('idea_scores')
-            .select('likes_count, votes_count, total_score')
+            .select('votes_count, total_score')
             .eq('product_id', pData.id)
             .maybeSingle();
 
@@ -441,7 +432,6 @@ router.get('/resolve/:identifier', ideaLookupLimiter, async (req, res) => {
               product_title: pData.product_title,
               innovation_domain: pData.innovation_domain,
               trl_level: pData.trl_level,
-              likes_count: scoreRow?.likes_count || 0,
               votes_count: scoreRow?.votes_count || 0,
               total_score: scoreRow?.total_score || 0
             }
@@ -475,7 +465,7 @@ router.get('/resolve/:identifier', ideaLookupLimiter, async (req, res) => {
       const pids = teamProducts.map(p => p.id);
       const { data: scoreData } = await supabase
         .from('idea_scores')
-        .select('product_id, likes_count, votes_count, total_score')
+        .select('product_id, votes_count, total_score')
         .in('product_id', pids);
 
       const scoreMap = new Map((scoreData || []).map(s => [s.product_id, s]));
@@ -487,7 +477,6 @@ router.get('/resolve/:identifier', ideaLookupLimiter, async (req, res) => {
           product_title: p.product_title,
           innovation_domain: p.innovation_domain,
           trl_level: p.trl_level,
-          likes_count: s?.likes_count || 0,
           votes_count: s?.votes_count || 0,
           total_score: s?.total_score || 0
         };
@@ -542,7 +531,7 @@ router.get('/resolve/:identifier', ideaLookupLimiter, async (req, res) => {
       const pids = regProds.map(p => p.id);
       const { data: scoreData } = await supabase
         .from('idea_scores')
-        .select('product_id, likes_count, votes_count, total_score')
+        .select('product_id, votes_count, total_score')
         .in('product_id', pids);
 
       const scoreMap = new Map((scoreData || []).map(s => [s.product_id, s]));
@@ -554,7 +543,6 @@ router.get('/resolve/:identifier', ideaLookupLimiter, async (req, res) => {
           product_title: p.product_title,
           innovation_domain: p.innovation_domain,
           trl_level: p.trl_level,
-          likes_count: s?.likes_count || 0,
           votes_count: s?.votes_count || 0,
           total_score: s?.total_score || 0
         };
@@ -658,7 +646,7 @@ router.get('/leaderboard', ideaLookupLimiter, async (req, res) => {
     ] = await Promise.all([
       supabase
         .from('idea_scores')
-        .select('product_id, team_id, product_title, team_name, likes_count, votes_count, total_score, last_vote_at, created_at')
+        .select('product_id, team_id, product_title, team_name, votes_count, total_score, last_vote_at, created_at')
         .limit(1000),
       supabase
         .from('products')
@@ -701,7 +689,6 @@ router.get('/leaderboard', ideaLookupLimiter, async (req, res) => {
       if (r.team_name) regMapByName.set(r.team_name.trim().toLowerCase(), r);
     });
 
-    let totalLikes = 0;
     let totalVotes = 0;
 
     // Build entries ONLY for authoritative finalist products (hidden non-finalists are excluded from public leaderboard)
@@ -715,12 +702,10 @@ router.get('/leaderboard', ideaLookupLimiter, async (req, res) => {
           || (p?.legacy_registration_id ? regMapById.get(p.legacy_registration_id.trim().toUpperCase()) : null)
           || (row.team_name ? regMapByName.get(row.team_name.trim().toLowerCase()) : null);
 
-        const likes = Math.max(0, parseInt(row.likes_count, 10) || 0);
         const votes = Math.max(0, parseInt(row.votes_count, 10) || 0);
-        // Authoritative formula: Likes + (Votes * 2). Visits MUST NOT contribute.
-        const score = Math.max(0, row.total_score !== undefined && row.total_score !== null ? parseInt(row.total_score, 10) : (likes + votes * 2));
+        // Authoritative formula: Votes * 2. Likes are completely removed.
+        const score = Math.max(0, row.total_score !== undefined && row.total_score !== null ? parseInt(row.total_score, 10) : (votes * 2));
 
-        totalLikes += likes;
         totalVotes += votes;
 
         const regId = sl?.registration_id || reg?.registration_id || p?.legacy_registration_id || null;
@@ -743,8 +728,6 @@ router.get('/leaderboard', ideaLookupLimiter, async (req, res) => {
           category: sl?.category || null,
           is_shortlisted: true,
           isShortlisted: true,
-          likes_count: likes,
-          likesCount: likes,
           votes_count: votes,
           votesCount: votes,
           voteCount: votes,
@@ -757,12 +740,10 @@ router.get('/leaderboard', ideaLookupLimiter, async (req, res) => {
 
     // 3. Authoritative Sorting across all finalists:
     // 1. score DESC
-    // 2. likes DESC
-    // 3. votes DESC
-    // 4. product_id ASC
+    // 2. votes DESC
+    // 3. product_id ASC
     finalistList.sort((a, b) => {
       if (b.total_score !== a.total_score) return b.total_score - a.total_score;
-      if (b.likes_count !== a.likes_count) return b.likes_count - a.likes_count;
       if (b.votes_count !== a.votes_count) return b.votes_count - a.votes_count;
       return String(a.product_id).localeCompare(String(b.product_id));
     });
@@ -778,7 +759,6 @@ router.get('/leaderboard', ideaLookupLimiter, async (req, res) => {
       total_ideas: rankedLeaderboard.length,
       shortlisted_count: rankedLeaderboard.length,
       non_shortlisted_count: 0,
-      total_likes: totalLikes,
       total_votes: totalVotes,
       leaderboard: rankedLeaderboard,
       entries: rankedLeaderboard
@@ -887,7 +867,7 @@ router.get('/:productId', ideaLookupLimiter, async (req, res) => {
     // 3. Fetch scores from public.idea_scores view
     const { data: scoreRow } = await supabase
       .from('idea_scores')
-      .select('likes_count, votes_count, total_score')
+      .select('votes_count, total_score')
       .eq('product_id', productId)
       .maybeSingle();
 
@@ -897,29 +877,7 @@ router.get('/:productId', ideaLookupLimiter, async (req, res) => {
       .select('*', { count: 'exact', head: true })
       .eq('product_id', productId);
 
-    // 5. Optional viewer state (has_liked check)
-    let hasLiked = false;
     const optionalUser = await getOptionalUser(req);
-    const visitorToken = (req.headers['x-visitor-token'] || '').trim();
-
-    if (optionalUser && optionalUser.id) {
-      const { data: userLike } = await supabase
-        .from('idea_likes')
-        .select('id')
-        .eq('product_id', productId)
-        .eq('voter_user_id', optionalUser.id)
-        .maybeSingle();
-      if (userLike) hasLiked = true;
-    } else if (visitorToken) {
-      const { data: anonLike } = await supabase
-        .from('idea_likes')
-        .select('id')
-        .eq('product_id', productId)
-        .eq('visitor_token', visitorToken)
-        .is('voter_user_id', null)
-        .maybeSingle();
-      if (anonLike) hasLiked = true;
-    }
 
     // Check if authenticated user has already voted for this product (Phase 3: single vote per idea)
     let hasVoted = false;
@@ -977,13 +935,11 @@ router.get('/:productId', ideaLookupLimiter, async (req, res) => {
         trl_level: product.trl_level,
         members,
         stats: {
-          likes_count: scoreRow?.likes_count || 0,
           votes_count: scoreRow?.votes_count || 0,
           total_score: scoreRow?.total_score || 0,
           visits_count: visitsCount || 0
         },
         viewer_state: {
-          has_liked: hasLiked,
           has_voted: hasVoted
         }
       }
@@ -994,122 +950,6 @@ router.get('/:productId', ideaLookupLimiter, async (req, res) => {
       success: false,
       error_code: 'SERVER_ERROR',
       message: 'An internal error occurred while fetching idea details.'
-    });
-  }
-});
-
-// ==============================================================================
-// 4. POST /api/ideas/:productId/like
-// Public Like Submission Endpoint (Authenticated or Anonymous)
-// Routed strictly through SECURITY DEFINER RPC public.record_idea_like
-// ==============================================================================
-router.post('/:productId/like', ideaLikeLimiter, async (req, res) => {
-  try {
-    const { productId } = req.params;
-
-    if (!isValidUUID(productId)) {
-      return res.status(400).json({
-        success: false,
-        error_code: 'INVALID_PRODUCT_ID',
-        message: 'Product ID must be a valid UUID.'
-      });
-    }
-
-    // Authoritative check: verify if Public Likes are currently enabled (fail-closed)
-    const controls = await getVotingControls();
-    if (!controls || typeof controls.is_likes_active !== 'boolean') {
-      console.warn('[Idea API] Likes control state unavailable or unconfirmed. Failing closed.');
-      return res.status(503).json({
-        success: false,
-        error_code: 'CONTROLS_UNAVAILABLE',
-        message: 'Likes service is temporarily unavailable. Please try again shortly.'
-      });
-    }
-
-    if (!controls.is_likes_active) {
-      return res.status(403).json({
-        success: false,
-        error_code: 'LIKES_CLOSED',
-        message: 'Likes are currently closed.'
-      });
-    }
-
-    // Determine identity: authenticated user takes precedence over visitor token
-    const optionalUser = await getOptionalUser(req);
-    const { token: visitorToken } = getOrGenerateVisitorToken(req);
-    const ipHash = getClientIpHash(req);
-
-    // Call the controlled SECURITY DEFINER RPC
-    const { data, error } = await supabase.rpc('record_idea_like', {
-      p_product_id: productId,
-      p_visitor_token: optionalUser ? (visitorToken || null) : visitorToken,
-      p_ip_hash: ipHash,
-      p_voter_user_id: optionalUser ? optionalUser.id : null
-    });
-
-    if (error) {
-      console.error('[Idea API] Error calling record_idea_like RPC:', error.message);
-      return res.status(500).json({
-        success: false,
-        error_code: 'RPC_ERROR',
-        message: 'Failed to record like.'
-      });
-    }
-
-    // Success response
-    if (data && data.success) {
-      return res.json({
-        success: true,
-        already_liked: false,
-        product_id: productId,
-        likes_count: data.likes_count,
-        visitor_token: visitorToken,
-        message: data.message || 'Idea liked successfully!'
-      });
-    }
-
-    // Handled duplicate like
-    if (data && data.error_code === 'ALREADY_LIKED') {
-      return res.json({
-        success: true,
-        already_liked: true,
-        product_id: productId,
-        likes_count: data.likes_count,
-        visitor_token: visitorToken,
-        message: data.message || 'You have already liked this idea.'
-      });
-    }
-
-    // Rate limited by RPC hook
-    if (data && data.error_code === 'RATE_LIMITED') {
-      return res.status(429).json({
-        success: false,
-        error_code: 'RATE_LIMITED',
-        message: data.message || 'Too many like requests. Please try again shortly.'
-      });
-    }
-
-    // Product not found
-    if (data && data.error_code === 'PRODUCT_NOT_FOUND') {
-      return res.status(404).json({
-        success: false,
-        error_code: 'PRODUCT_NOT_FOUND',
-        message: data.message || 'The requested innovation idea does not exist.'
-      });
-    }
-
-    // Fallback response
-    return res.status(400).json({
-      success: false,
-      error_code: data?.error_code || 'LIKE_FAILED',
-      message: data?.message || 'Unable to register like.'
-    });
-  } catch (err) {
-    console.error('[Idea API] Unhandled error in POST /api/ideas/:productId/like:', err.message);
-    return res.status(500).json({
-      success: false,
-      error_code: 'SERVER_ERROR',
-      message: 'An internal error occurred while submitting like.'
     });
   }
 });

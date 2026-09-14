@@ -435,15 +435,14 @@ async function getIdeaAnalyticsData() {
   // 2. Fetch score data from idea_scores
   const { data: scores } = await supabase
     .from('idea_scores')
-    .select('product_id, likes_count, votes_count, total_score');
+    .select('product_id, votes_count, total_score');
 
   const scoreMap = new Map();
   if (Array.isArray(scores)) {
     for (const s of scores) {
       scoreMap.set(s.product_id, {
-        likes: Number(s.likes_count || 0),
         votes: Number(s.votes_count || 0),
-        score: Number(s.total_score || (Number(s.likes_count || 0) + Number(s.votes_count || 0) * 2))
+        score: Number(s.total_score !== undefined && s.total_score !== null ? s.total_score : (Number(s.votes_count || 0) * 2))
       });
     }
   }
@@ -483,11 +482,11 @@ async function getIdeaAnalyticsData() {
 
   // 4. Combine into sanitized aggregate array
   const ideaList = products.map((prod) => {
-    const scoreData = scoreMap.get(prod.id) || { likes: 0, votes: 0, score: 0 };
+    const scoreData = scoreMap.get(prod.id) || { votes: 0, score: 0 };
     const visitData = visitAggMap.get(prod.id) || { views: 0, sessions: new Set(), lastViewed: null };
 
-    // Strict calculation: Score = Likes + (Votes * 2)
-    const authoritativeScore = scoreData.likes + (scoreData.votes * 2);
+    // Strict calculation: Score = Votes * 2. Likes are completely removed.
+    const authoritativeScore = scoreData.votes * 2;
 
     const teamNameLower = (prod.team?.team_name || '').trim().toLowerCase();
     const resolvedRegId = prod.legacy_registration_id ||
@@ -502,17 +501,15 @@ async function getIdeaAnalyticsData() {
       registration_id: resolvedRegId,
       page_views: visitData.views,
       unique_sessions: visitData.sessions.size,
-      likes: scoreData.likes,
       votes: scoreData.votes,
       score: authoritativeScore,
       last_viewed_at: visitData.lastViewed || null
     };
   });
 
-  // 5. Rank by score DESC, likes DESC, votes DESC
+  // 5. Rank by score DESC, votes DESC, page_views DESC
   ideaList.sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score;
-    if (b.likes !== a.likes) return b.likes - a.likes;
     if (b.votes !== a.votes) return b.votes - a.votes;
     return b.page_views - a.page_views;
   });
@@ -560,18 +557,16 @@ router.get(['/overview', '/admin/overview'], authenticateUser, checkAdmin, async
       console.warn('[Analytics API] Error fetching idea_visits:', e.message);
     }
 
-    // C. Total Likes & Votes from idea_scores
-    let totalLikes = 0;
+    // C. Total Votes from idea_scores
     let totalVotes = 0;
 
     try {
       const { data: scores, error: scoreErr } = await supabase
         .from('idea_scores')
-        .select('likes_count, votes_count');
+        .select('votes_count');
 
       if (!scoreErr && Array.isArray(scores)) {
         for (const s of scores) {
-          totalLikes += Number(s.likes_count || 0);
           totalVotes += Number(s.votes_count || 0);
         }
       }
@@ -579,8 +574,8 @@ router.get(['/overview', '/admin/overview'], authenticateUser, checkAdmin, async
       console.warn('[Analytics API] Error fetching idea_scores:', e.message);
     }
 
-    // LOCKED SCORE FORMULA: Score = Likes + (Votes * 2). Views NEVER affect score.
-    const totalScore = totalLikes + (totalVotes * 2);
+    // LOCKED SCORE FORMULA: Score = Votes * 2. Likes are completely removed. Views NEVER affect score.
+    const totalScore = totalVotes * 2;
 
     return res.json({
       success: true,
@@ -595,7 +590,6 @@ router.get(['/overview', '/admin/overview'], authenticateUser, checkAdmin, async
         idea_page_views: ideaPageViews,
         idea_unique_sessions: ideaUniqueSessions,
         idea_views_today: ideaViewsToday,
-        total_likes: totalLikes,
         total_votes: totalVotes,
         total_score: totalScore
       },
@@ -726,7 +720,6 @@ async function generateExcelWorkbookBuffer(range = 'all') {
     'Team Name',
     'Page Views',
     'Unique Sessions',
-    'Likes',
     'Votes',
     'Score',
     'Last Viewed At'
@@ -739,7 +732,6 @@ async function generateExcelWorkbookBuffer(range = 'all') {
     item.team_name,
     item.page_views,
     item.unique_sessions,
-    item.likes,
     item.votes,
     item.score,
     item.last_viewed_at ? new Date(item.last_viewed_at).toISOString().replace('T', ' ').slice(0, 19) : 'Never'
@@ -827,7 +819,7 @@ router.get(['/export', '/admin/export', '/export.csv'], authenticateUser, checkA
       return `"${str}"`;
     };
 
-    // CSV Headers strictly per Part 7 requirement
+    // CSV Headers strictly per analytics export requirement
     const headers = [
       'Rank',
       'Product ID',
@@ -836,7 +828,6 @@ router.get(['/export', '/admin/export', '/export.csv'], authenticateUser, checkA
       'Team Name',
       'Page Views',
       'Unique Sessions',
-      'Likes',
       'Votes',
       'Score',
       'Last Viewed At'
@@ -850,7 +841,6 @@ router.get(['/export', '/admin/export', '/export.csv'], authenticateUser, checkA
       escapeCsv(item.team_name),
       item.page_views,
       item.unique_sessions,
-      item.likes,
       item.votes,
       item.score,
       escapeCsv(item.last_viewed_at || 'Never')

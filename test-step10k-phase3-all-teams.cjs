@@ -137,15 +137,23 @@ async function runAllTests() {
     assert(mySubmissionsCode.includes('phase3RemoveModalRole'), 'Must track slot being removed');
   });
 
-  // Condition 15 & 16: Non-empty input accepted, empty value rejected
-  it('15 & 16: Non-empty input accepted, empty value rejected', () => {
+  // Condition 15 & 16: Strict LinkedIn URL validation with short URL support
+  it('15 & 16: Strict LinkedIn URL validation with short URL support', () => {
+    // Valid formats (HTTPS only)
     assert.strictEqual(isValidLinkedInPostUrl('https://www.linkedin.com/posts/team-alpha_ipl-2026-tech-update-7123456789'), true);
     assert.strictEqual(isValidLinkedInPostUrl('https://linkedin.com/feed/update/urn:li:activity:789456123'), true);
     assert.strictEqual(isValidLinkedInPostUrl('https://in.linkedin.com/posts/member_innovation-project'), true);
-    assert.strictEqual(isValidLinkedInPostUrl('https://google.com'), true, 'Non-LinkedIn URL accepted');
-    assert.strictEqual(isValidLinkedInPostUrl('https://twitter.com/mypost'), true, 'Non-LinkedIn URL accepted');
-    assert.strictEqual(isValidLinkedInPostUrl('https://linkedin.com/in/someone'), true, 'Profile URL accepted');
-    assert.strictEqual(isValidLinkedInPostUrl('abc123'), true, 'Plain text accepted');
+    assert.strictEqual(isValidLinkedInPostUrl('https://lnkd.in/p/gYNYYXtE'), true, 'Short URL must be accepted');
+    assert.strictEqual(isValidLinkedInPostUrl('https://www.linkedin.com/pulse/our-article-title'), true);
+
+    // Rejected formats
+    assert.strictEqual(isValidLinkedInPostUrl('https://google.com'), false, 'Non-LinkedIn URL rejected');
+    assert.strictEqual(isValidLinkedInPostUrl('https://twitter.com/mypost'), false, 'Non-LinkedIn URL rejected');
+    assert.strictEqual(isValidLinkedInPostUrl('https://linkedin.com/in/someone'), false, 'Profile URL rejected');
+    assert.strictEqual(isValidLinkedInPostUrl('https://linkedin.com/company/tech-corp'), false, 'Company URL rejected');
+    assert.strictEqual(isValidLinkedInPostUrl('https://lnkd.in/customShare123'), false, 'Non-/p/ short URL rejected');
+    assert.strictEqual(isValidLinkedInPostUrl('abc123'), false, 'Plain text rejected');
+    assert.strictEqual(isValidLinkedInPostUrl('http://lnkd.in/p/gYNYYXtE'), false, 'HTTP rejected');
 
     assert.strictEqual(isValidLinkedInPostUrl(''), false);
     assert.strictEqual(isValidLinkedInPostUrl('   '), false);
@@ -325,9 +333,9 @@ async function runAllTests() {
     const prod = res.data.products[0];
     assert.strictEqual(prod.productId, 'prod-nonsl-2');
     assert.strictEqual(prod.isShortlisted, false);
-    // Votes: 1, Likes: 10 => Score: 10 + 1*2 = 12
+    // Step 10J: Votes: 1 => Score: 1*2 = 2 (Likes removed)
     assert.strictEqual(prod.votes, 1, 'Non-shortlisted product must show votes');
-    assert.strictEqual(prod.score, 12, 'Non-shortlisted product must show score');
+    assert.strictEqual(prod.score, 2, 'Non-shortlisted product must show score');
   });
 
   // Condition 5, 6, 7: Dual-product team sees both products; Votes and Score are product-specific
@@ -345,13 +353,13 @@ async function runAllTests() {
     assert.strictEqual(hw.isShortlisted, true, 'HW product must be shortlisted');
     assert.strictEqual(sw.isShortlisted, false, 'SW product must not be shortlisted');
 
-    // HW votes: 3, likes: 4 => score: 4 + 3*2 = 10
+    // Step 10J: HW votes: 3 => score: 3*2 = 6 (Likes removed)
     assert.strictEqual(hw.votes, 3, 'HW product votes must be 3');
-    assert.strictEqual(hw.score, 10, 'HW product score must be 10');
+    assert.strictEqual(hw.score, 6, 'HW product score must be 6');
 
-    // SW votes: 1, likes: 2 => score: 2 + 1*2 = 4
+    // Step 10J: SW votes: 1 => score: 1*2 = 2 (Likes removed)
     assert.strictEqual(sw.votes, 1, 'SW product votes must be 1');
-    assert.strictEqual(sw.score, 4, 'SW product score must be 4');
+    assert.strictEqual(sw.score, 2, 'SW product score must be 2');
 
     assert.notStrictEqual(hw.votes, sw.votes, 'Votes must be product-specific, not combined');
     assert.notStrictEqual(hw.score, sw.score, 'Score must be product-specific, not combined');

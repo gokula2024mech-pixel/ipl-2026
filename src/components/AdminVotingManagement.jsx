@@ -26,7 +26,6 @@ import {
   Copy,
   BarChart3,
   Activity,
-  Heart,
   TrendingUp,
   Upload
 } from 'lucide-react';
@@ -267,8 +266,7 @@ export default function AdminVotingManagement({
     totalProducts: initialProductsCount,
     lastVoteAt: null,
     isVotingActive: false,
-    isQrGenerationActive: false,
-    isLikesActive: true
+    isQrGenerationActive: false
   });
 
   // Sync props if parent provides initial/updated counts
@@ -378,10 +376,7 @@ export default function AdminVotingManagement({
           totalProducts: typeof data.metrics.totalProducts === 'number' ? data.metrics.totalProducts : prev.totalProducts,
           lastVoteAt: data.metrics.lastVoteAt || null,
           isVotingActive: ctrlData ? Boolean(ctrlData.is_voting_active) : Boolean(data.metrics.isVotingActive),
-          isQrGenerationActive: ctrlData ? Boolean(ctrlData.is_qr_generation_active) : Boolean(data.metrics.isQrGenerationActive),
-          isLikesActive: ctrlData && typeof ctrlData.is_likes_active === 'boolean'
-            ? ctrlData.is_likes_active
-            : (typeof data.metrics?.isLikesActive === 'boolean' ? data.metrics.isLikesActive : prev.isLikesActive)
+          isQrGenerationActive: ctrlData ? Boolean(ctrlData.is_qr_generation_active) : Boolean(data.metrics.isQrGenerationActive)
         }));
       }
     } catch (err) {
@@ -401,14 +396,12 @@ export default function AdminVotingManagement({
     return () => clearInterval(timer);
   }, [fetchMetrics]);
 
-  // 2. Toggle Community Voting, Public Likes, or QR Generation
+  // 2. Toggle Community Voting or QR Generation
   const handleToggleControl = async (type, nextVal) => {
     setUpdatingControls(true);
     try {
       const payload = type === 'voting'
         ? { is_voting_active: nextVal }
-        : type === 'likes'
-        ? { is_likes_active: nextVal }
         : { is_qr_generation_active: nextVal };
 
       const result = await safeFetchJson(`${API_BASE_URL}/api/voting/admin/controls`, {
@@ -420,13 +413,10 @@ export default function AdminVotingManagement({
         setMetrics(prev => ({
           ...prev,
           isVotingActive: type === 'voting' ? nextVal : prev.isVotingActive,
-          isLikesActive: type === 'likes' ? nextVal : prev.isLikesActive,
           isQrGenerationActive: type === 'qr' ? nextVal : prev.isQrGenerationActive
         }));
         notify('success', 'Controls Saved', type === 'voting'
           ? `Community Voting is now ${nextVal ? 'OPEN' : 'CLOSED'}.`
-          : type === 'likes'
-          ? `Public Likes are now ${nextVal ? 'ON' : 'OFF'}.`
           : `Team QR Generation is now ${nextVal ? 'ON' : 'OFF'}.`
         );
       } else {
@@ -546,7 +536,7 @@ export default function AdminVotingManagement({
     if (shortlistSyncMode === 'FULL_REPLACEMENT') {
       const confirmMsg = `Are you sure you want to perform a FULL REPLACEMENT?
 This will replace the active shortlist with ${shortlistPreview.valid_registrations?.length || 0} teams and remove ${shortlistPreview.to_remove || 0} teams from the shortlist.
-(Historical votes and likes are safely preserved).`;
+(Historical votes are safely preserved).`;
       if (!window.confirm(confirmMsg)) {
         return;
       }
@@ -960,7 +950,7 @@ This will replace the active shortlist with ${shortlistPreview.valid_registratio
           </div>
 
           {/* Operational Controls Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Control A: Community Voting */}
             <article className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200 flex flex-col justify-between space-y-4">
               <div>
@@ -998,44 +988,7 @@ This will replace the active shortlist with ${shortlistPreview.valid_registratio
               </div>
             </article>
 
-            {/* Control B: Public Likes */}
-            <article className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200 flex flex-col justify-between space-y-4">
-              <div>
-                <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-3">
-                  <h4 className="font-bold text-slate-900 flex items-center gap-2 text-sm sm:text-base">
-                    <Heart size={18} className="text-pink-600 fill-pink-500" /> Public Likes
-                  </h4>
-                  <span className={`px-2.5 py-0.5 rounded-full text-xs font-extrabold ${
-                    metrics.isLikesActive
-                      ? 'bg-pink-50 text-pink-700 ring-1 ring-pink-600/20'
-                      : 'bg-slate-100 text-slate-600'
-                  }`}>
-                    {metrics.isLikesActive ? 'ON' : 'OFF'}
-                  </span>
-                </div>
-                <p className="text-xs text-slate-600 leading-relaxed">
-                  When <strong>ON</strong>, visitors and students can like ideas on the public showcase. When <strong>OFF</strong>, liking is disabled while existing like counts are safely preserved.
-                </p>
-              </div>
-
-              <div className="pt-2">
-                <button
-                  type="button"
-                  disabled={updatingControls}
-                  onClick={() => handleToggleControl('likes', !metrics.isLikesActive)}
-                  className={`w-full py-2.5 px-4 rounded-xl text-xs font-extrabold transition cursor-pointer flex items-center justify-center gap-2 shadow-sm ${
-                    metrics.isLikesActive
-                      ? 'bg-rose-600 hover:bg-rose-700 text-white'
-                      : 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                  } disabled:opacity-50`}
-                >
-                  <Heart size={15} className={metrics.isLikesActive ? 'fill-white' : ''} />
-                  <span>{metrics.isLikesActive ? 'Turn Off Likes' : 'Turn On Likes'}</span>
-                </button>
-              </div>
-            </article>
-
-            {/* Control C: Team QR Generation */}
+            {/* Control B: Team QR Generation */}
             <article className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200 flex flex-col justify-between space-y-4">
               <div>
                 <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-3">
@@ -1334,7 +1287,7 @@ This will replace the active shortlist with ${shortlistPreview.valid_registratio
                   </span>
                 ) : (
                   <span className="text-amber-800">
-                    <strong>Full Replacement Mode:</strong> Authoritatively replaces the shortlist. Only teams present in this file will remain shortlisted. Teams omitted will be removed from the shortlist. (Historical votes and likes are safely preserved).
+                    <strong>Full Replacement Mode:</strong> Authoritatively replaces the shortlist. Only teams present in this file will remain shortlisted. Teams omitted will be removed from the shortlist. (Historical votes are safely preserved).
                   </span>
                 )}
               </div>
@@ -1721,12 +1674,12 @@ This will replace the active shortlist with ${shortlistPreview.valid_registratio
                 <h3 className="font-heading font-black text-slate-900 text-base">Idea Page Engagement & Public Scoring</h3>
               </div>
               <span className="text-xs text-slate-400 font-semibold">
-                Score Formula: Likes + (Votes × 2)
+                Score Formula: Votes × 2
               </span>
             </div>
 
-            {/* Top 5 Idea Cards */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
+            {/* Top Idea Cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
               <article className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 space-y-1">
                 <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Idea Views</span>
                 <p className="font-heading text-2xl font-black text-[#0B1B3A]">
@@ -1744,14 +1697,6 @@ This will replace the active shortlist with ${shortlistPreview.valid_registratio
               </article>
 
               <article className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 space-y-1">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Total Likes</span>
-                <p className="font-heading text-2xl font-black text-rose-600">
-                  {(analyticsMetrics?.total_likes || 0).toLocaleString()}
-                </p>
-                <p className="text-[10px] text-slate-500">+1 pt per verified like</p>
-              </article>
-
-              <article className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 space-y-1">
                 <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Total Votes</span>
                 <p className="font-heading text-2xl font-black text-emerald-600">
                   {(analyticsMetrics?.total_votes || 0).toLocaleString()}
@@ -1764,7 +1709,7 @@ This will replace the active shortlist with ${shortlistPreview.valid_registratio
                 <p className="font-heading text-2xl font-black text-primary">
                   {(analyticsMetrics?.total_score || 0).toLocaleString()}
                 </p>
-                <p className="text-[10px] text-slate-500">Likes + (Votes × 2)</p>
+                <p className="text-[10px] text-slate-500">Votes × 2</p>
               </article>
             </div>
 
@@ -1787,7 +1732,7 @@ This will replace the active shortlist with ${shortlistPreview.valid_registratio
                   <BarChart3 size={16} className="text-primary" /> Innovation Idea Engagement Table
                 </h4>
                 <span className="text-xs text-slate-400 font-semibold">
-                  Score Formula: Likes + (Votes × 2)
+                  Score Formula: Votes × 2
                 </span>
               </div>
 
@@ -1805,7 +1750,6 @@ This will replace the active shortlist with ${shortlistPreview.valid_registratio
                         <th className="pb-2.5 pr-4">Team Name</th>
                         <th className="pb-2.5 pr-3 text-right">Views</th>
                         <th className="pb-2.5 pr-3 text-right">Unique</th>
-                        <th className="pb-2.5 pr-3 text-right">Likes</th>
                         <th className="pb-2.5 pr-3 text-right">Votes</th>
                         <th className="pb-2.5 pr-3 text-right">Score</th>
                         <th className="pb-2.5 pl-3">Last Viewed</th>
@@ -1822,7 +1766,6 @@ This will replace the active shortlist with ${shortlistPreview.valid_registratio
                           <td className="py-3 pr-4 font-semibold text-slate-700 truncate max-w-[160px]">{idea.team_name}</td>
                           <td className="py-3 pr-3 text-right font-mono font-bold text-blue-600">{(idea.page_views || 0).toLocaleString()}</td>
                           <td className="py-3 pr-3 text-right font-mono font-bold text-indigo-600">{(idea.unique_sessions || 0).toLocaleString()}</td>
-                          <td className="py-3 pr-3 text-right font-mono font-bold text-rose-600">{(idea.likes || 0).toLocaleString()}</td>
                           <td className="py-3 pr-3 text-right font-mono font-bold text-primary">{(idea.votes || 0).toLocaleString()}</td>
                           <td className="py-3 pr-3 text-right font-black text-emerald-700 font-mono text-sm">{(idea.score || 0).toLocaleString()}</td>
                           <td className="py-3 pl-3 text-slate-500 whitespace-nowrap text-[11px]">

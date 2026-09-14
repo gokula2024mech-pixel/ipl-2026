@@ -6,6 +6,5 @@
   "is_qr_generation_active": true,
   "current_voting_round": 1,
   "updated_at": "2026-09-13T16:04:18.797256+00:00",
-  "updated_by": "admin_user",
-  "is_likes_active": false
+  "updated_by": "admin_user"
 }

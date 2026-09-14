@@ -2,7 +2,6 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
 import {
-  Heart,
   Vote,
   Users,
   Lightbulb,
@@ -47,10 +46,7 @@ export default function PublicIdeaPage({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [copied, setCopied] = useState(false)
-  const [liking, setLiking] = useState(false)
-  const [hasLiked, setHasLiked] = useState(false)
   const [isVotingActive, setIsVotingActive] = useState(false)
-  const [isLikesActive, setIsLikesActive] = useState(false)
   const [toast, setToast] = useState(null)
   const toastTimeoutRef = useRef(null)
   const visitTrackedRef = useRef(false)
@@ -58,25 +54,18 @@ export default function PublicIdeaPage({
   const rawApiUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000').trim().replace(/\/+$/, '')
   const API_BASE_URL = rawApiUrl.endsWith('/api') ? rawApiUrl.slice(0, -4) : rawApiUrl
 
-  // Authoritative Voting & Likes Controls Status
+  // Authoritative Voting Controls Status
   const fetchVotingStatus = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE_URL}/api/voting/status`)
       if (res.ok) {
         const data = await res.json()
-        if (data.success) {
-          if (typeof data.is_voting_active === 'boolean') {
-            setIsVotingActive(data.is_voting_active)
-          }
-          if (typeof data.is_likes_active === 'boolean') {
-            setIsLikesActive(data.is_likes_active)
-          } else {
-            setIsLikesActive(false)
-          }
+        if (data.success && typeof data.is_voting_active === 'boolean') {
+          setIsVotingActive(data.is_voting_active)
         }
       }
     } catch (e) {
-      console.warn('[PublicIdeaPage] Could not fetch voting/likes status:', e.message)
+      console.warn('[PublicIdeaPage] Could not fetch voting status:', e.message)
     }
   }, [API_BASE_URL])
 
@@ -129,9 +118,6 @@ export default function PublicIdeaPage({
         setError(data.message || 'Innovation idea not found or is currently inactive.')
       } else {
         setIdea(data.idea)
-        if (data.idea.viewer_state?.has_liked) {
-          setHasLiked(true)
-        }
         setError(null)
       }
     } catch (err) {
@@ -191,17 +177,6 @@ export default function PublicIdeaPage({
   useEffect(() => {
     if (!productId) return
 
-    const likesChannel = supabase
-      .channel(`rt-likes-${productId}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'idea_likes', filter: `product_id=eq.${productId}` },
-        () => {
-          fetchIdeaDetails(false)
-        }
-      )
-      .subscribe()
-
     const countsChannel = supabase
       .channel(`rt-counts-${productId}`)
       .on(
@@ -234,9 +209,6 @@ export default function PublicIdeaPage({
             if (typeof payload.new.is_voting_active === 'boolean') {
               setIsVotingActive(payload.new.is_voting_active)
             }
-            if (typeof payload.new.is_likes_active === 'boolean') {
-              setIsLikesActive(payload.new.is_likes_active)
-            }
           }
           fetchVotingStatus()
         }
@@ -244,114 +216,11 @@ export default function PublicIdeaPage({
       .subscribe()
 
     return () => {
-      supabase.removeChannel(likesChannel)
       supabase.removeChannel(countsChannel)
       supabase.removeChannel(votesChannel)
       supabase.removeChannel(controlsChannel)
     }
   }, [productId, fetchIdeaDetails, fetchVotingStatus])
-
-  // 4. Like Submission (Public Action: +1 mark)
-  const handleLike = async () => {
-    if (!isLikesActive) {
-      showToast({
-        type: 'warning',
-        title: 'LIKES CLOSED',
-        message: 'Likes are currently closed.'
-      })
-      return
-    }
-    if (liking || hasLiked) return
-    setLiking(true)
-
-    try {
-      const visitorToken = getStoredVisitorToken()
-      const headers = { 'Content-Type': 'application/json' }
-      if (visitorToken) {
-        headers['x-visitor-token'] = visitorToken
-      }
-      if (session?.access_token) {
-        headers['Authorization'] = `Bearer ${session.access_token}`
-      }
-
-      const res = await fetch(`${API_BASE_URL}/api/ideas/${encodeURIComponent(productId)}/like`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ visitor_token: visitorToken || undefined })
-      })
-      const data = await res.json()
-
-      if (!res.ok) {
-        if (data?.error_code === 'LIKES_CLOSED' || res.status === 403) {
-          setIsLikesActive(false)
-          showToast({
-            type: 'warning',
-            title: 'LIKES CLOSED',
-            message: data?.message || 'Likes are currently closed.'
-          })
-        } else if (res.status === 429) {
-          showToast({
-            type: 'warning',
-            title: 'TOO MANY REQUESTS',
-            message: 'Please wait a moment before liking again.'
-          })
-        } else {
-          showToast({
-            type: 'error',
-            title: 'LIKE FAILED',
-            message: data?.message || 'Unable to record your like at this time.'
-          })
-        }
-        return
-      }
-
-      if (data.visitor_token) {
-        setStoredVisitorToken(data.visitor_token)
-      }
-
-      if (data.already_liked) {
-        setHasLiked(true)
-        showToast({
-          type: 'warning',
-          title: 'ALREADY LIKED',
-          message: 'You have already liked this innovation idea!'
-        })
-      } else {
-        setHasLiked(true)
-        setIdea((prev) => {
-          if (!prev) return prev
-          const newLikes = (prev.stats?.likes_count || 0) + 1
-          const votes = prev.stats?.votes_count || 0
-          return {
-            ...prev,
-            stats: {
-              ...prev.stats,
-              likes_count: newLikes,
-              total_score: newLikes + votes * 2
-            },
-            viewer_state: {
-              ...prev.viewer_state,
-              has_liked: true
-            }
-          }
-        })
-        showToast({
-          type: 'success',
-          title: 'IDEA LIKED (+1)',
-          message: 'Thank you for supporting this innovation project!'
-        })
-      }
-    } catch (err) {
-      console.error('[PublicIdeaPage] Like error:', err)
-      showToast({
-        type: 'error',
-        title: 'NETWORK ERROR',
-        message: 'Could not connect to the voting server. Please try again.'
-      })
-    } finally {
-      setLiking(false)
-    }
-  }
 
   // 5. Vote Trigger (Protected Action: +2 marks, SECE Account Required)
   const handleVoteClick = () => {
@@ -480,7 +349,7 @@ export default function PublicIdeaPage({
   }
 
   const { stats, members } = idea
-  const totalScore = stats?.total_score || (stats?.likes_count || 0) + (stats?.votes_count || 0) * 2
+  const totalScore = stats?.total_score !== undefined && stats.total_score !== null ? stats.total_score : (stats?.votes_count || 0) * 2
 
   return (
     <div className="min-h-screen bg-slate-50 pt-24 pb-16 px-4 md:px-6 lg:px-8 relative">
@@ -685,26 +554,17 @@ export default function PublicIdeaPage({
                     <span className="text-xs font-bold text-slate-400 uppercase">pts</span>
                   </div>
                   <span className="text-[10px] text-slate-400 block font-medium mt-0.5">
-                    Score = Likes + (Votes × 2)
+                    Score = Votes × 2
                   </span>
                 </div>
 
                 <div className="h-10 w-[1px] bg-slate-200 hidden sm:block" />
 
-                {/* Score Breakdown: Likes & Votes */}
+                {/* Score Breakdown: Community Votes */}
                 <div className="flex items-center gap-4 sm:gap-5">
                   <div className="text-center">
                     <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-                      ❤️ Likes (+1)
-                    </span>
-                    <span className="font-heading text-xl font-bold text-slate-800 mt-0.5 block">
-                      {stats?.likes_count || 0}
-                    </span>
-                  </div>
-
-                  <div className="text-center">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-                      🗳️ Votes (+2)
+                      🗳️ Votes
                     </span>
                     <span className="font-heading text-xl font-bold text-slate-800 mt-0.5 block">
                       {stats?.votes_count || 0}
@@ -715,52 +575,6 @@ export default function PublicIdeaPage({
 
               {/* ACTION BUTTONS */}
               <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto justify-end">
-                {/* LIKE BUTTON (Public - Free to All Visitors) */}
-                <motion.button
-                  whileHover={{ scale: hasLiked || !isLikesActive ? 1 : 1.02 }}
-                  whileTap={{ scale: hasLiked || !isLikesActive ? 1 : 0.96 }}
-                  type="button"
-                  onClick={handleLike}
-                  disabled={!isLikesActive || liking || hasLiked}
-                  aria-label={
-                    !isLikesActive
-                      ? 'Likes are currently closed'
-                      : hasLiked
-                      ? 'Idea already liked (+1 point)'
-                      : liking
-                      ? 'Recording like...'
-                      : 'Like this idea (+1 point)'
-                  }
-                  className={`w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-full px-5 py-3 text-xs font-bold shadow-md transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400 focus-visible:ring-offset-2 ${
-                    hasLiked
-                      ? 'bg-rose-50 text-rose-600 border border-rose-200/80 cursor-default shadow-xs'
-                      : !isLikesActive
-                      ? 'bg-slate-200 text-slate-500 border border-slate-300 hover:bg-slate-300 cursor-not-allowed'
-                      : 'bg-white text-slate-700 border border-slate-300 hover:border-rose-400 hover:text-rose-600 hover:bg-rose-50/50'
-                  }`}
-                >
-                  <Heart
-                    size={16}
-                    className={`transition-colors ${
-                      hasLiked
-                        ? 'fill-rose-500 text-rose-500'
-                        : !isLikesActive
-                        ? 'text-slate-400'
-                        : liking
-                        ? 'animate-pulse text-rose-400'
-                        : 'text-slate-400'
-                    }`}
-                  />
-                  <span>
-                    {hasLiked
-                      ? '❤️ Liked (+1)'
-                      : !isLikesActive
-                      ? '❤️ Likes Closed'
-                      : liking
-                      ? 'Recording...'
-                      : '❤️ Like (+1)'}
-                  </span>
-                </motion.button>
 
                 {/* VOTE BUTTON (Protected - Requires Google SECE Account) */}
                 <motion.button
@@ -928,7 +742,6 @@ export default function PublicIdeaPage({
               <ul className="text-[11px] text-slate-600 space-y-1 list-disc list-inside">
                 <li>Students cannot vote for their own team.</li>
                 <li>Students cannot vote for teams within their department.</li>
-                <li>Public Likes (+1 point) are open to all visitors.</li>
               </ul>
             </div>
           </div>

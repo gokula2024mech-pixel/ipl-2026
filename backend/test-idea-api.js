@@ -107,7 +107,7 @@ async function runTests() {
     assert(Array.isArray(data3.idea.members), 'Includes members array');
     assert(data3.idea.stats && typeof data3.idea.stats.total_score === 'number', 'Includes stats with total_score');
     assert(typeof data3.idea.stats.visits_count === 'number', 'Includes visits_count as aggregate number');
-    assert(data3.idea.viewer_state && typeof data3.idea.viewer_state.has_liked === 'boolean', 'Includes viewer_state.has_liked boolean');
+    assert(!data3.idea.viewer_state?.has_liked, 'Like tracking removed from viewer_state');
 
     // Strict Contact Sanitization Assertion
     let contactInfoLeaked = false;
@@ -165,31 +165,24 @@ async function runTests() {
     assert(dataInvalid.error_code === 'IDEA_NOT_FOUND', 'Safe error code IDEA_NOT_FOUND returned');
 
     // --------------------------------------------------------------------------
-    // TEST 5: Input Validation on Like & Visit Endpoints
+    // TEST 5: Input Validation & Complete Elimination of Like Route
     // --------------------------------------------------------------------------
-    console.log('\n5. Testing Input Validation on Like & Visit Endpoints...');
+    console.log('\n5. Testing Input Validation on Visit Endpoint & Elimination of Like Endpoint...');
 
-    // 5a. Non-UUID Product ID
-    const resLikeBad = await fetch(`${baseUrl}/api/ideas/invalid-uuid/like`, { method: 'POST' });
-    assert(resLikeBad.status === 400, 'POST /like with invalid UUID returns HTTP 400');
-    const dataLikeBad = await resLikeBad.json();
-    assert(dataLikeBad.error_code === 'INVALID_PRODUCT_ID', 'Returns INVALID_PRODUCT_ID error');
+    // 5a. Like route is completely eliminated (404)
+    const resLikeEliminated = await fetch(`${baseUrl}/api/ideas/${sampleProductId}/like`, { method: 'POST' });
+    assert(resLikeEliminated.status === 404, 'POST /like endpoint completely eliminated (HTTP 404)');
 
+    // 5b. Visit endpoint validation
     const resVisitBad = await fetch(`${baseUrl}/api/ideas/invalid-uuid/visit`, { method: 'POST' });
     assert(resVisitBad.status === 400, 'POST /visit with invalid UUID returns HTTP 400');
 
-    // 5b. Non-existent Product ID
     const fakeUuid = '00000000-0000-0000-0000-000000000000';
-    const resLikeFake = await fetch(`${baseUrl}/api/ideas/${fakeUuid}/like`, { method: 'POST' });
-    assert(resLikeFake.status === 404, 'POST /like for non-existent product returns HTTP 404');
-    const dataLikeFake = await resLikeFake.json();
-    assert(dataLikeFake.error_code === 'PRODUCT_NOT_FOUND', 'Returns PRODUCT_NOT_FOUND error');
-
     const resVisitFake = await fetch(`${baseUrl}/api/ideas/${fakeUuid}/visit`, { method: 'POST' });
     assert(resVisitFake.status === 404, 'POST /visit for non-existent product returns HTTP 404');
 
     // --------------------------------------------------------------------------
-    // TEST 6: Static Code Safety Assertions (No direct table INSERTs)
+    // TEST 6: Static Code Safety Assertions (No direct table INSERTs, No Like RPC)
     // --------------------------------------------------------------------------
     console.log('\n6. Checking Static Code Safety in ideaRoutes.js...');
     const routeCode = fs.readFileSync(path.join(__dirname, 'routes', 'ideaRoutes.js'), 'utf8');
@@ -201,7 +194,7 @@ async function runTests() {
     assert(!hasDirectVisitInsert, 'SECURITY: Zero direct table INSERTs into idea_visits in backend code');
 
     const usesLikeRpc = /supabase\.rpc\(['"`]record_idea_like['"`]/i.test(routeCode);
-    assert(usesLikeRpc, 'ARCHITECTURE: Uses record_idea_like RPC exclusively');
+    assert(!usesLikeRpc, 'SECURITY: Zero calls to record_idea_like in backend code');
 
     const usesVisitRpc = /supabase\.rpc\(['"`]record_idea_visit['"`]/i.test(routeCode);
     assert(usesVisitRpc, 'ARCHITECTURE: Uses record_idea_visit RPC exclusively');

@@ -370,7 +370,7 @@ function PodiumCard({ team, place, isPulse, prefersReducedMotion = false }) {
                 }`}
               >
                 <AnimatedCounter
-                  value={team.totalScore !== undefined ? team.totalScore : (team.score !== undefined ? team.score : (((team.likesCount || 0) + (team.voteCount || team.votesCount || 0) * 2)))}
+                  value={team.totalScore !== undefined ? team.totalScore : (team.score !== undefined ? team.score : (((team.voteCount || team.votesCount || 0) * 2)))}
                   prefersReducedMotion={prefersReducedMotion}
                 />
               </span>
@@ -523,7 +523,6 @@ export default function Leaderboard({ user, session, profile, onProfileUpdate } 
           if (ideaJson.success && Array.isArray(ideaJson.leaderboard)) {
             const freshVoting = {
               totalScore: ideaJson.leaderboard.reduce((acc, i) => acc + (i.total_score || 0), 0),
-              totalLikes: ideaJson.total_likes || 0,
               totalVotes: ideaJson.total_votes || 0,
               totalProducts: ideaJson.total || ideaJson.total_ideas || ideaJson.leaderboard.length,
               totalTeams: ideaJson.total || ideaJson.total_ideas || ideaJson.leaderboard.length,
@@ -545,8 +544,6 @@ export default function Leaderboard({ user, session, profile, onProfileUpdate } 
                 isShortlisted: Boolean(item.is_shortlisted),
                 is_shortlisted: Boolean(item.is_shortlisted),
                 category: item.category || null,
-                likesCount: item.likes_count || 0,
-                likes_count: item.likes_count || 0,
                 votesCount: item.votes_count || 0,
                 votes_count: item.votes_count || 0,
                 voteCount: item.votes_count || 0,
@@ -566,7 +563,6 @@ export default function Leaderboard({ user, session, profile, onProfileUpdate } 
           console.warn('[Idea Leaderboard] Phase 3 shortlist error or unavailable. Failing closed:', errData?.error_code);
           const emptyState = {
             totalScore: 0,
-            totalLikes: 0,
             totalVotes: 0,
             totalProducts: 0,
             totalTeams: 0,
@@ -581,7 +577,6 @@ export default function Leaderboard({ user, session, profile, onProfileUpdate } 
         console.warn("[Idea Leaderboard] Direct idea leaderboard fetch failed, failing closed:", ideaErr.message);
         const emptyState = {
           totalScore: 0,
-          totalLikes: 0,
           totalVotes: 0,
           totalProducts: 0,
           totalTeams: 0,
@@ -868,57 +863,6 @@ export default function Leaderboard({ user, session, profile, onProfileUpdate } 
       .channel("public-idea_leaderboard-live")
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "idea_likes" },
-        (payload) => {
-          const newLike = payload.new;
-          if (newLike?.product_id) {
-            setRecentlyVotedTeamId(newLike.product_id);
-            setTimeout(() => setRecentlyVotedTeamId(null), 2500);
-
-            setVotingStats((prev) => {
-              const updatedTeams = [...prev.teams];
-              const idx = updatedTeams.findIndex((t) => (t.productId || t.id) === newLike.product_id);
-              if (idx !== -1) {
-                const currentLikes = (updatedTeams[idx].likesCount || updatedTeams[idx].likes_count || 0) + 1;
-                const currentVotes = updatedTeams[idx].votesCount || updatedTeams[idx].votes_count || updatedTeams[idx].voteCount || 0;
-                const newScore = currentLikes + (currentVotes * 2);
-                updatedTeams[idx] = {
-                  ...updatedTeams[idx],
-                  likesCount: currentLikes,
-                  likes_count: currentLikes,
-                  totalScore: newScore,
-                  total_score: newScore,
-                  score: newScore
-                };
-              }
-              // Deterministic sort: Score DESC, Likes DESC, Votes DESC, product_id ASC
-              updatedTeams.sort((a, b) => {
-                const sA = a.totalScore !== undefined ? a.totalScore : (a.score !== undefined ? a.score : 0);
-                const sB = b.totalScore !== undefined ? b.totalScore : (b.score !== undefined ? b.score : 0);
-                if (sB !== sA) return sB - sA;
-                const lA = a.likesCount !== undefined ? a.likesCount : (a.likes_count !== undefined ? a.likes_count : 0);
-                const lB = b.likesCount !== undefined ? b.likesCount : (b.likes_count !== undefined ? b.likes_count : 0);
-                if (lB !== lA) return lB - lA;
-                const vA = a.votesCount !== undefined ? a.votesCount : (a.votes_count !== undefined ? a.votes_count : (a.voteCount || 0));
-                const vB = b.votesCount !== undefined ? b.votesCount : (b.votes_count !== undefined ? b.votes_count : (b.voteCount || 0));
-                if (vB !== vA) return vB - vA;
-                return (a.productId || a.id).localeCompare(b.productId || b.id);
-              });
-              const reRanked = updatedTeams.map((t, i) => ({ ...t, rank: i + 1 }));
-              const newTotalLikes = (prev.totalLikes || 0) + 1;
-              const newTotalScore = (prev.totalScore || 0) + 1;
-              return {
-                ...prev,
-                totalLikes: newTotalLikes,
-                totalScore: newTotalScore,
-                teams: reRanked
-              };
-            });
-          }
-        }
-      )
-      .on(
-        "postgres_changes",
         { event: "*", schema: "public", table: "product_vote_counts" },
         (payload) => {
           const row = payload.new;
@@ -930,9 +874,8 @@ export default function Leaderboard({ user, session, profile, onProfileUpdate } 
               const updatedTeams = [...prev.teams];
               const idx = updatedTeams.findIndex((t) => (t.productId || t.id) === row.product_id);
               if (idx !== -1) {
-                const currentLikes = updatedTeams[idx].likesCount || updatedTeams[idx].likes_count || 0;
                 const newVotes = row.votes_count !== undefined ? row.votes_count : (row.vote_count !== undefined ? row.vote_count : (updatedTeams[idx].votesCount || 0) + 1);
-                const newScore = currentLikes + (newVotes * 2);
+                const newScore = newVotes * 2;
                 updatedTeams[idx] = {
                   ...updatedTeams[idx],
                   votesCount: newVotes,
@@ -944,14 +887,11 @@ export default function Leaderboard({ user, session, profile, onProfileUpdate } 
                   lastVoteTime: row.last_vote_at || row.updated_at
                 };
               }
-              // Deterministic sort: Score DESC, Likes DESC, Votes DESC, product_id ASC
+              // Deterministic sort: Score DESC, Votes DESC, product_id ASC
               updatedTeams.sort((a, b) => {
                 const sA = a.totalScore !== undefined ? a.totalScore : (a.score !== undefined ? a.score : 0);
                 const sB = b.totalScore !== undefined ? b.totalScore : (b.score !== undefined ? b.score : 0);
                 if (sB !== sA) return sB - sA;
-                const lA = a.likesCount !== undefined ? a.likesCount : (a.likes_count !== undefined ? a.likes_count : 0);
-                const lB = b.likesCount !== undefined ? b.likesCount : (b.likes_count !== undefined ? b.likes_count : 0);
-                if (lB !== lA) return lB - lA;
                 const vA = a.votesCount !== undefined ? a.votesCount : (a.votes_count !== undefined ? a.votes_count : (a.voteCount || 0));
                 const vB = b.votesCount !== undefined ? b.votesCount : (b.votes_count !== undefined ? b.votes_count : (b.voteCount || 0));
                 if (vB !== vA) return vB - vA;
@@ -983,9 +923,8 @@ export default function Leaderboard({ user, session, profile, onProfileUpdate } 
               const updatedTeams = [...prev.teams];
               const idx = updatedTeams.findIndex((t) => (t.productId || t.id) === newVote.product_id);
               if (idx !== -1) {
-                const currentLikes = updatedTeams[idx].likesCount || updatedTeams[idx].likes_count || 0;
                 const newVotes = newVote.total_votes !== undefined ? newVote.total_votes : (newVote.vote_count !== undefined ? newVote.vote_count : (updatedTeams[idx].votesCount || 0) + 1);
-                const newScore = currentLikes + (newVotes * 2);
+                const newScore = newVotes * 2;
                 updatedTeams[idx] = {
                   ...updatedTeams[idx],
                   votesCount: newVotes,
@@ -997,14 +936,11 @@ export default function Leaderboard({ user, session, profile, onProfileUpdate } 
                   lastVoteTime: newVote.last_vote_at || newVote.updated_at
                 };
               }
-              // Deterministic sort: Score DESC, Likes DESC, Votes DESC, product_id ASC
+              // Deterministic sort: Score DESC, Votes DESC, product_id ASC
               updatedTeams.sort((a, b) => {
                 const sA = a.totalScore !== undefined ? a.totalScore : (a.score !== undefined ? a.score : 0);
                 const sB = b.totalScore !== undefined ? b.totalScore : (b.score !== undefined ? b.score : 0);
                 if (sB !== sA) return sB - sA;
-                const lA = a.likesCount !== undefined ? a.likesCount : (a.likes_count !== undefined ? a.likes_count : 0);
-                const lB = b.likesCount !== undefined ? b.likesCount : (b.likes_count !== undefined ? b.likes_count : 0);
-                if (lB !== lA) return lB - lA;
                 const vA = a.votesCount !== undefined ? a.votesCount : (a.votes_count !== undefined ? a.votes_count : (a.voteCount || 0));
                 const vB = b.votesCount !== undefined ? b.votesCount : (b.votes_count !== undefined ? b.votes_count : (b.voteCount || 0));
                 if (vB !== vA) return vB - vA;
@@ -2580,7 +2516,7 @@ export default function Leaderboard({ user, session, profile, onProfileUpdate } 
                           <td className="py-4 px-6 text-center">
                             <span className="font-heading font-black text-lg sm:text-xl lg:text-2xl text-primary">
                               <AnimatedCounter
-                                value={team.totalScore !== undefined ? team.totalScore : (team.score !== undefined ? team.score : (((team.likesCount || 0) + (team.votesCount || team.voteCount || 0) * 2)))}
+                                value={team.totalScore !== undefined ? team.totalScore : (team.score !== undefined ? team.score : (((team.votesCount || team.voteCount || 0) * 2)))}
                                 prefersReducedMotion={prefersReducedMotion}
                               />
                             </span>
@@ -2642,7 +2578,7 @@ export default function Leaderboard({ user, session, profile, onProfileUpdate } 
 
                         <div className="text-right shrink-0">
                           <span className="font-heading font-black text-xl text-primary block">
-                            {(team.totalScore !== undefined ? team.totalScore : (team.score !== undefined ? team.score : (((team.likesCount || 0) + (team.votesCount || team.voteCount || 0) * 2)))).toLocaleString()}
+                            {(team.totalScore !== undefined ? team.totalScore : (team.score !== undefined ? team.score : (((team.votesCount || team.voteCount || 0) * 2)))).toLocaleString()}
                           </span>
                           <span className="block text-[9px] text-slate-400 font-black uppercase tracking-wider">
                             Score
