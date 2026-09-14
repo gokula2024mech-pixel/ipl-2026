@@ -2035,6 +2035,7 @@ export default function MySubmissionsPage({
       }
 
       const teamId = phase3Data?.teamId || currentPage?.team?.teamId;
+      const registrationId = currentPage?.team?.registrationId || phase3Data?.registrationId || phase3Data?.registration_id || activeRegId;
       const res = await fetch(`${API_BASE_URL}/api/phase3/linkedin-submission`, {
         method: "POST",
         headers: {
@@ -2043,6 +2044,7 @@ export default function MySubmissionsPage({
         },
         body: JSON.stringify({
           teamId: teamId,
+          registrationId: registrationId,
           role: role,
           linkedin_post_url: rawUrl
         })
@@ -2090,6 +2092,7 @@ export default function MySubmissionsPage({
       }
 
       const teamId = phase3Data?.teamId || currentPage?.team?.teamId;
+      const registrationId = currentPage?.team?.registrationId || phase3Data?.registrationId || phase3Data?.registration_id || activeRegId;
       const res = await fetch(`${API_BASE_URL}/api/phase3/linkedin-submission`, {
         method: "DELETE",
         headers: {
@@ -2098,6 +2101,7 @@ export default function MySubmissionsPage({
         },
         body: JSON.stringify({
           teamId: teamId,
+          registrationId: registrationId,
           role: role
         })
       });

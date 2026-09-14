@@ -428,27 +428,36 @@ router.get('/status', authenticateUser, async (req, res) => {
       }
     }
 
-    // Step 10P / Polish: Reconcile with authoritative Google Drive spreadsheet
-    // Google Sheet is treated as the operational current source of truth for the 3 LinkedIn submission values.
+    // Step 10K: Reconcile with authoritative Google Drive spreadsheet
+    // When Google Sheet is successfully read, manually cleared cells are synced to DB (Case D).
+    // If Drive read is unavailable, safely fall back to database state without modifying DB.
     try {
       const driveRows = await phase3LinkedInDriveService.readSubmissionsFromDrive();
       if (Array.isArray(driveRows) && driveRows.length > 0) {
-        const cleanRegId = (registration?.registration_id || '').toString().trim().toUpperCase();
+        const cleanRegId = (registration?.registration_id || regIdParam || '').toString().trim().toUpperCase();
         const cleanTeamId = (resolvedTeamId || '').toString().trim();
 
-        const teamDriveRow = driveRows.find(r => 
-          (cleanRegId && (r.registration_id || '').toString().trim().toUpperCase() === cleanRegId) ||
-          (cleanTeamId && (r.team_id || '').toString().trim() === cleanTeamId)
-        );
+        // Priority matching: 1. registration_id, 2. team_id
+        let teamDriveRow = null;
+        if (cleanRegId) {
+          teamDriveRow = driveRows.find(
+            r => (r.registration_id || '').toString().trim().toUpperCase() === cleanRegId
+          );
+        }
+        if (!teamDriveRow && cleanTeamId) {
+          teamDriveRow = driveRows.find(
+            r => (r.team_id || '').toString().trim() === cleanTeamId
+          );
+        }
 
         if (teamDriveRow) {
           const getLink = (role) => {
             const canonical = teamDriveRow[`${role}_linkedin_post_link`];
-            if (canonical !== undefined && canonical !== null) {
+            if (canonical !== undefined && canonical !== null && canonical.toString().trim() !== '') {
               return canonical.toString().trim();
             }
             const legacy = teamDriveRow[`${role}_linkedin_url`];
-            if (legacy !== undefined && legacy !== null) {
+            if (legacy !== undefined && legacy !== null && legacy.toString().trim() !== '') {
               return legacy.toString().trim();
             }
             return '';
@@ -466,8 +475,7 @@ router.get('/status', authenticateUser, async (req, res) => {
             const currentSub = linkedinSubmissions[r];
 
             if (!sheetVal) {
-              // Cell is empty/blank in Google Sheet:
-              // Operational source of truth says Pending / cleared!
+              // CASE D: Sheet cell is EMPTY, Database contains submission -> DELETE from DB
               if (currentSub) {
                 linkedinSubmissions[r] = null;
                 if (testStore) {
@@ -496,7 +504,7 @@ router.get('/status', authenticateUser, async (req, res) => {
                 }
               }
             } else {
-              // Cell has a non-empty value in Google Sheet:
+              // CASE B & CASE C: Sheet contains valid URL
               // If DB state is missing or has a different URL, synchronize it
               if (!currentSub || currentSub.post_url !== sheetVal) {
                 let memberName = registration?.leader_name;
@@ -509,19 +517,26 @@ router.get('/status', authenticateUser, async (req, res) => {
                   memberEmail = (registration?.member3_email || '').toLowerCase().trim();
                 }
                 const nowIso = new Date().toISOString();
-                const reconciledRecord = {
+
+                // Step 10K Part 1: Valid DB table columns ONLY
+                const dbUpsertData = {
                   team_id: resolvedTeamId,
                   registration_id: registration?.registration_id || cleanRegId,
                   role: r,
                   member_name: memberName || r,
                   member_email: memberEmail || '',
                   linkedin_post_url: sheetVal,
-                  post_url: sheetVal,
-                  submitted_at: currentSub?.submitted_at || nowIso,
                   updated_at: nowIso
                 };
 
-                linkedinSubmissions[r] = normalizeSub(reconciledRecord);
+                // UI normalized submission object
+                const uiRecord = {
+                  ...dbUpsertData,
+                  post_url: sheetVal,
+                  submitted_at: currentSub?.submitted_at || nowIso
+                };
+
+                linkedinSubmissions[r] = normalizeSub(uiRecord);
 
                 if (testStore) {
                   if (!testStore.linkedin_submissions) testStore.linkedin_submissions = [];
@@ -531,11 +546,13 @@ router.get('/status', authenticateUser, async (req, res) => {
                   if (existingIdx >= 0) {
                     testStore.linkedin_submissions[existingIdx] = {
                       ...testStore.linkedin_submissions[existingIdx],
-                      ...reconciledRecord
+                      ...dbUpsertData,
+                      post_url: sheetVal
                     };
                   } else {
                     testStore.linkedin_submissions.push({
-                      ...reconciledRecord,
+                      ...dbUpsertData,
+                      post_url: sheetVal,
                       id: `sub-${Date.now()}-${r}`
                     });
                   }
@@ -543,14 +560,14 @@ router.get('/status', authenticateUser, async (req, res) => {
                   try {
                     await supabase
                       .from('phase3_linkedin_submissions')
-                      .upsert(reconciledRecord, { onConflict: 'team_id,role' });
+                      .upsert(dbUpsertData, { onConflict: 'team_id,role' });
                   } catch (e) {
                     console.warn('[Phase3] Failed to upsert reconciled submission to DB:', e.message);
                   }
                   try {
                     const allSubs = readLocalSubmissions();
                     if (!allSubs[resolvedTeamId]) allSubs[resolvedTeamId] = {};
-                    allSubs[resolvedTeamId][r] = reconciledRecord;
+                    allSubs[resolvedTeamId][r] = uiRecord;
                     writeLocalSubmissions(allSubs);
                   } catch (_) {}
                 }
@@ -560,7 +577,8 @@ router.get('/status', authenticateUser, async (req, res) => {
         }
       }
     } catch (driveErr) {
-      console.warn('[Phase3] Google Drive reconciliation warning:', driveErr.message);
+      // Step 10K Part 6: Log clear warning, do not modify or delete database records
+      console.warn('[Phase3] Drive reconciliation unavailable (DRIVE_SYNC_UNAVAILABLE):', driveErr.message);
     }
 
     const hasAnyShortlistedProduct = productStatuses.some(p => p.is_shortlisted);
@@ -775,16 +793,21 @@ router.post('/linkedin-submission', authenticateUser, async (req, res) => {
     }
 
     const nowIso = new Date().toISOString();
-    const record = {
+    // Step 10K Part 1: Valid DB table columns ONLY (strip post_url, submitted_at)
+    const dbPayload = {
       team_id: team.id,
       registration_id: registration.registration_id,
       role: normRole,
       member_name: memberName || normRole,
       member_email: memberEmail || userEmail,
       linkedin_post_url: trimmedUrl,
-      post_url: trimmedUrl,
-      submitted_at: nowIso,
       updated_at: nowIso
+    };
+
+    const uiSubmission = {
+      ...dbPayload,
+      post_url: trimmedUrl,
+      submitted_at: nowIso
     };
 
     // Sync to authoritative Google Drive spreadsheet
@@ -815,58 +838,61 @@ router.post('/linkedin-submission', authenticateUser, async (req, res) => {
       if (!testStore.linkedin_submissions) testStore.linkedin_submissions = [];
       const idx = testStore.linkedin_submissions.findIndex(s => s.team_id === team.id && s.role === normRole);
       if (idx >= 0) {
-        testStore.linkedin_submissions[idx] = { ...testStore.linkedin_submissions[idx], ...record };
+        testStore.linkedin_submissions[idx] = { ...testStore.linkedin_submissions[idx], ...uiSubmission };
       } else {
-        testStore.linkedin_submissions.push({ ...record, id: `sub-${Date.now()}`, created_at: new Date().toISOString() });
+        testStore.linkedin_submissions.push({ ...uiSubmission, id: `sub-${Date.now()}`, created_at: nowIso });
       }
 
       return res.status(200).json({
         success: true,
         message: 'LinkedIn post URL saved successfully.',
-        submission: record
+        submission: uiSubmission
       });
     }
 
-    // Try saving to database first
+    // Step 10K Part 1: Upsert directly to Supabase with valid table columns only.
+    // The Supabase upsert must succeed against public.phase3_linkedin_submissions.
+    // Do NOT silently fall back to local file storage when PostgreSQL is available.
+    // If PostgreSQL fails, return a proper backend error instead of falsely reporting success.
     try {
-      const { data, error } = await supabase
+      const { data: dbData, error: dbError } = await supabase
         .from('phase3_linkedin_submissions')
-        .upsert(
-          {
-            ...record,
-            updated_at: new Date().toISOString()
-          },
-          { onConflict: 'team_id,role' }
-        )
+        .upsert(dbPayload, { onConflict: 'team_id,role' })
         .select()
         .single();
 
-      if (error) {
-        console.warn('[Phase3] DB upsert failed, using local file storage:', error.message);
-        // Fallback to local file store if table not yet migrated
-        const allSubs = readLocalSubmissions();
-        if (!allSubs[team.id]) allSubs[team.id] = {};
-        allSubs[team.id][normRole] = {
-          ...record,
-          created_at: allSubs[team.id][normRole]?.created_at || new Date().toISOString()
-        };
-        writeLocalSubmissions(allSubs);
+      if (dbError) {
+        console.error('[Phase3 API] Database upsert failed:', dbError.message);
+        return res.status(500).json({
+          success: false,
+          error_code: 'DATABASE_UPSERT_FAILED',
+          message: 'Failed to save LinkedIn submission to database: ' + dbError.message
+        });
       }
     } catch (err) {
-      console.warn('[Phase3] Exception saving to DB, using local file storage:', err.message);
+      console.error('[Phase3 API] Exception saving to DB:', err.message);
+      return res.status(500).json({
+        success: false,
+        error_code: 'DATABASE_ERROR',
+        message: 'Database error saving LinkedIn submission: ' + err.message
+      });
+    }
+
+    // Mirror to local fallback store if maintained
+    try {
       const allSubs = readLocalSubmissions();
       if (!allSubs[team.id]) allSubs[team.id] = {};
       allSubs[team.id][normRole] = {
-        ...record,
-        created_at: allSubs[team.id][normRole]?.created_at || new Date().toISOString()
+        ...uiSubmission,
+        created_at: allSubs[team.id][normRole]?.created_at || nowIso
       };
       writeLocalSubmissions(allSubs);
-    }
+    } catch (_) {}
 
     return res.status(200).json({
       success: true,
       message: 'LinkedIn post URL saved successfully.',
-      submission: record
+      submission: uiSubmission
     });
   } catch (err) {
     console.error('[Phase3 API] /linkedin-submission error:', err.message);
@@ -889,6 +915,7 @@ router.post('/linkedin-submission', authenticateUser, async (req, res) => {
 async function handleRemoveLinkedInSubmission(req, res) {
   try {
     const teamId = (req.body?.teamId || req.query?.teamId || '').trim();
+    const regIdParam = (req.body?.registrationId || req.query?.registrationId || '').trim().toUpperCase();
     const role = (req.body?.role || req.query?.role || '').trim();
     const userEmail = req.user.email;
 
@@ -915,7 +942,13 @@ async function handleRemoveLinkedInSubmission(req, res) {
 
     if (testStore) {
       team = testStore.teams.find(t => t.id === teamId);
-      registration = testStore.registrations.find(r => team && r.team_name.toLowerCase() === team.team_name.toLowerCase());
+      registration = testStore.registrations.find(r => 
+        (regIdParam && r.registration_id === regIdParam) ||
+        (team && r.team_name.toLowerCase() === team.team_name.toLowerCase())
+      );
+      if (!registration && regIdParam) {
+        registration = testStore.registrations.find(r => r.registration_id === regIdParam);
+      }
     } else {
       const { data: teamData } = await supabase
         .from('teams')
@@ -924,7 +957,16 @@ async function handleRemoveLinkedInSubmission(req, res) {
         .maybeSingle();
       team = teamData;
 
-      if (team?.team_name) {
+      if (regIdParam) {
+        const { data: regData } = await supabase
+          .from('registrations')
+          .select('*')
+          .eq('registration_id', regIdParam)
+          .maybeSingle();
+        if (regData) registration = regData;
+      }
+
+      if (!registration && team?.team_name) {
         const { data: regData } = await supabase
           .from('registrations')
           .select('*')
@@ -941,6 +983,8 @@ async function handleRemoveLinkedInSubmission(req, res) {
         message: 'Team or registration not found.'
       });
     }
+
+    const resolvedRegId = registration.registration_id || regIdParam;
 
     // Team membership & isolation verification
     const leaderEmail = (registration.leader_email || '').toLowerCase().trim();
@@ -986,48 +1030,60 @@ async function handleRemoveLinkedInSubmission(req, res) {
       });
     }
 
-    // Sync removal to authoritative Google Drive spreadsheet
+    // Step 10K Part 4: Synchronize removal with Google Drive spreadsheet first.
+    // Require a confirmed successful result. If Google Sheet synchronization fails:
+    // - DO NOT delete the database submission.
+    // - DO NOT return HTTP 200.
+    // - Return appropriate 5xx error (DRIVE_SYNC_FAILED).
     try {
-      await phase3LinkedInDriveService.removeSubmissionFromDrive({
-        registrationId: registration.registration_id,
+      const driveResult = await phase3LinkedInDriveService.removeSubmissionFromDrive({
+        registrationId: resolvedRegId,
         teamId: team.id,
         role: normRole
       });
+      if (!driveResult || !driveResult.success) {
+        throw new Error(`Google Sheet removal was not confirmed for registration ID ${resolvedRegId}`);
+      }
     } catch (driveErr) {
       console.error('[Phase3 API] Google Drive spreadsheet remove failed:', driveErr.message);
-      return res.status(500).json({
+      return res.status(502).json({
         success: false,
-        error_code: 'DRIVE_UPDATE_FAILED',
-        message: 'Failed to update Google Sheet during removal: ' + driveErr.message
+        error_code: 'DRIVE_SYNC_FAILED',
+        message: 'LinkedIn submission was not removed because Google Sheet synchronization failed: ' + driveErr.message
       });
     }
 
+    // Step 10K Part 4: ONLY after Google Sheet successfully clears the cell, delete from database
     if (testStore) {
       if (testStore.linkedin_submissions) {
         testStore.linkedin_submissions = testStore.linkedin_submissions.filter(
           s => !(s.team_id === team.id && s.role === normRole)
         );
       }
-      return res.status(200).json({
-        success: true,
-        message: 'LinkedIn submission removed successfully.',
-        role: normRole
-      });
-    }
+    } else {
+      try {
+        const { error: dbErr } = await supabase
+          .from('phase3_linkedin_submissions')
+          .delete()
+          .eq('team_id', team.id)
+          .eq('role', normRole);
 
-    // Remove from database table
-    try {
-      const { error: dbErr } = await supabase
-        .from('phase3_linkedin_submissions')
-        .delete()
-        .eq('team_id', team.id)
-        .eq('role', normRole);
-
-      if (dbErr) {
-        console.warn('[Phase3] DB delete error, removing from local store:', dbErr.message);
+        if (dbErr) {
+          console.error('[Phase3 API] Database deletion error:', dbErr.message);
+          return res.status(500).json({
+            success: false,
+            error_code: 'DATABASE_DELETE_FAILED',
+            message: 'Failed to delete LinkedIn submission from database: ' + dbErr.message
+          });
+        }
+      } catch (err) {
+        console.error('[Phase3 API] Exception removing from DB:', err.message);
+        return res.status(500).json({
+          success: false,
+          error_code: 'DATABASE_ERROR',
+          message: 'Database error deleting LinkedIn submission: ' + err.message
+        });
       }
-    } catch (err) {
-      console.warn('[Phase3] Exception removing from DB, using local file storage:', err.message);
     }
 
     // Also remove from local fallback store

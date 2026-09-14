@@ -468,15 +468,25 @@ async function saveSubmissionToDrive(params) {
   }
 
   const cleanRegId = registrationId.toString().trim().toUpperCase();
+  const cleanTeamId = teamId ? teamId.toString().trim() : '';
   const normRole = (role || '').toLowerCase().trim();
   const trimmedUrl = (linkedinUrl || '').trim();
   const nowIso = new Date().toISOString();
 
   return withWriteLock(async () => {
     const rows = await readSubmissionsFromDrive();
-    let existingIndex = rows.findIndex(
-      r => (r.registration_id || '').toString().trim().toUpperCase() === cleanRegId
-    );
+    // Step 10K Part 7: Priority matching (1. registration_id, 2. team_id)
+    let existingIndex = -1;
+    if (cleanRegId) {
+      existingIndex = rows.findIndex(
+        r => (r.registration_id || '').toString().trim().toUpperCase() === cleanRegId
+      );
+    }
+    if (existingIndex < 0 && cleanTeamId) {
+      existingIndex = rows.findIndex(
+        r => (r.team_id || '').toString().trim() === cleanTeamId
+      );
+    }
 
     let row;
     if (existingIndex >= 0) {
@@ -540,11 +550,13 @@ async function saveSubmissionToDrive(params) {
 /**
  * Remove a LinkedIn URL slot for a team in the Google Drive spreadsheet.
  * Clears ONLY that person's URL cell, preserving all other slots.
+ * Throws an explicit error if the team row is not found.
  * 
  * @param {Object} params
  * @param {string} params.registrationId - Registration ID
+ * @param {string} [params.teamId] - Team UUID
  * @param {('leader'|'member1'|'member2')} params.role - Slot to clear
- * @returns {Promise<Object|null>} The updated row or null
+ * @returns {Promise<{ success: boolean, updatedRow: Object }>} Result object
  */
 async function removeSubmissionFromDrive(params) {
   const { registrationId, teamId, role } = params;
@@ -559,13 +571,23 @@ async function removeSubmissionFromDrive(params) {
 
   return withWriteLock(async () => {
     const rows = await readSubmissionsFromDrive();
-    const idx = rows.findIndex(
-      r => (cleanRegId && (r.registration_id || '').toString().trim().toUpperCase() === cleanRegId) ||
-           (cleanTeamId && (r.team_id || '').toString().trim() === cleanTeamId)
-    );
+    // Step 10K Part 7: Priority matching (1. registration_id, 2. team_id)
+    let idx = -1;
+    if (cleanRegId) {
+      idx = rows.findIndex(
+        r => (r.registration_id || '').toString().trim().toUpperCase() === cleanRegId
+      );
+    }
+    if (idx < 0 && cleanTeamId) {
+      idx = rows.findIndex(
+        r => (r.team_id || '').toString().trim() === cleanTeamId
+      );
+    }
 
+    // Step 10K Part 3: Throw explicit error if row not found (never return null silently)
     if (idx < 0) {
-      return null;
+      const targetId = cleanRegId || cleanTeamId;
+      throw new Error(`Google Sheet team row not found for registration ID ${targetId}`);
     }
 
     const row = rows[idx];
@@ -584,7 +606,10 @@ async function removeSubmissionFromDrive(params) {
     rows[idx] = row;
 
     await writeSubmissionsToDrive(rows);
-    return row;
+    return {
+      success: true,
+      updatedRow: row
+    };
   });
 }
 
