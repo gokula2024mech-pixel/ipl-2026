@@ -2926,17 +2926,19 @@ async function getAllVotingRecords() {
     console.warn('[getAllVotingRecords] Error querying profiles:', e.message);
   }
 
-  // 3. Fetch teams, registrations, products, and phase3_shortlist in parallel
+  // 3. Fetch teams, registrations, products, phase3_shortlist, and phase1_submissions in parallel
   const [
     { data: teamsData },
     { data: regsData },
     { data: prodsData },
-    { data: slData }
+    { data: slData },
+    { data: p1Data }
   ] = await Promise.all([
     supabase.from('teams').select('id, team_name'),
     supabase.from('registrations').select('id, registration_id, team_name, leader_name, leader_email, leader_department, project_title, innovation_domain'),
     supabase.from('products').select('id, team_id, product_title, innovation_domain, status, legacy_registration_id'),
-    supabase.from('phase3_shortlist').select('registration_id, product_id, team_id, category')
+    supabase.from('phase3_shortlist').select('registration_id, product_id, team_id, category'),
+    supabase.from('phase1_submissions').select('registration_id, product_id, patent_type')
   ]);
 
   const teamMap = new Map();
@@ -2977,6 +2979,14 @@ async function getAllVotingRecords() {
     if (sl.registration_id) shortlistByRegId.set(sl.registration_id.trim().toUpperCase(), sl);
   });
 
+  const p1PatentMap = new Map();
+  (p1Data || []).forEach(p1 => {
+    if (p1.patent_type === 'Design Patent') {
+      if (p1.product_id) p1PatentMap.set(p1.product_id, 'Design Patent');
+      if (p1.registration_id) p1PatentMap.set(p1.registration_id.trim().toUpperCase(), 'Design Patent');
+    }
+  });
+
   return {
     votes: votesList,
     teamMap,
@@ -2988,6 +2998,7 @@ async function getAllVotingRecords() {
     shortlistByProdId,
     shortlistByTeamId,
     shortlistByRegId,
+    p1PatentMap,
     teams: teamsData || [],
     registrations: regsData || [],
     products: prodsData || [],
@@ -3092,12 +3103,75 @@ router.get('/admin/voter-reports', authenticateUser, checkAdmin, async (req, res
 });
 
 // -------------------------------------------------------------
+// Authoritative Finalist Sheet Classification Cache & Resolver
+// -------------------------------------------------------------
+let authoritativeWorkbookSheets = null;
+function getAuthoritativeFinalistSheetMap() {
+  if (authoritativeWorkbookSheets) return authoritativeWorkbookSheets;
+  try {
+    const wbPath = path.join(__dirname, '../data/IPL_2026_Finalists_Authoritative.xlsx');
+    if (fs.existsSync(wbPath)) {
+      const wb = XLSX.readFile(wbPath);
+      const map = new Map();
+      wb.SheetNames.forEach(sheet => {
+        const ws = wb.Sheets[sheet];
+        const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
+        for (let r = 5; r < rows.length; r++) {
+          const row = rows[r];
+          if (row && row[1]) {
+            const id = String(row[1]).trim().toUpperCase();
+            map.set(id, sheet);
+          }
+        }
+      });
+      authoritativeWorkbookSheets = map;
+      return map;
+    }
+  } catch (err) {
+    console.warn('[VotingRoutes] Note loading authoritative workbook sheets:', err.message);
+  }
+  authoritativeWorkbookSheets = new Map();
+  return authoritativeWorkbookSheets;
+}
+
+function resolveProductClassification(prod, reg, slEntry, workbookMap, p1PatentMap) {
+  // 1. ChameleX multi-product deterministic resolution
+  if (prod?.product_title && prod.product_title.toLowerCase().includes('particulate matter')) {
+    return 'Hardware';
+  }
+  if (prod?.product_title && prod.product_title.toLowerCase().includes('camouflage')) {
+    return 'Software';
+  }
+
+  // 2. Authoritative workbook sheet mapping
+  const regId = (prod?.legacy_registration_id || reg?.registration_id || '').trim().toUpperCase();
+  if (workbookMap && regId && workbookMap.has(regId)) {
+    const sheet = workbookMap.get(regId);
+    if (sheet === 'Hardware') return 'Hardware';
+    if (sheet === 'Software') return 'Software';
+    if (sheet === 'HW & SW Prototype') return 'HW & SW Prototype';
+  }
+
+  // 3. Phase 3 Shortlist category field mapping
+  const cat = (slEntry?.category || '').trim().toUpperCase();
+  if (cat === 'HW' || cat.includes('HARDWARE')) return 'Hardware';
+  if (cat === 'SW' || cat.includes('SOFTWARE')) return 'Software';
+
+  // 4. Phase 1 Design Patent mapping (Design Patent is only for Hardware)
+  if (p1PatentMap && (p1PatentMap.get(prod?.id) === 'Design Patent' || p1PatentMap.get(regId) === 'Design Patent')) {
+    return 'Hardware';
+  }
+
+  return null;
+}
+
+// -------------------------------------------------------------
 // 12. GET /api/voting/admin/team-reports
 // Server-side team and product vote breakdown with voter list
 // -------------------------------------------------------------
 router.get('/admin/team-reports', authenticateUser, checkAdmin, async (req, res) => {
   try {
-    const { search = '', department = '', team_id = '' } = req.query;
+    const { search = '', department = '', team_id = '', product_type = '' } = req.query;
     const {
       votes,
       teamMap,
@@ -3109,8 +3183,11 @@ router.get('/admin/team-reports', authenticateUser, checkAdmin, async (req, res)
       shortlistByProdId,
       shortlistByTeamId,
       shortlistByRegId,
+      p1PatentMap,
       teams
     } = await getAllVotingRecords();
+
+    const workbookMap = getAuthoritativeFinalistSheetMap();
 
     // 1. Tally votes per product and group voters by team_id
     const productVoteCountsMap = new Map();
@@ -3155,11 +3232,12 @@ router.get('/admin/team-reports', authenticateUser, checkAdmin, async (req, res)
 
       const shortlistCategory = slEntry?.category || null;
 
-      // Map product list with exact product-level votes
+      // Map product list with exact product-level votes and classification
       const prodList = prods.length > 0 ? prods.map(p => {
         const pVotes = productVoteCountsMap.get(p.id) || 0;
         const isProdShortlisted = shortlistByProdId.has(p.id);
         const pSl = shortlistByProdId.get(p.id);
+        const resolvedType = resolveProductClassification(p, reg, pSl, workbookMap, p1PatentMap);
         return {
           productId: p.id,
           productTitle: p.product_title || 'Project Showcase',
@@ -3167,7 +3245,8 @@ router.get('/admin/team-reports', authenticateUser, checkAdmin, async (req, res)
           productVotes: pVotes,
           score: pVotes * 2,
           isShortlisted: isProdShortlisted,
-          shortlistCategory: pSl?.category || null
+          shortlistCategory: pSl?.category || null,
+          productType: resolvedType
         };
       }) : [{
         productId: null,
@@ -3176,7 +3255,8 @@ router.get('/admin/team-reports', authenticateUser, checkAdmin, async (req, res)
         productVotes: 0,
         score: 0,
         isShortlisted: false,
-        shortlistCategory: null
+        shortlistCategory: null,
+        productType: resolveProductClassification(null, reg, null, workbookMap, p1PatentMap)
       }];
 
       // Team total votes = sum of votes received by all products belonging to that team
@@ -3192,12 +3272,15 @@ router.get('/admin/team-reports', authenticateUser, checkAdmin, async (req, res)
       // Sort voters newest first
       votersForTeam.sort((a, b) => new Date(b.votedAt) - new Date(a.votedAt));
 
+      const primaryProductType = prodList.find(p => p.productType)?.productType || null;
+
       return {
         id: t.id,
         registrationId: reg?.registration_id || t.id.slice(0, 8),
         teamName: t.team_name,
         department: dept,
         products: prodList,
+        productType: primaryProductType,
         totalVotes: teamTotalVotes,
         score: teamScore,
         isShortlisted: !!isShortlisted,
@@ -3228,6 +3311,26 @@ router.get('/admin/team-reports', authenticateUser, checkAdmin, async (req, res)
         t.products.some(p => p.productTitle.toLowerCase().includes(q)) ||
         t.department.toLowerCase().includes(q)
       );
+    }
+    if (product_type && product_type.trim() && product_type.toLowerCase() !== 'all') {
+      const ptNorm = product_type.trim().toLowerCase();
+      filtered = filtered.map(t => {
+        const matchingProds = (t.products || []).filter(p => {
+          const type = (p.productType || '').toLowerCase();
+          const cat = (p.shortlistCategory || '').toLowerCase();
+          if (ptNorm === 'hardware') {
+            return type === 'hardware' || type === 'hw' || type.includes('hardware') || type.includes('hw & sw') ||
+                   cat === 'hw' || cat.includes('hardware');
+          }
+          if (ptNorm === 'software') {
+            return type === 'software' || type === 'sw' || type.includes('software') || type.includes('hw & sw') ||
+                   cat === 'sw' || cat.includes('software');
+          }
+          return false;
+        });
+        if (matchingProds.length === 0) return null;
+        return { ...t, products: matchingProds };
+      }).filter(Boolean);
     }
 
     // Sort by total votes DESC, then team name ASC

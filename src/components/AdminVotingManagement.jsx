@@ -289,6 +289,7 @@ export const TEAM_EXPORT_FIELDS = [
     group: 'PRODUCT & INNOVATION',
     fields: [
       { key: 'productTitle', label: 'Product Title', defaultChecked: true, width: 34 },
+      { key: 'productType', label: 'Product Type', defaultChecked: true, width: 16 },
       { key: 'innovationDomain', label: 'Innovation Domain', defaultChecked: true, width: 26 },
       { key: 'productId', label: 'Product UUID', defaultChecked: false, width: 38 },
       { key: 'productVotes', label: 'Product Votes', defaultChecked: true, width: 16 },
@@ -609,6 +610,7 @@ export default function AdminVotingManagement({
   // Team Reports State (Admin Only Filter/Sort/Pagination)
   const [teamSearchQuery, setTeamSearchQuery] = useState('');
   const [teamDeptFilter, setTeamDeptFilter] = useState('All Departments');
+  const [teamProductTypeFilter, setTeamProductTypeFilter] = useState('all'); // 'all' | 'hardware' | 'software'
   const [teamShortlistFilter, setTeamShortlistFilter] = useState('all'); // 'all' | 'shortlisted' | 'non_shortlisted'
   const [teamVotingStatusFilter, setTeamVotingStatusFilter] = useState('all'); // 'all' | 'with_votes' | 'zero_votes'
   const [teamSortBy, setTeamSortBy] = useState('votes'); // 'votes' | 'score' | 'team_name' | 'product_title' | 'registration_id'
@@ -1124,7 +1126,7 @@ This will replace the active shortlist with ${shortlistPreview.valid_registratio
   useEffect(() => {
     setTeamCurrentPage(1);
     setSelectedTeamVoterPage(1);
-  }, [teamSearchQuery, teamDeptFilter, teamShortlistFilter, teamVotingStatusFilter, teamSortBy, teamSortOrder]);
+  }, [teamSearchQuery, teamDeptFilter, teamProductTypeFilter, teamShortlistFilter, teamVotingStatusFilter, teamSortBy, teamSortOrder]);
 
   const filteredAndSortedTeams = useMemo(() => {
     let list = [...teamsList];
@@ -1150,21 +1152,46 @@ This will replace the active shortlist with ${shortlistPreview.valid_registratio
       list = list.filter(t => (t.department || '').toLowerCase().includes(dNorm));
     }
 
-    // 3. Shortlist filter
+    // 3. Product Type filter (Order: Search -> Department -> Product Type -> Team -> Voting -> Sort -> Pagination)
+    if (teamProductTypeFilter === 'hardware') {
+      list = list.map(t => {
+        const matchingProds = (t.products || []).filter(p => {
+          const type = (p.productType || '').trim().toLowerCase();
+          const cat = (p.shortlistCategory || '').trim().toLowerCase();
+          return type === 'hardware' || type === 'hw' || type.includes('hardware') || type.includes('hw & sw') ||
+                 cat === 'hw' || cat.includes('hardware');
+        });
+        if (matchingProds.length === 0) return null;
+        return { ...t, products: matchingProds };
+      }).filter(Boolean);
+    } else if (teamProductTypeFilter === 'software') {
+      list = list.map(t => {
+        const matchingProds = (t.products || []).filter(p => {
+          const type = (p.productType || '').trim().toLowerCase();
+          const cat = (p.shortlistCategory || '').trim().toLowerCase();
+          return type === 'software' || type === 'sw' || type.includes('software') || type.includes('hw & sw') ||
+                 cat === 'sw' || cat.includes('software');
+        });
+        if (matchingProds.length === 0) return null;
+        return { ...t, products: matchingProds };
+      }).filter(Boolean);
+    }
+
+    // 4. Shortlist filter
     if (teamShortlistFilter === 'shortlisted') {
       list = list.filter(t => t.isShortlisted);
     } else if (teamShortlistFilter === 'non_shortlisted') {
       list = list.filter(t => !t.isShortlisted);
     }
 
-    // 4. Voting status filter
+    // 5. Voting status filter
     if (teamVotingStatusFilter === 'with_votes') {
       list = list.filter(t => (t.totalVotes || 0) > 0);
     } else if (teamVotingStatusFilter === 'zero_votes') {
       list = list.filter(t => (t.totalVotes || 0) === 0);
     }
 
-    // 5. Sorting (numeric for votes/score, alphabetical for names/titles)
+    // 6. Sorting (numeric for votes/score, alphabetical for names/titles)
     list.sort((a, b) => {
       let diff = 0;
       if (teamSortBy === 'votes') {
@@ -1184,7 +1211,7 @@ This will replace the active shortlist with ${shortlistPreview.valid_registratio
     });
 
     return list;
-  }, [teamsList, teamSearchQuery, teamDeptFilter, teamShortlistFilter, teamVotingStatusFilter, teamSortBy, teamSortOrder]);
+  }, [teamsList, teamSearchQuery, teamDeptFilter, teamProductTypeFilter, teamShortlistFilter, teamVotingStatusFilter, teamSortBy, teamSortOrder]);
 
   const totalTeamsCount = filteredAndSortedTeams.length;
   const totalTeamPages = Math.max(1, Math.ceil(totalTeamsCount / TEAMS_PER_PAGE));
@@ -1451,6 +1478,7 @@ This will replace the active shortlist with ${shortlistPreview.valid_registratio
             case 'department': return t.department || 'N/A';
             case 'teamId': return t.id || 'N/A';
             case 'productTitle': return p.productTitle || 'Project Showcase';
+            case 'productType': return p.productType || 'N/A';
             case 'innovationDomain': return p.innovationDomain || 'Open Innovation';
             case 'productId': return p.productId || 'N/A';
             case 'productVotes': return Number(p.productVotes || 0);
@@ -1466,7 +1494,7 @@ This will replace the active shortlist with ${shortlistPreview.valid_registratio
       });
     });
 
-    const isFiltered = !!(teamSearchQuery.trim() || (teamDeptFilter && teamDeptFilter !== 'All Departments') || teamShortlistFilter !== 'all' || teamVotingStatusFilter !== 'all');
+    const isFiltered = !!(teamSearchQuery.trim() || (teamDeptFilter && teamDeptFilter !== 'All Departments') || teamProductTypeFilter !== 'all' || teamShortlistFilter !== 'all' || teamVotingStatusFilter !== 'all');
     const filename = isFiltered ? 'IPL_2026_Product_Team_Report_Filtered.xlsx' : 'IPL_2026_Product_Team_Report.xlsx';
 
     exportToRealXlsx({
@@ -2760,6 +2788,19 @@ This will replace the active shortlist with ${shortlistPreview.valid_registratio
                 </select>
               </div>
 
+              {/* Product Type Filter */}
+              <div className="w-full sm:w-36">
+                <select
+                  value={teamProductTypeFilter}
+                  onChange={(e) => setTeamProductTypeFilter(e.target.value)}
+                  className="w-full px-2.5 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer"
+                >
+                  <option value="all">All Products</option>
+                  <option value="hardware">Hardware</option>
+                  <option value="software">Software</option>
+                </select>
+              </div>
+
               {/* Shortlist Filter */}
               <div className="w-full sm:w-36">
                 <select
@@ -2877,6 +2918,7 @@ This will replace the active shortlist with ${shortlistPreview.valid_registratio
                         {t.products?.[0]?.productTitle && (
                           <p className="text-[10px] text-slate-400 truncate italic">
                             {t.products[0].productTitle}
+                            {t.products[0].productType ? ` • ${t.products[0].productType}` : ''}
                           </p>
                         )}
                       </div>
@@ -2994,31 +3036,63 @@ This will replace the active shortlist with ${shortlistPreview.valid_registratio
                     </div>
 
                     {/* Products list under this team (compact) */}
-                    {selectedTeam.products && selectedTeam.products.length > 0 && (
-                      <div className="pt-2 border-t border-slate-100/70">
-                        <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
-                          Products / Ideas ({selectedTeam.products.length})
-                        </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          {selectedTeam.products.map((p, idx) => (
-                            <div key={idx} className="p-2.5 rounded-xl bg-slate-50/80 border border-slate-100 text-xs flex items-center justify-between gap-2">
-                              <div className="min-w-0">
-                                <p className="font-bold text-slate-900 truncate text-xs">{p.productTitle}</p>
-                                <span className="text-[10px] text-slate-500">{p.innovationDomain}</span>
+                    {(() => {
+                      const allProds = selectedTeam.products || [];
+                      const prodsToDisplay = teamProductTypeFilter === 'all'
+                        ? allProds
+                        : allProds.filter(p => {
+                            const type = (p.productType || '').toLowerCase();
+                            const cat = (p.shortlistCategory || '').toLowerCase();
+                            if (teamProductTypeFilter === 'hardware') {
+                              return type === 'hardware' || type === 'hw' || type.includes('hardware') || type.includes('hw & sw') ||
+                                     cat === 'hw' || cat.includes('hardware');
+                            }
+                            if (teamProductTypeFilter === 'software') {
+                              return type === 'software' || type === 'sw' || type.includes('software') || type.includes('hw & sw') ||
+                                     cat === 'sw' || cat.includes('software');
+                            }
+                            return true;
+                          });
+                      if (prodsToDisplay.length === 0) return null;
+                      return (
+                        <div className="pt-2 border-t border-slate-100/70">
+                          <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
+                            Products / Ideas ({prodsToDisplay.length})
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            {prodsToDisplay.map((p, idx) => (
+                              <div key={idx} className="p-2.5 rounded-xl bg-slate-50/80 border border-slate-100 text-xs flex items-center justify-between gap-2">
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <p className="font-bold text-slate-900 truncate text-xs">{p.productTitle}</p>
+                                    {p.productType && (
+                                      <span className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider ${
+                                        p.productType === 'Hardware' || p.productType.toLowerCase().includes('hard') || p.productType === 'HW'
+                                          ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                          : p.productType === 'Software' || p.productType.toLowerCase().includes('soft') || p.productType === 'SW'
+                                          ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+                                          : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                      }`}>
+                                        {p.productType}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className="text-[10px] text-slate-500">{p.innovationDomain}</span>
+                                </div>
+                                <div className="text-right shrink-0">
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-black bg-emerald-100 text-emerald-800 block">
+                                    {p.productVotes || 0} votes
+                                  </span>
+                                  <span className="text-[10px] font-bold text-slate-600">
+                                    Score: {p.score ?? (p.productVotes || 0) * 2}
+                                  </span>
+                                </div>
                               </div>
-                              <div className="text-right shrink-0">
-                                <span className="px-1.5 py-0.5 rounded text-[10px] font-black bg-emerald-100 text-emerald-800 block">
-                                  {p.productVotes || 0} votes
-                                </span>
-                                <span className="text-[10px] font-bold text-slate-600">
-                                  Score: {p.score ?? (p.productVotes || 0) * 2}
-                                </span>
-                              </div>
-                            </div>
-                          ))}
+                            ))}
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      );
+                    })()}
                   </div>
 
                   {/* Voters Sub-header (shrink-0) */}
