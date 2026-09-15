@@ -31,7 +31,10 @@ import {
   AlertCircle,
   Sparkles,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
+  Share2,
+  Lock,
+  Unlock
 } from "lucide-react";
 
 const rawApiUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000').trim().replace(/\/+$/, '')
@@ -648,6 +651,10 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
   const [updatingLeaderboardType, setUpdatingLeaderboardType] = useState(false);
   const [leaderboardTypeSuccess, setLeaderboardTypeSuccess] = useState(false);
 
+  // Phase 3 LinkedIn Submission Control (STEP 10T)
+  const [linkedinSubmissionsActive, setLinkedinSubmissionsActive] = useState(false);
+  const [updatingLinkedInControl, setUpdatingLinkedInControl] = useState(false);
+
   // Voting & QR Admin Controls States
   const [votingControls, setVotingControls] = useState({
     isVotingActive: false,
@@ -852,6 +859,25 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
         }
       } catch (lErr) {
         console.warn("[Admin Dashboard] Error reading leaderboard config:", lErr.message);
+      }
+
+      // Fetch Phase 3 LinkedIn Submission Control (STEP 10T)
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const effectiveToken = session?.access_token || authToken;
+        if (effectiveToken) {
+          const p3Res = await fetch(`${API_BASE_URL}/api/phase3/admin/submission-control`, {
+            headers: { 'Authorization': `Bearer ${effectiveToken}` }
+          });
+          if (p3Res.ok) {
+            const p3Json = await p3Res.json();
+            if (typeof p3Json.active === 'boolean') {
+              setLinkedinSubmissionsActive(p3Json.active);
+            }
+          }
+        }
+      } catch (p3Err) {
+        console.warn("[Admin Dashboard] Error reading LinkedIn submission control:", p3Err.message);
       }
 
       // Fetch Voting Controls & Live Monitoring Metrics
@@ -2114,6 +2140,48 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
     }
   };
 
+  // STEP 10T: Independent Phase 3 LinkedIn submission control handler
+  const handleToggleLinkedInControl = async (nextActive) => {
+    if (updatingLinkedInControl) return;
+    setUpdatingLinkedInControl(true);
+    setError("");
+    setSuccess("");
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token || authToken;
+      if (!token) {
+        throw new Error("Authentication session missing. Please log in again.");
+      }
+
+      const res = await fetch(`${API_BASE_URL}/api/phase3/admin/submission-control`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({ active: nextActive })
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || "Failed to update LinkedIn submission control.");
+      }
+
+      setLinkedinSubmissionsActive(Boolean(data.active));
+      setSuccess(
+        data.active
+          ? "LinkedIn Submissions Opened: Participants can now submit post links."
+          : "LinkedIn Submissions Closed: Participant submissions are paused."
+      );
+    } catch (err) {
+      console.error("[Admin Dashboard] Error toggling LinkedIn control:", err);
+      setError(err.message || "Failed to toggle LinkedIn submission control.");
+    } finally {
+      setUpdatingLinkedInControl(false);
+    }
+  };
+
   // Voting & QR Controls Operations
   const handleToggleVotingControl = async (field, value) => {
     setUpdatingVotingControls(true);
@@ -2869,7 +2937,7 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
               {activeTab === "phases" && (
                 <div className="space-y-8">
                   {/* Global Configuration Controls Grid */}
-                  <div className="grid gap-6 lg:grid-cols-2">
+                  <div className="grid gap-6 lg:grid-cols-3">
                     {/* Registration Timer Card */}
                     {registrationTimer && (
                       <article className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200 flex flex-col justify-between">
@@ -3130,6 +3198,77 @@ export default function AdminDashboard({ user, profile, onViewPublicPortal, time
                       <div className="mt-6 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
                         <span>Active Mode:</span>
                         <span className="font-bold text-slate-700">{leaderboardType === 'TRL_BASED' ? 'TRL Evaluation (Live)' : 'Voting Evaluation (Pending)'}</span>
+                      </div>
+                    </article>
+
+                    {/* Phase 3 LinkedIn Submissions Configuration Card */}
+                    <article className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200 flex flex-col justify-between">
+                      <div>
+                        <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
+                          <div>
+                            <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                              <Share2 size={18} className="text-primary" /> PHASE 3 — LINKEDIN SUBMISSIONS
+                            </h3>
+                            <p className="text-xs text-slate-500 mt-1">
+                              Allow participants to submit LinkedIn posts independently of the event and voting window.
+                            </p>
+                          </div>
+                          <span className={`inline-flex items-center rounded-md px-2.5 py-1 text-xs font-bold ring-1 ring-inset ${
+                            linkedinSubmissionsActive
+                              ? 'bg-emerald-50 text-emerald-700 ring-emerald-600/20'
+                              : 'bg-slate-50 text-slate-600 ring-slate-500/10'
+                          }`}>
+                            {linkedinSubmissionsActive ? 'OPEN' : 'CLOSED'}
+                          </span>
+                        </div>
+
+                        <div className="space-y-4">
+                          <div className="rounded-xl bg-slate-50 p-4 border border-slate-100">
+                            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block">
+                              Current Submission State
+                            </span>
+                            <div className="mt-2 flex items-center gap-2">
+                              <span className={`h-2.5 w-2.5 rounded-full ${linkedinSubmissionsActive ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`} />
+                              <span className="text-sm font-bold text-slate-800">
+                                {linkedinSubmissionsActive
+                                  ? "Status: Open for participant submissions"
+                                  : "Status: Participant submissions are closed"}
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-500 mt-2 leading-relaxed">
+                              {linkedinSubmissionsActive
+                                ? "Participants across all teams can add, edit, or remove LinkedIn post links."
+                                : "Participant submissions are paused. Existing submitted links remain visible."}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-6 pt-3 border-t border-slate-100">
+                        <button
+                          type="button"
+                          disabled={updatingLinkedInControl}
+                          onClick={() => handleToggleLinkedInControl(!linkedinSubmissionsActive)}
+                          className={`w-full py-2.5 px-4 rounded-xl text-xs font-extrabold transition cursor-pointer flex items-center justify-center gap-2 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed ${
+                            linkedinSubmissionsActive
+                              ? 'bg-red-600 hover:bg-red-700 text-white'
+                              : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                          }`}
+                        >
+                          {updatingLinkedInControl ? (
+                            <span>Updating...</span>
+                          ) : linkedinSubmissionsActive ? (
+                            <>
+                              <Lock size={15} />
+                              <span>Close LinkedIn Submissions</span>
+                            </>
+                          ) : (
+                            <>
+                              <Unlock size={15} />
+                              <span>Open LinkedIn Submissions</span>
+                            </>
+                          )}
+                        </button>
                       </div>
                     </article>
                   </div>

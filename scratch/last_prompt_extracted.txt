@@ -1,0 +1,156 @@
+<USER_REQUEST>
+STEP 10T — IMPLEMENT INDEPENDENT PHASE 3 LINKEDIN SUBMISSION ON/OFF CONTROL
+
+Implement the audited STEP 10T design.
+
+IMPORTANT SAFETY RULES:
+
+- Preserve every existing working feature.
+- Do not modify voting behavior.
+- Do not modify leaderboard behavior.
+- Do not modify QR generation.
+- Do not modify Phase 3 shortlist behavior.
+- Do not modify LinkedIn Google Sheet synchronization logic except where explicitly required below.
+- Do not delete existing LinkedIn submissions.
+- Do not alter existing submission rows.
+- Do not modify public pages unnecessarily.
+- Do not change existing UI design/theme/colors unless required for the new control.
+- No unrelated refactoring.
+- No commit.
+- No push.
+- No deployment.
+- User will manually execute the SQL migration in Supabase.
+
+==================================================
+1. DATABASE — INDEPENDENT SETTING
+==================================================
+
+Create a new SQL migration file:
+
+stage_10t_linkedin_submission_control.sql
+
+Use the recommended independent app_settings design from the STEP 10T audit.
+
+Create:
+
+public.app_settings
+
+with:
+
+- key TEXT PRIMARY KEY
+- value JSONB NOT NULL DEFAULT '{}'::jsonb
+- updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
+- updated_by TEXT
+
+Insert:
+
+key:
+phase3_linkedin_submissions
+
+value:
+
+{"active": false}
+
+Use:
+
+ON CONFLICT (key) DO NOTHING
+
+IMPORTANT:
+
+- Do not overwrite an existing setting.
+- Default must be OFF.
+- Do not modify voting_controls.
+- Do not modify phases.
+- Do not modify phase3_linkedin_submissions.
+- Do not modify product_votes.
+- Do not modify teams.
+- Do not modify registrations.
+
+If app_settings already exists in the database, safely add only the required key.
+
+If the table does not exist, create it as described above.
+
+Provide the migration for manual Supabase execution.
+
+DO NOT EXECUTE SQL.
+
+==================================================
+2. BACKEND — LINKEDIN CONTROL
+===================
+<truncated 8730 bytes>
+ests do not call Google Drive.
+12. Existing submissions remain intact.
+13. Admin POST submission still works while OFF.
+14. Admin REMOVE still works while OFF.
+15. Voting ON + LinkedIn OFF works independently.
+16. Voting OFF + LinkedIn ON works independently.
+17. Existing role isolation remains intact.
+18. Existing LinkedIn URL validation remains intact.
+19. Existing Google Sheet reconciliation remains intact.
+
+Do not leave the database setting ON after testing.
+
+Restore it to the original safe state:
+
+active = false
+
+unless the user explicitly requests otherwise.
+
+==================================================
+16. REGRESSION TESTS
+==================================================
+
+Run existing relevant tests, especially:
+
+- Phase 3 LinkedIn submission tests
+- Step 10K LinkedIn synchronization tests
+- Step 10J Like removal tests if applicable
+- Step 10R Admin team tests
+- Voting tests
+
+Do not modify test expectations merely to make tests pass.
+
+==================================================
+17. BUILD
+==================================================
+
+Run:
+
+npm run build
+
+Expected:
+
+0 errors.
+
+==================================================
+18. FINAL REPORT
+==================================================
+
+Report:
+
+1. Files modified
+2. SQL migration created
+3. SQL NOT executed
+4. Admin control behavior
+5. Participant ON behavior
+6. Participant OFF behavior
+7. Admin bypass behavior
+8. Google Drive/Sheet behavior
+9. Existing submission preservation
+10. Voting independence verification
+11. Test results
+12. Build result
+13. Database changes:
+   migration CREATED but NOT EXECUTED
+14. Deployment:
+   NONE
+15. Commit/push:
+   NONE
+
+FINAL LINE:
+
+STEP 10T IMPLEMENTATION COMPLETE — INDEPENDENT LINKEDIN SUBMISSION CONTROL ADDED — SQL READY FOR MANUAL SUPABASE EXECUTION — NO SQL EXECUTED — NO DEPLOYMENT — NO COMMIT/PUSH
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-09-15T07:52:01+05:30.
+</ADDITIONAL_METADATA>
