@@ -19,6 +19,22 @@ const phase3LinkedInDriveService = require('../services/phase3LinkedInDriveServi
 const LOCAL_SUBMISSIONS_FILE = path.join(__dirname, '..', 'config', 'phase3_linkedin_submissions.json');
 
 /**
+ * Safe email comparator supporting exact matching and scoped dot-tolerance for @sece.ac.in domains.
+ */
+function isMatchingEmail(email1, email2) {
+  if (!email1 || !email2) return false;
+  const e1 = email1.trim().toLowerCase();
+  const e2 = email2.trim().toLowerCase();
+  if (e1 === e2) return true;
+  if (e1.endsWith('@sece.ac.in') && e2.endsWith('@sece.ac.in')) {
+    const [local1] = e1.split('@');
+    const [local2] = e2.split('@');
+    return local1.replace(/\./g, '') === local2.replace(/\./g, '');
+  }
+  return false;
+}
+
+/**
  * Strict validator for Phase 3 LinkedIn Post URLs.
  * Accepted formats (HTTPS only):
  * 1. LinkedIn short post URL: https://lnkd.in/p/<short-code>
@@ -377,7 +393,8 @@ router.get('/status', authenticateUser, async (req, res) => {
       (registration?.member3_email || '').toLowerCase().trim()
     ].filter(Boolean);
 
-    if (!isAdmin && !teamEmails.includes(userEmail)) {
+    const isEnrolledInTeam = teamEmails.some(te => isMatchingEmail(userEmail, te));
+    if (!isAdmin && !isEnrolledInTeam) {
       return res.status(403).json({
         success: false,
         error_code: 'FORBIDDEN',
@@ -705,9 +722,9 @@ router.get('/status', authenticateUser, async (req, res) => {
     const member1Email = (registration?.member2_email || '').toLowerCase().trim();
     const member2Email = (registration?.member3_email || '').toLowerCase().trim();
 
-    const isLeader = (userEmail === leaderEmail) || isAdmin;
-    const isMember1 = (userEmail === member1Email);
-    const isMember2 = (userEmail === member2Email);
+    const isLeader = isMatchingEmail(userEmail, leaderEmail) || isAdmin;
+    const isMember1 = isMatchingEmail(userEmail, member1Email);
+    const isMember2 = isMatchingEmail(userEmail, member2Email);
 
     const isSubmissionActive = await isLinkedInSubmissionActive(req);
 
@@ -869,7 +886,7 @@ router.post('/linkedin-submission', authenticateUser, async (req, res) => {
     const teamEmails = [leaderEmail, member1Email, member2Email].filter(Boolean);
 
     const isAdmin = req.user?.user_metadata?.role === 'admin';
-    const isEnrolledMember = teamEmails.includes(userEmail) || isAdmin;
+    const isEnrolledMember = teamEmails.some(te => isMatchingEmail(userEmail, te)) || isAdmin;
 
     // Must be an enrolled team member or admin
     if (!isEnrolledMember) {
@@ -885,9 +902,9 @@ router.post('/linkedin-submission', authenticateUser, async (req, res) => {
     // Member 1: Can manage only Member 1 slot
     // Member 2: Can manage only Member 2 slot
     // Other members: Cannot modify
-    const isLeader = (userEmail === leaderEmail) || isAdmin;
-    const isMember1 = (userEmail === member1Email);
-    const isMember2 = (userEmail === member2Email);
+    const isLeader = isMatchingEmail(userEmail, leaderEmail) || isAdmin;
+    const isMember1 = isMatchingEmail(userEmail, member1Email);
+    const isMember2 = isMatchingEmail(userEmail, member2Email);
 
     let isAuthorized = false;
     if (isLeader) {
@@ -1128,7 +1145,7 @@ async function handleRemoveLinkedInSubmission(req, res) {
     const teamEmails = [leaderEmail, member1Email, member2Email].filter(Boolean);
 
     const isAdmin = req.user?.user_metadata?.role === 'admin';
-    const isEnrolledMember = teamEmails.includes(userEmail) || isAdmin;
+    const isEnrolledMember = teamEmails.some(te => isMatchingEmail(userEmail, te)) || isAdmin;
 
     // Must be an enrolled team member or admin
     if (!isEnrolledMember) {
@@ -1144,9 +1161,9 @@ async function handleRemoveLinkedInSubmission(req, res) {
     // Member 1: Can manage only Member 1 slot
     // Member 2: Can manage only Member 2 slot
     // Other members: Cannot modify
-    const isLeader = (userEmail === leaderEmail) || isAdmin;
-    const isMember1 = (userEmail === member1Email);
-    const isMember2 = (userEmail === member2Email);
+    const isLeader = isMatchingEmail(userEmail, leaderEmail) || isAdmin;
+    const isMember1 = isMatchingEmail(userEmail, member1Email);
+    const isMember2 = isMatchingEmail(userEmail, member2Email);
 
     let isAuthorized = false;
     if (isLeader) {
@@ -1445,5 +1462,6 @@ module.exports = {
   router,
   isValidLinkedInPostUrl,
   isLinkedInSubmissionActive,
+  isMatchingEmail,
   phase3LinkedInDriveService
 };

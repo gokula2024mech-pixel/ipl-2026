@@ -1073,34 +1073,250 @@ router.post('/submit-new-idea', async (req, res) => {
 });
 
 // -------------------------------------------------------------
+// HELPER: Deterministic, safe email comparator
+// Supports exact matching and scoped dot-tolerance for @sece.ac.in domains.
+// Dots in usernames of institutional emails (e.g. name.2024cse vs name2024cse) are treated as equivalent.
+// -------------------------------------------------------------
+function isMatchingEmail(email1, email2) {
+  if (!email1 || !email2) return false;
+  const e1 = email1.trim().toLowerCase();
+  const e2 = email2.trim().toLowerCase();
+  if (e1 === e2) return true;
+  if (e1.endsWith('@sece.ac.in') && e2.endsWith('@sece.ac.in')) {
+    const [local1] = e1.split('@');
+    const [local2] = e2.split('@');
+    return local1.replace(/\./g, '') === local2.replace(/\./g, '');
+  }
+  return false;
+}
+
+// -------------------------------------------------------------
 // GET /api/my-submissions
 // Retrieves all team registrations and associated products/ideas for the authenticated user
+// Uses a 4-tier resilient team resolution strategy:
+// 1. Exact email against registrations (leader, member2, member3)
+// 2. Exact email against product_members
+// 3. User profile.registration_id
+// 4. Scoped, deterministic dot-tolerant email matching for @sece.ac.in
 // -------------------------------------------------------------
 router.get('/my-submissions', async (req, res) => {
   try {
+    const testStore = req.testStore;
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({ success: false, message: 'Authentication required. Authorization header is missing.' });
     }
     const token = authHeader.split(' ')[1];
-    const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
-    if (authErr || !user) {
-      return res.status(401).json({ success: false, message: 'Invalid or expired authentication session.' });
+
+    let user = null;
+    if (req.user) {
+      user = req.user;
+    } else {
+      const { data: { user: authUser }, error: authErr } = await supabase.auth.getUser(token);
+      if (authErr || !authUser) {
+        return res.status(401).json({ success: false, message: 'Invalid or expired authentication session.' });
+      }
+      user = authUser;
     }
+
     const userEmail = (user.email || '').trim().toLowerCase();
     if (!userEmail) {
       return res.status(400).json({ success: false, message: 'User email not found in session.' });
     }
 
-    const { data: studentRegs, error: regsErr } = await supabase
-      .from('registrations')
-      .select('*')
-      .or(`leader_email.ilike."${userEmail}",member2_email.ilike."${userEmail}",member3_email.ilike."${userEmail}"`);
-    if (regsErr) throw regsErr;
-    const regs = studentRegs || [];
+    let regs = [];
+
+    // ---------------------------------------------------------
+    // TIER 1: Authenticated user's exact email against registrations
+    // ---------------------------------------------------------
+    if (testStore) {
+      const allRegs = testStore.registrations || [];
+      regs = allRegs.filter(r =>
+        (r.leader_email || '').trim().toLowerCase() === userEmail ||
+        (r.member2_email || '').trim().toLowerCase() === userEmail ||
+        (r.member3_email || '').trim().toLowerCase() === userEmail
+      );
+    } else {
+      const { data: studentRegs, error: regsErr } = await supabase
+        .from('registrations')
+        .select('*')
+        .or(`leader_email.ilike."${userEmail}",member2_email.ilike."${userEmail}",member3_email.ilike."${userEmail}"`);
+      if (regsErr) throw regsErr;
+      if (studentRegs && studentRegs.length > 0) {
+        regs = studentRegs;
+      }
+    }
+
+    // ---------------------------------------------------------
+    // TIER 2: Exact email against product_members if registration lookup fails
+    // ---------------------------------------------------------
+    if (regs.length === 0) {
+      try {
+        if (testStore) {
+          const pmRows = (testStore.product_members || []).filter(
+            p => (p.member_email || '').trim().toLowerCase() === userEmail
+          );
+          if (pmRows.length > 0) {
+            const prodIds = [...new Set(pmRows.map(p => p.product_id).filter(Boolean))];
+            const prods = (testStore.products || []).filter(p => prodIds.includes(p.id));
+            const regIds = [...new Set(prods.map(p => p.legacy_registration_id).filter(Boolean))];
+            if (regIds.length > 0) {
+              regs = (testStore.registrations || []).filter(r => regIds.includes(r.registration_id));
+            }
+          }
+        } else {
+          const { data: pmRows, error: pmErr } = await supabase
+            .from('product_members')
+            .select('product_id')
+            .ilike('member_email', userEmail);
+
+          if (!pmErr && pmRows && pmRows.length > 0) {
+            const prodIds = [...new Set(pmRows.map(p => p.product_id).filter(Boolean))];
+            if (prodIds.length > 0) {
+              const { data: prodRows } = await supabase
+                .from('products')
+                .select('legacy_registration_id')
+                .in('id', prodIds);
+
+              const regIds = [...new Set((prodRows || []).map(p => p.legacy_registration_id).filter(Boolean))];
+              if (regIds.length > 0) {
+                const { data: pmRegs } = await supabase
+                  .from('registrations')
+                  .select('*')
+                  .in('registration_id', regIds);
+                if (pmRegs && pmRegs.length > 0) {
+                  regs = pmRegs;
+                }
+              }
+            }
+          }
+        }
+      } catch (tier2Err) {
+        console.warn('[MySubmissions] Tier 2 product_members lookup warning:', tier2Err.message);
+      }
+    }
+
+    // ---------------------------------------------------------
+    // TIER 3: Authenticated user's profile.registration_id if available
+    // ---------------------------------------------------------
+    let userProfile = null;
+    try {
+      if (testStore) {
+        userProfile = (testStore.profiles || []).find(p => p.user_id === user.id || p.id === user.id || (p.email || '').trim().toLowerCase() === userEmail) || null;
+      } else {
+        const { data: profRow } = await supabase
+          .from('profiles')
+          .select('user_id, email, registration_id')
+          .eq('user_id', user.id)
+          .maybeSingle();
+        userProfile = profRow;
+      }
+    } catch (_) {}
+
+    if (regs.length === 0 && userProfile?.registration_id) {
+      const cleanRegId = userProfile.registration_id.trim();
+      if (cleanRegId) {
+        if (testStore) {
+          regs = (testStore.registrations || []).filter(r => r.registration_id === cleanRegId);
+        } else {
+          const { data: profRegs } = await supabase
+            .from('registrations')
+            .select('*')
+            .eq('registration_id', cleanRegId);
+          if (profRegs && profRegs.length > 0) {
+            regs = profRegs;
+          }
+        }
+      }
+    }
+
+    // ---------------------------------------------------------
+    // TIER 4: Scoped, deterministic dot-tolerant email matching for @sece.ac.in
+    // Only used when exact matching fails. Requires an UNAMBIGUOUS SINGLE matching registration.
+    // ---------------------------------------------------------
+    if (regs.length === 0 && userEmail.endsWith('@sece.ac.in')) {
+      try {
+        if (testStore) {
+          const allRegs = testStore.registrations || [];
+          const matched = allRegs.filter(r => {
+            return isMatchingEmail(userEmail, r.leader_email) ||
+                   isMatchingEmail(userEmail, r.member2_email) ||
+                   isMatchingEmail(userEmail, r.member3_email);
+          });
+          if (matched.length === 1) {
+            regs = matched;
+            console.log(`[MySubmissions] Resolved registration ${matched[0].registration_id} via deterministic dot-tolerant match for ${userEmail}`);
+          } else if (matched.length > 1) {
+            console.warn(`[MySubmissions] Ambiguous dot-tolerant matches (${matched.length}) for ${userEmail}, failing safely.`);
+          }
+        } else {
+          const [localPart] = userEmail.split('@');
+          const strippedLocal = localPart.replace(/\./g, '');
+
+          // Fetch candidate SECE registrations
+          const { data: candidates, error: candErr } = await supabase
+            .from('registrations')
+            .select('*')
+            .or(`leader_email.ilike.%@sece.ac.in%,member2_email.ilike.%@sece.ac.in%,member3_email.ilike.%@sece.ac.in%`);
+
+          if (!candErr && candidates) {
+            const matched = candidates.filter(r => {
+              return isMatchingEmail(userEmail, r.leader_email) ||
+                     isMatchingEmail(userEmail, r.member2_email) ||
+                     isMatchingEmail(userEmail, r.member3_email);
+            });
+
+            if (matched.length === 1) {
+              regs = matched;
+              console.log(`[MySubmissions] Resolved registration ${matched[0].registration_id} via deterministic dot-tolerant match for ${userEmail}`);
+            } else if (matched.length > 1) {
+              console.warn(`[MySubmissions] Ambiguous dot-tolerant matches (${matched.length}) for ${userEmail}, failing safely.`);
+            }
+          }
+        }
+      } catch (tier4Err) {
+        console.warn('[MySubmissions] Tier 4 dot-tolerant fallback warning:', tier4Err.message);
+      }
+    }
 
     if (!regs || regs.length === 0) {
       return res.status(200).json({ success: true, submissions: [] });
+    }
+
+    // ---------------------------------------------------------
+    // PART D: Profile Synchronization
+    // If authenticated user has an unambiguous registration match and profile.registration_id is not yet set, populate it.
+    // ---------------------------------------------------------
+    if (regs.length === 1 && regs[0]?.registration_id && user?.id) {
+      const regIdToSync = regs[0].registration_id.trim();
+      if (!testStore) {
+        try {
+          if (!userProfile) {
+            const { data: profRow } = await supabase
+              .from('profiles')
+              .select('user_id, registration_id')
+              .eq('user_id', user.id)
+              .maybeSingle();
+            userProfile = profRow;
+          }
+          if (!userProfile?.registration_id) {
+            await supabase
+              .from('profiles')
+              .update({ registration_id: regIdToSync, updated_at: new Date().toISOString() })
+              .eq('user_id', user.id);
+            console.log(`[MySubmissions] Synchronized profile registration_id to "${regIdToSync}" for user ${user.id}`);
+          }
+        } catch (syncErr) {
+          console.warn('[MySubmissions] Profile reconciliation non-critical notice:', syncErr.message);
+        }
+      } else if (testStore.profiles) {
+        const p = testStore.profiles.find(x => x.user_id === user.id || x.id === user.id);
+        if (p && !p.registration_id) {
+          p.registration_id = regIdToSync;
+        }
+      }
+    } else if (regs.length > 1) {
+      console.warn(`[MySubmissions] User ${userEmail} matches multiple registrations (${regs.length}); skipping automatic profile registration_id reconciliation.`);
     }
 
     const submissions = [];
@@ -1108,19 +1324,27 @@ router.get('/my-submissions', async (req, res) => {
     for (const reg of regs) {
       const normTeamName = (reg.team_name || '').trim().toLowerCase();
 
-      const { data: team, error: teamErr } = await supabase
-        .from('teams')
-        .select('*')
-        .eq('normalized_team_name', normTeamName)
-        .maybeSingle();
+      let team = null;
+      if (testStore) {
+        team = (testStore.teams || []).find(
+          t => (t.normalized_team_name === normTeamName || (t.team_name || '').trim().toLowerCase() === normTeamName)
+        ) || null;
+      } else {
+        const { data: teamRow, error: teamErr } = await supabase
+          .from('teams')
+          .select('*')
+          .eq('normalized_team_name', normTeamName)
+          .maybeSingle();
 
-      if (teamErr) {
-        console.error(`[MySubmissions] Error fetching team for "${reg.team_name}":`, teamErr.message);
-        continue;
+        if (teamErr) {
+          console.error(`[MySubmissions] Error fetching team for "${reg.team_name}":`, teamErr.message);
+          continue;
+        }
+        team = teamRow;
       }
 
       let userRole = 'Member';
-      if ((reg.leader_email || '').trim().toLowerCase() === userEmail) {
+      if (isMatchingEmail(userEmail, reg.leader_email)) {
         userRole = 'Team Leader';
       }
 
@@ -1148,17 +1372,25 @@ router.get('/my-submissions', async (req, res) => {
       };
 
       if (team) {
-        const { data: products, error: prodErr } = await supabase
-          .from('products')
-          .select('*')
-          .eq('team_id', team.id)
-          .order('product_number', { ascending: true });
+        let products = [];
+        if (testStore) {
+          products = (testStore.products || []).filter(
+            p => p.team_id === team.id || (reg.registration_id && p.legacy_registration_id === reg.registration_id)
+          );
+        } else {
+          const { data: prodsData, error: prodErr } = await supabase
+            .from('products')
+            .select('*')
+            .eq('team_id', team.id)
+            .order('product_number', { ascending: true });
 
-        if (prodErr) {
-          console.error(`[MySubmissions] Error fetching products for team ${team.id}:`, prodErr.message);
+          if (prodErr) {
+            console.error(`[MySubmissions] Error fetching products for team ${team.id}:`, prodErr.message);
+          }
+          products = prodsData || [];
         }
 
-        teamInfo.ideas = products || [];
+        teamInfo.ideas = products;
       } else {
         teamInfo.ideas = [];
       }
@@ -1402,7 +1634,7 @@ router.put('/registrations/:registrationId', async (req, res) => {
     }
 
     // 2. Authorization check: Only the Team Leader is allowed to edit team/project details
-    const isLeader = (reg.leader_email || '').trim().toLowerCase() === userEmail;
+    const isLeader = isMatchingEmail(userEmail, reg.leader_email);
     if (!isLeader) {
       return res.status(403).json({ success: false, message: 'Access Denied: Only the Team Leader is authorized to edit team details.' });
     }
@@ -1511,4 +1743,5 @@ router.put('/registrations/:registrationId', async (req, res) => {
   }
 });
 
+router.isMatchingEmail = isMatchingEmail;
 module.exports = router;
